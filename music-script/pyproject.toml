@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "music-script"
+version = "0.1.0"
+description = "Find popular songs whose key matches a base song and whose BPM is harmonically compatible (±20%, 1x/2x/0.5x)."
+requires-python = ">=3.11"
+readme = "README.md"
+authors = [{ name = "Will Hunter" }]
+license = { text = "MIT" }
+dependencies = [
+    "httpx>=0.27",
+    "selectolax>=0.3.21",
+    "click>=8.1",
+    "rich>=13",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "respx>=0.21",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+js = [
+    "playwright>=1.40",
+]
+
+[project.scripts]
+music-script = "music_script.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["music_script"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+module = ["selectolax.*", "respx.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"

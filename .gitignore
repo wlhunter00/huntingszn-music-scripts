@@ -1,0 +1,63 @@
+# Environment and secrets
+.env
+.env.local
+*.pem
+
+# Python
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Package / tool outputs
+recon-output/
+matches.csv
+**/output/
+**/.cache/
+cookies.txt
+
+# Generated catalogs and logs
+*.csv
+*.log
+!docs/**/*.csv
+
+# Audio and large binaries (not source)
+*.m4a
+*.mp3
+*.wav
+*.flac
+*.zip
+
+# GPT trainer data (recreate locally; do not commit)
+**/transcripts/
+**/master_transcripts/
+**/old_transcripts/
+**/final_folder/
+**/reports/
+repeated_content_flags.json
+creator_weights.json
+patreon_urls.txt
+youtube_urls.txt
+
+# Stem pipeline runtime data (lives on drive, not in git)
+stem-output/
+songs-to-split/
+Source Files/
+
+# OS / editor
+.DS_Store
+._*
+Thumbs.db
+.idea/
+.vscode/
+
+# Nested package venvs (legacy)
+key_correction/.venv/
