@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "music-catalogs"
+version = "0.1.0"
+description = "Sample and plugin inventory scanners"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+sample-inventory = "catalogs.sample_inventory:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["catalogs"]

@@ -3,7 +3,7 @@
 .env.local
 *.pem
 
-# Python
+# Python / uv
 .venv/
 venv/
 **/__pycache__/

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "soundcloud-repost"
+version = "0.1.0"
+description = "Remove all reposts from a SoundCloud account via Selenium"
+requires-python = ">=3.11"
+dependencies = [
+    "selenium>=4.15",
+    "webdriver-manager>=4.0",
+]
+
+[project.scripts]
+sc-unrepost = "soundcloud_repost.unrepost:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["soundcloud_repost"]

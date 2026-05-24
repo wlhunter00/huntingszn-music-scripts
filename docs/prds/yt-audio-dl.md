@@ -1,17 +1,17 @@
 # PRD: yt_audio_dl
 
-**Status:** Lost — recreate.
+**Status:** Implemented in `packages/downloads/downloads/youtube.py`.
 
 ## Purpose
 
-Download YouTube audio as MP3 320kbps with metadata via `yt-dlp`.
+Download YouTube audio at the **best available source quality** (AAC/Opus/etc. via `bestaudio/best`, minimal re-encoding) with thumbnail + metadata via `yt-dlp`. Optional MP3 320 for DJ stacks that require MP3.
 
 ## Inputs / outputs
 
-| | Default (old) | Target |
-|--|---------------|--------|
-| Output | `../Downloads/YYYY-MM-DD/` | `paths.DOWNLOADS / today` |
-| Args | URL(s), `--output-dir` | Same |
+| | Default | Notes |
+|--|---------|--------|
+| Output | `paths.DOWNLOADS / YYYY-MM-DD/` | Override with `--output-dir` |
+| Args | URL(s), `--output-dir`, `--mp3`, `--playlist` | `--no-playlist` is default unless `--playlist` |
 
 ## Dependencies
 
@@ -19,9 +19,10 @@ Download YouTube audio as MP3 320kbps with metadata via `yt-dlp`.
 
 ## Behavior
 
-- `download_audio(url, output_dir)` — `-x`, audio extract, mp3 320.
+- Default: `-f bestaudio/best -x --audio-format best --embed-thumbnail --add-metadata`
+- `--mp3`: legacy `-x --audio-format mp3 --audio-quality 320K`
 - Multi-URL argparse loop.
 
-## Recreation notes
+## Notes
 
-- **~2.7 KB** — pair with `soundcloud_dl` in one module with `source` discriminator.
+YouTube is lossy; “highest quality” means the best offered stream, not lossless.

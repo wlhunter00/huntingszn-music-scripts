@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "music-downloads"
+version = "0.1.0"
+description = "SoundCloud and YouTube audio downloaders"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+sc-dl = "downloads.soundcloud:main"
+yt-dl = "downloads.youtube:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["downloads"]
