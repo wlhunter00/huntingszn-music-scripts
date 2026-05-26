@@ -1,22 +1,22 @@
-# Mini PRDs — lost scripts
+# Mini PRDs — script inventory
 
-These documents capture what we know from the 2026-05-23 inventory scan so scripts can be recreated in later phases. **Source code was lost** when folders were moved in the Cursor sidebar; `music-script` was restored from `paid-social-content-agent`.
+Most library and catalog scripts were **restored from backup** on 2026-05-25 (`E:\Music Backup\Scripts` → `packages/`). Stem splitting code is canonical in `packages/stem_split/` only.
+
+| PRD | Status |
+|-----|--------|
+| [stem-split](stem-split.md) | **Restored** — synced from drive; legacy scripts removed |
+| [soundcloud-dl](soundcloud-dl.md) | Restored in `packages/downloads` |
+| [yt-audio-dl](yt-audio-dl.md) | Restored in `packages/downloads` |
+| [pn-script](pn-script.md) | **Restored** — `library_tools.pn_rename` |
+| [file-namer](file-namer.md) | **Restored** — merged into `library_tools.metadata` |
+| [song-metadata-extractor](song-metadata-extractor.md) | **Restored** — `library_tools.metadata` |
+| [duplicate-script](duplicate-script.md) | **Restored** — `library_tools.duplicate` |
+| [key-correction](key-correction.md) | Step 1 only; steps 2–5 pending |
+| [soundcloud-repost](soundcloud-repost.md) | Restored in `packages/soundcloud_repost` |
+| [sample-inventory](sample-inventory.md) | **Restored** — `catalogs.sample_inventory` |
+| [vst-indexer](vst-indexer.md) | **Restored** — `catalogs.vst_indexer` |
+| [minimal-plugin-catalog](minimal-plugin-catalog.md) | **Restored** — `catalogs.minimal_catalog` |
+| [rift-preset-catalog](rift-preset-catalog.md) | **Restored** — `catalogs.rift_catalog` |
+| [gpt-trainer](gpt-trainer.md) | Placeholder — no backup available |
 
 Each PRD includes: purpose, I/O, dependencies, paths, behavior notes, and recreation priority.
-
-| PRD | Priority | Complexity |
-|-----|----------|------------|
-| [stem-split](stem-split.md) | P0 | High (exists on drive; migrate only) |
-| [soundcloud-dl](soundcloud-dl.md) | P1 | Low |
-| [yt-audio-dl](yt-audio-dl.md) | P1 | Low |
-| [pn-script](pn-script.md) | P1 | Trivial |
-| [file-namer](file-namer.md) | P1 | Medium |
-| [song-metadata-extractor](song-metadata-extractor.md) | P1 | High |
-| [duplicate-script](duplicate-script.md) | P2 | Medium |
-| [key-correction](key-correction.md) | P2 | High |
-| [soundcloud-repost](soundcloud-repost.md) | P2 | Medium |
-| [sample-inventory](sample-inventory.md) | P3 | Medium |
-| [vst-indexer](vst-indexer.md) | P3 | Low |
-| [minimal-plugin-catalog](minimal-plugin-catalog.md) | P3 | Low |
-| [rift-preset-catalog](rift-preset-catalog.md) | P3 | Low |
-| [gpt-trainer](gpt-trainer.md) | P3 | Very high |

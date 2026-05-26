@@ -72,7 +72,7 @@ def check_files_exist(song_dir: Path, title: str):
         return False, f"Missing files: {missing}"
     if intermediates_present:
         return False, f"Leftover intermediates: {intermediates_present}"
-    return True, f"All 8 stems present, no intermediates."
+    return True, "All 8 stems present, no intermediates."
 
 
 def check_format_24bit_44k(song_dir: Path, title: str):

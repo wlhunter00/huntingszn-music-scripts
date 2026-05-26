@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 from config.paths import PLATINUM_NOTES
@@ -14,9 +15,9 @@ def rename_tree(root: Path, *, dry_run: bool) -> tuple[int, int]:
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if "_pn" not in path.stem and "_pn" not in path.name:
+        if not re.search(r"_pn", path.name, re.IGNORECASE):
             continue
-        new_name = path.name.replace("_pn", "")
+        new_name = re.sub(r"_pn", "", path.name, flags=re.IGNORECASE)
         if new_name == path.name:
             skipped += 1
             continue

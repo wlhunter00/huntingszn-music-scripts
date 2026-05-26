@@ -5,7 +5,17 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DRIVE_ROOT = Path(os.environ.get("MUSIC_DRIVE_ROOT", "/Volumes/Will Hunter Music")).expanduser()
+def _normalize_drive_root(raw: str) -> Path:
+    """Normalize drive roots like ``G:`` to ``G:\\`` on Windows."""
+    path = Path(raw).expanduser()
+    if path.drive and str(path) in {path.drive, path.drive + os.sep}:
+        return Path(path.drive + os.sep)
+    return path
+
+
+DRIVE_ROOT = _normalize_drive_root(
+    os.environ.get("MUSIC_DRIVE_ROOT", "/Volumes/Will Hunter Music")
+)
 
 SCRIPTS_ROOT = DRIVE_ROOT / "Scripts"
 PLATINUM_NOTES = DRIVE_ROOT / "Platnium Notes"
