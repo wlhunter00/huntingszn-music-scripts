@@ -11,23 +11,9 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
 
 from config.paths import PLATINUM_NOTES
+from library_tools.pn_filename import normalize_parentheses, strip_title_noise
 
-KNOWN_ARTISTS = [
-    "baby keem",
-    "kendrick lamar",
-    "daft punk",
-    "a ap rocky",
-    "a ap ferg",
-    "jay z",
-    "kanye west",
-    "kid cudi",
-    "the black eyed peas",
-    "rae sremmurd",
-    "city girls",
-    "megan thee stallion",
-    "sofi tukker",
-    "carly rae jepsen",
-]
+from library_tools.known_artists import KNOWN_ARTISTS, is_known_artist
 
 FEATURE_PATTERNS = [
     r"\bft\.?\b",
@@ -47,6 +33,10 @@ REMIX_PATTERNS = [
     r"\bmashup\b",
 ]
 COLLAB_INDICATORS = [" x ", " vs ", " & ", " and "]
+PARENTHETICAL_REMIX = re.compile(
+    r"\([^)]*(?:remix|flip|bootleg|edit|mashup|vip|re-?up|version)[^)]*\)",
+    re.IGNORECASE,
+)
 
 
 def title_case_preserve(text: str) -> str:
@@ -62,6 +52,7 @@ def title_case_preserve(text: str) -> str:
 def apply_file_namer_title_cleanup(title: str) -> str:
     """Strip trailing BPM/key and label brackets (from file-namer.py)."""
     title = re.sub(r"\s+[A-Ga-g]b?\s+\d+$", "", title)
+    title = re.sub(r"\s+\d{1,2}[AB]\s+\d{2,3}$", "", title, flags=re.IGNORECASE)
     title = re.sub(r"\s*\[[^\]]+\]\s*$", "", title)
     return title.strip()
 
@@ -85,28 +76,9 @@ def parse_song_info(filename: str) -> dict[str, str | list[str]] | None:
     remix_info = ""
 
     if " - " not in name_without_pn:
-        name_with_spaces = name_without_pn.replace("-", " ")
-        lower_name = name_with_spaces.lower()
-        found_artists: list[str] = []
-        for artist in KNOWN_ARTISTS:
-            if artist in lower_name:
-                found_artists.append(artist)
-        if found_artists:
-            artists = [a.title() for a in found_artists]
-            remaining = name_with_spaces
-            for artist in found_artists:
-                remaining = re.sub(re.escape(artist), "", remaining, flags=re.IGNORECASE).strip()
-            title = remaining
-        else:
-            words = name_with_spaces.split()
-            if len(words) > 2:
-                artists = [words[0]]
-                title = " ".join(words[1:])
-            elif words:
-                artists = ["Unknown Artist"]
-                title = name_with_spaces
-            else:
-                return None
+        # No Artist - Title separator: use the whole filename as title, leave artist blank.
+        title = name_without_pn.replace("-", " ")
+        artists = []
     else:
         artist_part, title_part = name_without_pn.split(" - ", 1)
         artist_part = artist_part.strip()
@@ -155,34 +127,35 @@ def parse_song_info(filename: str) -> dict[str, str | list[str]] | None:
                 title = re.sub(rf"{pattern}.*?($|\()", " ", title, flags=re.IGNORECASE).strip()
                 break
 
-        for pattern in REMIX_PATTERNS:
-            remix_match = re.search(rf"\b{pattern}\b", title, re.IGNORECASE)
-            if remix_match:
-                remix_start = remix_match.start()
-                remix_prefix = ""
-                if remix_start > 0:
-                    prefix_words = title[:remix_start].strip().split()
-                    if prefix_words:
-                        remix_prefix = prefix_words[-1]
-                remix_end = len(title)
-                for sep in [" - ", " | "]:
-                    sep_pos = title.find(sep, remix_start)
-                    if sep_pos != -1 and sep_pos < remix_end:
-                        remix_end = sep_pos
-                remix_pattern = remix_match.group(0)
-                remix_suffix = title[remix_match.end() : remix_end].strip()
-                suffix_part = f" {remix_suffix}" if remix_suffix else ""
-                if remix_prefix:
-                    remix_info = f"{remix_prefix} {remix_pattern}{suffix_part}"
-                    title_words = title[:remix_start].strip().split()
-                    if title_words:
-                        title_words.pop()
-                        title = " ".join(title_words) + " " + title[remix_end:].strip()
-                else:
-                    remix_info = f"{remix_pattern}{suffix_part}"
-                    title = title[:remix_start].strip() + " " + title[remix_end:].strip()
-                title = re.sub(r"\s+", " ", title).strip()
-                break
+        if not PARENTHETICAL_REMIX.search(title):
+            for pattern in REMIX_PATTERNS:
+                remix_match = re.search(rf"\b{pattern}\b", title, re.IGNORECASE)
+                if remix_match:
+                    remix_start = remix_match.start()
+                    remix_prefix = ""
+                    if remix_start > 0:
+                        prefix_words = title[:remix_start].strip().split()
+                        if prefix_words:
+                            remix_prefix = prefix_words[-1]
+                    remix_end = len(title)
+                    for sep in [" - ", " | "]:
+                        sep_pos = title.find(sep, remix_start)
+                        if sep_pos != -1 and sep_pos < remix_end:
+                            remix_end = sep_pos
+                    remix_pattern = remix_match.group(0)
+                    remix_suffix = title[remix_match.end() : remix_end].strip()
+                    suffix_part = f" {remix_suffix}" if remix_suffix else ""
+                    if remix_prefix:
+                        remix_info = f"{remix_prefix} {remix_pattern}{suffix_part}"
+                        title_words = title[:remix_start].strip().split()
+                        if title_words:
+                            title_words.pop()
+                            title = " ".join(title_words) + " " + title[remix_end:].strip()
+                    else:
+                        remix_info = f"{remix_pattern}{suffix_part}"
+                        title = title[:remix_start].strip() + " " + title[remix_end:].strip()
+                    title = re.sub(r"\s+", " ", title).strip()
+                    break
 
     cleaned_artists: list[str] = []
     for artist in artists:
@@ -195,17 +168,19 @@ def parse_song_info(filename: str) -> dict[str, str | list[str]] | None:
     title = apply_file_namer_title_cleanup(title.strip())
 
     if remix_info:
-        remix_info = title_case_preserve(remix_info)
+        remix_info = title_case_preserve(remix_info).strip()
         if remix_info and not re.search(r"\([^)]*\)", title):
-            title = f"{title} ({remix_info.strip()})"
+            if remix_info.startswith("("):
+                title = f"{title} {remix_info}"
+            else:
+                title = f"{title} ({remix_info})"
 
-    title = title_case_preserve(title.strip())
+    title = normalize_parentheses(strip_title_noise(title.strip()))
+    title = title_case_preserve(title)
     cleaned_artists = [title_case_preserve(a) for a in cleaned_artists]
 
     if not title or title.strip() == "()":
         title = "Unknown Title"
-    if not cleaned_artists:
-        cleaned_artists = ["Unknown Artist"]
 
     return {"title": title, "contributing_artists": cleaned_artists}
 
@@ -234,14 +209,17 @@ def process_folder(root: Path, *, force: bool, dry_run: bool) -> None:
                 continue
 
             artists = info["contributing_artists"]
-            artist_display = ", ".join(artists) if isinstance(artists, list) else str(artists)
+            artist_display = ", ".join(artists) if artists else ""
             print(
                 f"{'[dry-run] ' if dry_run else ''}update: {filename} -> "
-                f"{info['title']} / {artist_display}"
+                f"{info['title']}" + (f" / {artist_display}" if artist_display else "")
             )
             if not dry_run:
                 audio["title"] = info["title"]
-                audio["artist"] = artists
+                if artists:
+                    audio["artist"] = artists
+                elif "artist" in audio:
+                    del audio["artist"]
                 audio.save(filepath)
             stats["updated"] += 1
 

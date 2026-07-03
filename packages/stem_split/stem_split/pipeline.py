@@ -54,6 +54,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -68,9 +69,25 @@ SUPPORTED_AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", "
 OUTPUT_MODEL_SUBDIR = "htdemucs_ft"
 
 
-def _separator_cmd() -> str:
-    """Return the CLI executable name for the current platform."""
-    return "mlx-audio-separator" if platform.system() == "Darwin" else "audio-separator"
+def _separator_cmd() -> list[str]:
+    """Return argv prefix for the platform audio-separator CLI.
+
+    Invoke via ``sys.executable`` instead of the console-script shim. uv's
+    Windows trampolines can fail with "failed to canonicalize script path"
+    when spawned from ``subprocess``.
+    """
+    import importlib.metadata as metadata
+
+    name = "mlx-audio-separator" if platform.system() == "Darwin" else "audio-separator"
+    for ep in metadata.entry_points(group="console_scripts"):
+        if ep.name == name:
+            module, _, func = ep.value.partition(":")
+            launcher = (
+                f"import sys; sys.argv[0]={name!r}; "
+                f"from {module} import {func}; {func}()"
+            )
+            return [sys.executable, "-c", launcher]
+    return [name]
 
 
 @contextmanager
@@ -219,7 +236,7 @@ def run_vocal_ensemble(input_path: str, song_stems_dir: Path, title: str) -> Non
 
         print("  [vocals] BS-Roformer pass...")
         subprocess.run(
-            [cmd_tool, input_path, "-m", VOCAL_BS_MODEL, *base_args],
+            [*cmd_tool, input_path, "-m", VOCAL_BS_MODEL, *base_args],
             check=True,
         )
         _convert_separator_output_to_24bit(
@@ -231,7 +248,7 @@ def run_vocal_ensemble(input_path: str, song_stems_dir: Path, title: str) -> Non
 
         print("  [vocals] Mel-Band Roformer pass...")
         subprocess.run(
-            [cmd_tool, input_path, "-m", VOCAL_MEL_MODEL, *base_args],
+            [*cmd_tool, input_path, "-m", VOCAL_MEL_MODEL, *base_args],
             check=True,
         )
         _convert_separator_output_to_24bit(
@@ -285,7 +302,7 @@ def run_htdemucs(input_path: str, song_stems_dir: Path, title: str) -> None:
         print("  [stems] htdemucs_ft pass on original mix...")
         subprocess.run(
             [
-                cmd_tool, input_path,
+                *cmd_tool, input_path,
                 "-m", DEMUCS_MODEL,
                 "--output_dir", str(sep_dir),
                 "--output_format", "WAV",

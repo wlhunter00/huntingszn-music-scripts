@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 from rich.console import Console
 
-from music_script.http import make_client
+from mashup_pop_finder.http import make_client
 
 _DOCS_URL = "https://getsongbpm.com/api"
 

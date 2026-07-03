@@ -11,9 +11,9 @@ from typing import Any
 
 import httpx
 
-from music_script import selectors
-from music_script.http import make_client
-from music_script.models import Candidate, SongMeta
+from mashup_pop_finder import selectors
+from mashup_pop_finder.http import make_client
+from mashup_pop_finder.models import Candidate, SongMeta
 
 
 class GetSongBpmError(RuntimeError):
@@ -72,7 +72,8 @@ def lookup(
 
     api_key = _get_api_key()
     url = base + path
-    params = {key_param: api_key, lookup_param: f"{title} {artist}".strip()}
+    lookup = f"song:{title} artist:{artist}".strip()
+    params = {key_param: api_key, lookup_param: lookup, "type": "both"}
 
     own = client is None
     client = client or make_client()

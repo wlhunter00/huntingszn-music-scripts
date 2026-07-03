@@ -19,6 +19,10 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from stem_split._bootstrap import ensure_config_importable
+
+ensure_config_importable()
+
 from config.paths import STEM_OUTPUT_MODEL
 from stem_split.pipeline import parse_song_title
 

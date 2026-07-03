@@ -6,59 +6,47 @@ production scraper (`songkeyfinder.py`) and API client (`getsongbpm.py`)
 refuse to run. See README §Recon-first.
 
 Workflow:
-1. `python -m music_script recon search --title ... --artist ...`
-2. `python -m music_script recon key --key "B minor"`
-3. `python -m music_script recon analyze` → reads recon-output/SUMMARY.md
+1. `python -m mashup_pop_finder recon search --title ... --artist ...`
+2. `python -m mashup_pop_finder recon key --key "B minor"`
+3. `python -m mashup_pop_finder recon analyze` → reads recon-output/SUMMARY.md
 4. Copy the "best-guess block" from SUMMARY.md into this file.
 """
 
 from __future__ import annotations
 
 # --- songkeyfinder.com -------------------------------------------------------
-# Base URL (no trailing slash). e.g. "https://songkeyfinder.com"
-SONGKEYFINDER_BASE_URL: str | None = None
+# Populated from recon against https://songkeyfinder.com (2026-05).
+SONGKEYFINDER_BASE_URL: str | None = "https://songkeyfinder.com"
 
-# Path templates with {placeholders}.
-# e.g. "/search?q={query}", "/key/{slug}"
-SONGKEYFINDER_SEARCH_PATH: str | None = None
-SONGKEYFINDER_KEY_LISTING_PATH: str | None = None
+SONGKEYFINDER_SEARCH_PATH: str | None = None  # not used yet
+SONGKEYFINDER_KEY_LISTING_PATH: str | None = "/songs-in-key/{slug}"
 
-# CSS selectors on a song detail page.
-# e.g. ".song-key", "[data-bpm]"
 SONG_PAGE_KEY_SELECTOR: str | None = None
 SONG_PAGE_BPM_SELECTOR: str | None = None
 
-# CSS selectors on a "songs in this key" listing page.
-# LISTING_ROW_SELECTOR matches each repeating song row/card.
-# TITLE/ARTIST are scoped within each row.
-LISTING_ROW_SELECTOR: str | None = None
-LISTING_TITLE_SELECTOR: str | None = None
-LISTING_ARTIST_SELECTOR: str | None = None
-LISTING_DETAIL_HREF_SELECTOR: str | None = None  # optional; "a" if rows are anchored
+LISTING_ROW_SELECTOR: str | None = "table.searchresults tr"
+LISTING_TITLE_SELECTOR: str | None = "td:nth-child(2) a"
+LISTING_ARTIST_SELECTOR: str | None = "td:nth-child(1) a"
+LISTING_DETAIL_HREF_SELECTOR: str | None = "td:nth-child(2) a"
 
 # --- getsongbpm.com API ------------------------------------------------------
-# Base URL for the API (no trailing slash). e.g. "https://api.getsongbpm.com"
-GETSONGBPM_API_BASE: str | None = None
+GETSONGBPM_API_BASE: str | None = "https://api.getsongbpm.com"
 
-# Search endpoint path + query-param names.
-# e.g. "/search/", with params {"type": "both", "lookup": "<title> <artist>", "api_key": "<key>"}
-GETSONGBPM_SEARCH_PATH: str | None = None
-GETSONGBPM_API_KEY_PARAM: str | None = None  # e.g. "api_key"
-GETSONGBPM_LOOKUP_PARAM: str | None = None  # e.g. "lookup"
+GETSONGBPM_SEARCH_PATH: str | None = "/search/"
+GETSONGBPM_API_KEY_PARAM: str | None = "api_key"
+GETSONGBPM_LOOKUP_PARAM: str | None = "lookup"
 
-# JSON paths (dot-notation) inside the search response.
-# e.g. "search.0.tempo", "search.0.title", "search.0.artist.name"
-GETSONGBPM_RESULT_LIST_PATH: str | None = None  # e.g. "search"
-GETSONGBPM_RESULT_TITLE_KEY: str | None = None  # e.g. "title" (within each result)
-GETSONGBPM_RESULT_ARTIST_KEY: str | None = None  # e.g. "artist.name"
-GETSONGBPM_RESULT_BPM_KEY: str | None = None  # e.g. "tempo"
+GETSONGBPM_RESULT_LIST_PATH: str | None = "search"
+GETSONGBPM_RESULT_TITLE_KEY: str | None = "title"
+GETSONGBPM_RESULT_ARTIST_KEY: str | None = "name"
+GETSONGBPM_RESULT_BPM_KEY: str | None = "tempo"
 
 
 def require(name: str, value: str | None) -> str:
     """Raise a clear error if a selector hasn't been filled in yet."""
     if value is None or value == "":
         raise RuntimeError(
-            f"{name} is not configured. Run `python -m music_script recon` and "
-            f"fill in music_script/selectors.py — see README §Recon-first."
+            f"{name} is not configured. Run `python -m mashup_pop_finder recon` and "
+            f"fill in mashup_pop_finder/selectors.py — see README §Recon-first."
         )
     return value

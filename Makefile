@@ -15,9 +15,13 @@ help:
 	@echo "  make sync              Install workspace (uv sync --all-packages)"
 	@echo "  make stem-split        Process songs-to-split -> stem-output"
 	@echo "  make stem-verify       Verify latest stem folder"
+	@echo "  make pn-pipeline       pn-rename -> pn-filename -> library-metadata (FLIP_STYLE=1 optional)"
 	@echo "  make pn-cleanup        Strip _pn from Platinum Notes filenames"
 	@echo "  make platinum-metadata Write ID3 tags from filenames"
 	@echo "  make library-dedupe    Remove duplicate files in DJ Spotify (filename/extension)"
+	@echo "  make serato-clear-cues Remove Serato hot cues from folder (ROOT=..., DRY_RUN=1)"
+	@echo "  make wav2mp3 INPUT=... Convert .wav to .mp3 (optional OUTPUT=..., BITRATE=320k)"
+	@echo "  make pn-filename ROOT=... Normalize flip filenames for Platinum Notes"
 	@echo "  make key-correct-catalog  Step 1: catalog current key tags"
 	@echo "  make mashup-recon      mashup-pop-finder recon (TITLE=... ARTIST=...)"
 	@echo "  make mashup-match      mashup-pop-finder match (TITLE=... ARTIST=...)"
@@ -39,6 +43,9 @@ stem-split:
 stem-verify:
 	uv run --package stem-split stem-verify
 
+pn-pipeline:
+	uv run --package library-tools pn-pipeline --root "$(PN_ROOT)" $(if $(FLIP_STYLE),--flip-style,) $(if $(FORCE),--force,) $(if $(DRY_RUN),--dry-run,) $(ARGS)
+
 pn-cleanup:
 	uv run --package library-tools pn-rename --root "$(PN_ROOT)" $(ARGS)
 
@@ -47,6 +54,15 @@ platinum-metadata:
 
 library-dedupe:
 	uv run --package library-tools library-dedupe $(ARGS)
+
+serato-clear-cues:
+	uv run --package library-tools serato-clear-cues $(if $(ROOT),--root "$(ROOT)",) $(if $(DRY_RUN),--dry-run,) $(ARGS)
+
+wav2mp3:
+	uv run --package library-tools wav2mp3 $(if $(OUTPUT),-o "$(OUTPUT)",) $(if $(BITRATE),-b "$(BITRATE)",) $(if $(OVERWRITE),--overwrite,) "$(INPUT)"
+
+pn-filename:
+	uv run --package library-tools pn-filename $(if $(DRY_RUN),--dry-run,) "$(ROOT)"
 
 key-correct-catalog:
 	uv run --package library-tools key-correct-catalog $(ARGS)

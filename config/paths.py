@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# Repo root: …/Scripts/config/paths.py -> …/Scripts
+_SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
+
+
 def _normalize_drive_root(raw: str) -> Path:
     """Normalize drive roots like ``G:`` to ``G:\\`` on Windows."""
     path = Path(raw).expanduser()
@@ -13,13 +17,28 @@ def _normalize_drive_root(raw: str) -> Path:
     return path
 
 
-DRIVE_ROOT = _normalize_drive_root(
-    os.environ.get("MUSIC_DRIVE_ROOT", "/Volumes/Will Hunter Music")
+def _load_env() -> None:
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(_SCRIPTS_ROOT / ".env")
+    except ImportError:
+        pass
+
+
+_load_env()
+
+_drive_override = os.environ.get("MUSIC_DRIVE_ROOT")
+DRIVE_ROOT = (
+    _normalize_drive_root(_drive_override)
+    if _drive_override
+    else _normalize_drive_root(str(_SCRIPTS_ROOT.parent))
 )
 
 SCRIPTS_ROOT = DRIVE_ROOT / "Scripts"
 PLATINUM_NOTES = DRIVE_ROOT / "Platnium Notes"
 DJ_SPOTIFY = DRIVE_ROOT / "DJ Music" / "Spotify"
+DJ_SOUNDCLOUD_NUKE = DRIVE_ROOT / "DJ Music" / "Soundcloud" / "1- need to nuke"
 DOWNLOADS = DRIVE_ROOT / "Downloads"
 
 STEM_DIR = DRIVE_ROOT / "Stem Splitting"
