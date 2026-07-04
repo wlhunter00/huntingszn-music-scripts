@@ -9,8 +9,14 @@ description = "Sample and plugin inventory scanners"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [project.scripts]
 sample-inventory = "catalogs.sample_inventory:main"
+vst-index = "catalogs.vst_indexer:main"
+minimal-catalog = "catalogs.minimal_catalog:main"
+rift-catalog = "catalogs.rift_catalog:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["catalogs"]

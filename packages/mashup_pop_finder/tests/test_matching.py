@@ -1,4 +1,4 @@
-from music_script.matching import classify_match_type, is_harmonic_match, ratio_to_base
+from mashup_pop_finder.matching import classify_match_type, is_harmonic_match, ratio_to_base
 
 
 class TestIsHarmonicMatch:

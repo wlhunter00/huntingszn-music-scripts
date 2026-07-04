@@ -7,7 +7,12 @@ name = "music-downloads"
 version = "0.1.0"
 description = "SoundCloud and YouTube audio downloaders"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "huntingszn-music-scripts",
+]
+
+[tool.uv.sources]
+huntingszn-music-scripts = { workspace = true }
 
 [project.scripts]
 sc-dl = "downloads.soundcloud:main"

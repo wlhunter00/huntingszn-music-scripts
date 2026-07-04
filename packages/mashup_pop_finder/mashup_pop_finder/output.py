@@ -9,7 +9,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from music_script.models import MatchResult, SongMeta
+from mashup_pop_finder.models import MatchResult, SongMeta
 
 _COLUMNS = ("rank", "title", "artist", "key", "bpm", "ratio", "match_type")
 

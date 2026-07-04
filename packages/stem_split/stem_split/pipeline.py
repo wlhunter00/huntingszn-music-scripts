@@ -1,4 +1,4 @@
-"""Stem-splitting pipeline.
+﻿"""Stem-splitting pipeline.
 
 Per song, produces 24-bit WAV stems in the existing folder layout
 `stem-output/htdemucs_ft/<song_base>/`:
@@ -54,6 +54,9 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import soundfile as sf
@@ -66,9 +69,50 @@ SUPPORTED_AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aac", "
 OUTPUT_MODEL_SUBDIR = "htdemucs_ft"
 
 
-def _separator_cmd() -> str:
-    """Return the CLI executable name for the current platform."""
-    return "mlx-audio-separator" if platform.system() == "Darwin" else "audio-separator"
+def _separator_cmd() -> list[str]:
+    """Return argv prefix for the platform audio-separator CLI.
+
+    Invoke via ``sys.executable`` instead of the console-script shim. uv's
+    Windows trampolines can fail with "failed to canonicalize script path"
+    when spawned from ``subprocess``.
+    """
+    import importlib.metadata as metadata
+
+    name = "mlx-audio-separator" if platform.system() == "Darwin" else "audio-separator"
+    for ep in metadata.entry_points(group="console_scripts"):
+        if ep.name == name:
+            module, _, func = ep.value.partition(":")
+            launcher = (
+                f"import sys; sys.argv[0]={name!r}; "
+                f"from {module} import {func}; {func}()"
+            )
+            return [sys.executable, "-c", launcher]
+    return [name]
+
+
+@contextmanager
+def _separator_export_dir(song_stems_dir: Path):
+    """Directory for audio-separator / mlx-audio-separator ``--output_dir``.
+
+    On macOS, mlx-audio-io can fail with ``OSStatus 'dta?'`` when writing WAVs
+    to external or network volumes (e.g. under ``/Volumes/``). Use a local
+    scratch folder there and copy stems into ``song_stems_dir`` via soundfile.
+
+    Windows and Linux are unchanged: separator writes directly into
+    ``song_stems_dir``.
+    """
+    song_stems_dir = Path(song_stems_dir)
+    if platform.system() != "Darwin":
+        yield song_stems_dir
+        return
+
+    scratch_root = Path.home() / "Library" / "Caches" / "stem-splitting-scratch"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    work_dir = Path(tempfile.mkdtemp(prefix="sep-", dir=scratch_root))
+    try:
+        yield work_dir
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def _sanitize_for_filesystem(name: str) -> str:
@@ -132,12 +176,12 @@ def clean_partial_state(song_stems_dir: Path, title: str) -> None:
 
 
 def _convert_separator_output_to_24bit(
-    song_stems_dir: Path, stem_tokens, target_path: Path
+    separator_dir: Path, stem_tokens, target_path: Path
 ) -> None:
     """Locate an audio-separator output matching any `_(<token>)_` in
-    `stem_tokens` (case-insensitive), read it, write it back as 24-bit PCM_24
-    WAV at `target_path`, then delete the source. Raises FileNotFoundError
-    if no match.
+    `stem_tokens` (case-insensitive) under ``separator_dir``, read it, write
+    24-bit PCM_24 WAV at ``target_path``, then delete the source. Raises
+    FileNotFoundError if no match.
 
     Different upstream models name the same stem differently. BS-Roformer
     writes `_(Vocals)_` / `_(Instrumental)_`, Mel-Band Roformer writes
@@ -147,11 +191,11 @@ def _convert_separator_output_to_24bit(
     """
     if isinstance(stem_tokens, str):
         stem_tokens = (stem_tokens,)
-    song_stems_dir = Path(song_stems_dir)
+    separator_dir = Path(separator_dir)
     wanted = {t.lower() for t in stem_tokens}
 
     matches = []
-    for f in song_stems_dir.glob("*_(*)_*.wav"):
+    for f in separator_dir.glob("*_(*)_*.wav"):
         name = f.name
         lo = name.find("_(")
         hi = name.find(")_", lo + 2)
@@ -163,7 +207,7 @@ def _convert_separator_output_to_24bit(
 
     if not matches:
         raise FileNotFoundError(
-            f"No separator output matching tokens {sorted(wanted)} found in {song_stems_dir}"
+            f"No separator output matching tokens {sorted(wanted)} found in {separator_dir}"
         )
     if len(matches) > 1:
         matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -182,35 +226,37 @@ def run_vocal_ensemble(input_path: str, song_stems_dir: Path, title: str) -> Non
     """
     song_stems_dir = Path(song_stems_dir)
     cmd_tool = _separator_cmd()
-    base_args = [
-        "--output_dir", str(song_stems_dir),
-        "--output_format", "WAV",
-        "--sample_rate", "44100",
-    ]
 
-    print("  [vocals] BS-Roformer pass...")
-    subprocess.run(
-        [cmd_tool, input_path, "-m", VOCAL_BS_MODEL, *base_args],
-        check=True,
-    )
-    _convert_separator_output_to_24bit(
-        song_stems_dir, ("Vocals",), song_stems_dir / f"{title}_vocals_bs.wav"
-    )
-    _convert_separator_output_to_24bit(
-        song_stems_dir, ("Instrumental", "Other"), song_stems_dir / f"{title}_no_vocals_bs.wav"
-    )
+    with _separator_export_dir(song_stems_dir) as sep_dir:
+        base_args = [
+            "--output_dir", str(sep_dir),
+            "--output_format", "WAV",
+            "--sample_rate", "44100",
+        ]
 
-    print("  [vocals] Mel-Band Roformer pass...")
-    subprocess.run(
-        [cmd_tool, input_path, "-m", VOCAL_MEL_MODEL, *base_args],
-        check=True,
-    )
-    _convert_separator_output_to_24bit(
-        song_stems_dir, ("Vocals",), song_stems_dir / f"{title}_vocals_mel.wav"
-    )
-    _convert_separator_output_to_24bit(
-        song_stems_dir, ("Instrumental", "Other"), song_stems_dir / f"{title}_no_vocals_mel.wav"
-    )
+        print("  [vocals] BS-Roformer pass...")
+        subprocess.run(
+            [*cmd_tool, input_path, "-m", VOCAL_BS_MODEL, *base_args],
+            check=True,
+        )
+        _convert_separator_output_to_24bit(
+            sep_dir, ("Vocals",), song_stems_dir / f"{title}_vocals_bs.wav"
+        )
+        _convert_separator_output_to_24bit(
+            sep_dir, ("Instrumental", "Other"), song_stems_dir / f"{title}_no_vocals_bs.wav"
+        )
+
+        print("  [vocals] Mel-Band Roformer pass...")
+        subprocess.run(
+            [*cmd_tool, input_path, "-m", VOCAL_MEL_MODEL, *base_args],
+            check=True,
+        )
+        _convert_separator_output_to_24bit(
+            sep_dir, ("Vocals",), song_stems_dir / f"{title}_vocals_mel.wav"
+        )
+        _convert_separator_output_to_24bit(
+            sep_dir, ("Instrumental", "Other"), song_stems_dir / f"{title}_no_vocals_mel.wav"
+        )
 
     print("  [vocals] Averaging ensemble outputs...")
     bs_v, sr_v = sf.read(song_stems_dir / f"{title}_vocals_bs.wav", dtype="float32")
@@ -252,36 +298,37 @@ def run_htdemucs(input_path: str, song_stems_dir: Path, title: str) -> None:
     song_stems_dir = Path(song_stems_dir)
     cmd_tool = _separator_cmd()
 
-    print("  [stems] htdemucs_ft pass on original mix...")
-    subprocess.run(
-        [
-            cmd_tool, input_path,
-            "-m", DEMUCS_MODEL,
-            "--output_dir", str(song_stems_dir),
-            "--output_format", "WAV",
-            "--sample_rate", "44100",
-            "--demucs_shifts", "2",
-            "--demucs_overlap", "0.25",
-            "--demucs_segment_size", "7",
-        ],
-        check=True,
-    )
+    with _separator_export_dir(song_stems_dir) as sep_dir:
+        print("  [stems] htdemucs_ft pass on original mix...")
+        subprocess.run(
+            [
+                *cmd_tool, input_path,
+                "-m", DEMUCS_MODEL,
+                "--output_dir", str(sep_dir),
+                "--output_format", "WAV",
+                "--sample_rate", "44100",
+                "--demucs_shifts", "2",
+                "--demucs_overlap", "0.25",
+                "--demucs_segment_size", "7",
+            ],
+            check=True,
+        )
 
-    _convert_separator_output_to_24bit(
-        song_stems_dir, ("Drums",), song_stems_dir / f"{title}_drums.wav"
-    )
-    _convert_separator_output_to_24bit(
-        song_stems_dir, ("Bass",), song_stems_dir / f"{title}_bass.wav"
-    )
-    _convert_separator_output_to_24bit(
-        song_stems_dir, ("Other",), song_stems_dir / f"{title}_other.wav"
-    )
+        _convert_separator_output_to_24bit(
+            sep_dir, ("Drums",), song_stems_dir / f"{title}_drums.wav"
+        )
+        _convert_separator_output_to_24bit(
+            sep_dir, ("Bass",), song_stems_dir / f"{title}_bass.wav"
+        )
+        _convert_separator_output_to_24bit(
+            sep_dir, ("Other",), song_stems_dir / f"{title}_other.wav"
+        )
 
-    for f in song_stems_dir.glob("*_(*)_*.wav"):
-        name = f.name
-        lo, hi = name.find("_("), name.find(")_")
-        if lo != -1 and hi != -1 and name[lo + 2 : hi].lower() == "vocals":
-            f.unlink()
+        for f in sep_dir.glob("*_(*)_*.wav"):
+            name = f.name
+            lo, hi = name.find("_("), name.find(")_")
+            if lo != -1 and hi != -1 and name[lo + 2 : hi].lower() == "vocals":
+                f.unlink()
 
 
 def process_audio_folder(input_folder: str, output_folder: str) -> None:
@@ -326,5 +373,4 @@ def process_audio_folder(input_folder: str, output_folder: str) -> None:
             except Exception as cleanup_exc:
                 print(f"  Cleanup also failed: {cleanup_exc}")
             continue
-
 

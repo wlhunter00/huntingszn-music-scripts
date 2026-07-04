@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from stem_split._bootstrap import ensure_config_importable
+
+ensure_config_importable()
+
 from config.paths import STEM_INPUT, STEM_OUTPUT
 from stem_split.pipeline import process_audio_folder
 

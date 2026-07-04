@@ -5,21 +5,27 @@ build-backend = "hatchling.build"
 [project]
 name = "library-tools"
 version = "0.1.0"
-description = "DJ library metadata, duplicates, Platinum Notes cleanup, key correction"
-requires-python = ">=3.11"
+description = "DJ library metadata, duplicates, Platinum Notes cleanup, Serato cue clearing, key correction"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "mutagen>=1.47",
     "python-dotenv>=1.0",
+    "serato-tools>=4.0",
 ]
 
 [project.optional-dependencies]
 key-correction = ["spotipy>=2.23", "pandas>=2.0"]
+dev = ["pytest>=8"]
 
 [project.scripts]
 pn-rename = "library_tools.pn_rename:main"
 library-metadata = "library_tools.metadata:main"
 library-dedupe = "library_tools.duplicate:main"
 key-correct-catalog = "library_tools.key_correction.step1_catalog:main"
+wav2mp3 = "library_tools.wav2mp3:main"
+pn-filename = "library_tools.pn_filename:main"
+pn-pipeline = "library_tools.pn_pipeline:main"
+serato-clear-cues = "library_tools.serato_clear_cues:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["library_tools"]

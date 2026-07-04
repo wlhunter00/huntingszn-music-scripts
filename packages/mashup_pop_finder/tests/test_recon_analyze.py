@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from music_script.recon.analyze import analyze_html, render_summary, run
+from mashup_pop_finder.recon.analyze import analyze_html, render_summary, run
 
 _LISTING_HTML = """\
 <!doctype html>

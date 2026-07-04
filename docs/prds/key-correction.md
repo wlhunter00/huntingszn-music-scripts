@@ -42,4 +42,4 @@ pandas
 - Use `.env` for `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`.
 - Essentia install is heavy on macOS — document in README.
 - Makefile: `make key-correct-1` … `make key-correct-5`.
-- **Different from `music-script`** (harmonic match finder for DJ sets).
+- **Different from `mashup-pop-finder`** (mashup/pop harmonic match finder for DJ sets).

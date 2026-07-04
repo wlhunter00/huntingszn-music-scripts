@@ -1,6 +1,6 @@
 # Scripts inventory
 
-Last updated: 2026-05-23 (monorepo phases 3–8)
+Last updated: 2026-05-25 (restored from E:\Music Backup\Scripts + Stem Splitting sync)
 
 Repo: https://github.com/wlhunter00/huntingszn-music-scripts
 
@@ -8,11 +8,11 @@ Repo: https://github.com/wlhunter00/huntingszn-music-scripts
 
 | Package | Status | Makefile / CLI |
 |---------|--------|----------------|
-| `music_script` | Complete (from paid-social-content-agent) | `make music-recon`, `music-match` |
-| `stem_split` | Migrated from Stem Splitting | `make stem-split`, `stem-verify` |
-| `library_tools` | Recreated (metadata, pn, dedupe, key step1) | `make pn-cleanup`, `platinum-metadata`, … |
+| `mashup_pop_finder` | Complete (from paid-social-content-agent) | `make mashup-recon`, `mashup-match` |
+| `stem_split` | Restored (macOS scratch-dir fix; drive scripts retired) | `make stem-split`, `stem-verify` |
+| `library_tools` | Restored from backup (metadata, pn, dedupe, key step1) | `make pn-cleanup`, `platinum-metadata`, `library-dedupe`, … |
 | `downloads` | Recreated | `make sc-dl`, `yt-dl` |
-| `catalogs` | Recreated (`sample_inventory`) | `make sample-inventory` |
+| `catalogs` | Restored (sample inventory + VST/Minimal/Rift) | `make sample-inventory`, `vst-index`, `minimal-catalog`, `rift-catalog` |
 | `soundcloud_repost` | Recreated | `sc-unrepost` |
 | `gpt_trainer` | Placeholder only | See PRD |
 
@@ -32,5 +32,4 @@ Not yet recreated. Step 1: `make key-correct-catalog`. Spec: [docs/prds/key-corr
 
 ## Planned
 
-- Merge `Stem Splitting/demucs-master.py` shim or remove after confirming `make stem-split`
 - Recreate GPT trainer and key correction steps 2–5 from PRDs
