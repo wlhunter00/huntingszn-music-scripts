@@ -11,6 +11,7 @@ Repo: https://github.com/wlhunter00/huntingszn-music-scripts
 | `mashup_pop_finder` | Complete (from paid-social-content-agent) | `make mashup-recon`, `mashup-match` |
 | `stem_split` | Restored (macOS scratch-dir fix; drive scripts retired) | `make stem-split`, `stem-verify` |
 | `library_tools` | Restored from backup (metadata, pn, dedupe, key step1) | `make pn-cleanup`, `platinum-metadata`, `library-dedupe`, … |
+| `library_sync` | v1 — index HDD, SQLite catalog, B2 stubs, key/BPM query | `make library-index`, `library-publish`, `library-pull`, `library-query` |
 | `downloads` | Recreated | `make sc-dl`, `yt-dl` |
 | `catalogs` | Restored (sample inventory + VST/Minimal/Rift) | `make sample-inventory`, `vst-index`, `minimal-catalog`, `rift-catalog` |
 | `soundcloud_repost` | Recreated | `sc-unrepost` |

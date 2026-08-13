@@ -14,8 +14,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv python install 3.11
+      - run: uv python install 3.12
       - run: uv sync --all-packages
       - run: uv run ruff check config packages
       - run: uv run python -m compileall -q config packages
       - run: uv run --package mashup-pop-finder pytest
+      - run: uv run --package library-sync pytest packages/library_sync/tests

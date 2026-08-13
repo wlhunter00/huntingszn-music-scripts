@@ -111,6 +111,38 @@ uv run --package soundcloud-repost sc-unrepost
 
 Optional: `--profile-url`. Opens Chrome via Selenium.
 
+### `library-sync` — music inventory layer
+
+Index portable HDD library, sync to B2, query by Camelot key and BPM:
+
+```bash
+# Check if drive is mounted
+uv run --package library-sync library-sync detect
+
+# Index library to SQLite
+uv run --package library-sync library-sync index --dry-run
+uv run --package library-sync library-sync index
+
+# Query tracks (for Music Production Agent)
+uv run --package library-sync library-sync query --camelot 8A --bpm 140
+uv run --package library-sync library-sync query --q "halo" --json
+
+# Publish to B2 (requires B2_REMOTE + B2_BUCKET in .env)
+uv run --package library-sync library-sync publish --dry-run
+
+# Pull projects from B2 to Ready to Mix
+uv run --package library-sync library-sync pull --dry-run
+
+# Show status
+uv run --package library-sync library-sync status
+```
+
+**Harmonic mixing rules:**
+- Camelot: matches ±1 on wheel plus relative major/minor (e.g., 8A matches 7A, 8A, 9A, 8B)
+- BPM: matches ±6 of target, plus ±6 of half-time (0.5×) and double-time (2×)
+
+**Indexed roots:** `DJ Music/` and `Platnium Notes/` only. Skips stem-output, Producing Sounds, Ableton, etc.
+
 ### Tests & lint
 
 ```bash
@@ -134,6 +166,7 @@ uv run ruff check packages config
 | `mashup_pop_finder` | Mashup/pop key + BPM matcher |
 | `stem_split` | Vocal ensemble + Demucs stems |
 | `library_tools` | Metadata, duplicates, Platinum Notes cleanup, key correction |
+| `library_sync` | Music inventory: index HDD, sync B2, query by key/BPM |
 | `music-downloads` | SoundCloud (MP3 320) / YouTube |
 | `music-catalogs` | Sample/plugin CSV scanners |
 | `soundcloud_repost` | Selenium unrepost tool |

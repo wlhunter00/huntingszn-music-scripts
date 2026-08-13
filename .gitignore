@@ -27,6 +27,7 @@ cookies.txt
 # Generated catalogs and logs
 *.csv
 *.log
+*.sqlite
 !docs/**/*.csv
 
 # Audio and large binaries (not source)

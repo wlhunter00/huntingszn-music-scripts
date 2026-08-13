@@ -1,0 +1,192 @@
+"""Tests for indexing functionality."""
+
+import os
+from pathlib import Path
+
+from library_sync.db import LibraryDB
+from library_sync.index import (
+    _is_audio_file,
+    _should_skip_dir,
+    _should_skip_file,
+    _to_posix_relative,
+    index_files,
+    scan_directory,
+)
+
+
+class TestSkipPatterns:
+    def test_skip_appledouble(self):
+        assert _should_skip_file("._song.mp3")
+        assert _should_skip_file("._anything")
+
+    def test_skip_ds_store(self):
+        assert _should_skip_file(".DS_Store")
+
+    def test_normal_files_not_skipped(self):
+        assert not _should_skip_file("song.mp3")
+        assert not _should_skip_file("Artist - Title.wav")
+
+    def test_skip_stem_output(self):
+        assert _should_skip_dir("stem-output")
+
+    def test_skip_production_dirs(self):
+        assert _should_skip_dir("Producing Sounds")
+        assert _should_skip_dir("Ableton")
+        assert _should_skip_dir("Instruments")
+        assert _should_skip_dir("serum presets")
+
+    def test_index_dirs_not_skipped(self):
+        assert not _should_skip_dir("DJ Music")
+        assert not _should_skip_dir("Platnium Notes")
+        assert not _should_skip_dir("Spotify")
+
+
+class TestAudioExtensions:
+    def test_supported_extensions(self):
+        assert _is_audio_file(Path("song.mp3"))
+        assert _is_audio_file(Path("song.wav"))
+        assert _is_audio_file(Path("song.aiff"))
+        assert _is_audio_file(Path("song.aif"))
+        assert _is_audio_file(Path("song.flac"))
+        assert _is_audio_file(Path("song.m4a"))
+
+    def test_case_insensitive(self):
+        assert _is_audio_file(Path("song.MP3"))
+        assert _is_audio_file(Path("song.WAV"))
+        assert _is_audio_file(Path("song.FLAC"))
+
+    def test_unsupported_extensions(self):
+        assert not _is_audio_file(Path("song.txt"))
+        assert not _is_audio_file(Path("song.jpg"))
+        assert not _is_audio_file(Path("song.als"))
+
+
+class TestPosixPath:
+    def test_converts_to_posix(self):
+        root = Path("/drive")
+        path = root / "DJ Music" / "Spotify" / "song.mp3"
+        result = _to_posix_relative(path, root)
+        assert result == "DJ Music/Spotify/song.mp3"
+        assert "\\" not in result
+
+    def test_nested_path(self):
+        root = Path("/drive")
+        path = root / "Platnium Notes" / "Artist" / "Song.mp3"
+        result = _to_posix_relative(path, root)
+        assert result == "Platnium Notes/Artist/Song.mp3"
+
+
+class TestScanDirectory:
+    def test_scans_audio_files(self, tmp_path):
+        dj_music = tmp_path / "DJ Music" / "Spotify"
+        dj_music.mkdir(parents=True)
+
+        (dj_music / "song1.mp3").write_bytes(b"fake mp3")
+        (dj_music / "song2.wav").write_bytes(b"fake wav")
+        (dj_music / "readme.txt").write_bytes(b"text file")
+
+        files = scan_directory(tmp_path / "DJ Music", tmp_path)
+        paths = [f[1] for f in files]
+
+        assert "DJ Music/Spotify/song1.mp3" in paths
+        assert "DJ Music/Spotify/song2.wav" in paths
+        assert "DJ Music/Spotify/readme.txt" not in paths
+
+    def test_skips_stem_output(self, tmp_path):
+        stem_output = tmp_path / "Stem Splitting" / "stem-output"
+        stem_output.mkdir(parents=True)
+        (stem_output / "vocals.mp3").write_bytes(b"fake mp3")
+
+        files = scan_directory(tmp_path / "Stem Splitting", tmp_path)
+        paths = [f[1] for f in files]
+
+        assert len(paths) == 0
+
+    def test_skips_appledouble(self, tmp_path):
+        dj_music = tmp_path / "DJ Music"
+        dj_music.mkdir(parents=True)
+
+        (dj_music / "song.mp3").write_bytes(b"fake mp3")
+        (dj_music / "._song.mp3").write_bytes(b"appledouble")
+        (dj_music / ".DS_Store").write_bytes(b"ds store")
+
+        files = scan_directory(dj_music, tmp_path)
+        filenames = [Path(f[0]).name for f in files]
+
+        assert "song.mp3" in filenames
+        assert "._song.mp3" not in filenames
+        assert ".DS_Store" not in filenames
+
+
+class TestIndexFiles:
+    def test_incremental_skip_unchanged(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive_root = tmp_path / "drive"
+        dj_music = drive_root / "DJ Music"
+        dj_music.mkdir(parents=True)
+
+        song_file = dj_music / "song.mp3"
+        song_file.write_bytes(b"fake mp3 content")
+
+        with LibraryDB(db_path) as db:
+            stats1 = index_files(db, drive_root, [dj_music])
+            assert stats1["added"] == 1
+            assert stats1["skipped"] == 0
+
+            stats2 = index_files(db, drive_root, [dj_music])
+            assert stats2["added"] == 0
+            assert stats2["skipped"] == 1
+
+    def test_reindex_on_mtime_change(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive_root = tmp_path / "drive"
+        dj_music = drive_root / "DJ Music"
+        dj_music.mkdir(parents=True)
+
+        song_file = dj_music / "song.mp3"
+        song_file.write_bytes(b"fake mp3 content")
+
+        with LibraryDB(db_path) as db:
+            stats1 = index_files(db, drive_root, [dj_music])
+            assert stats1["added"] == 1
+
+            song_file.write_bytes(b"modified mp3 content - different size")
+            os.utime(song_file, (999999999, 999999999))
+
+            stats2 = index_files(db, drive_root, [dj_music])
+            assert stats2["updated"] == 1
+            assert stats2["skipped"] == 0
+
+    def test_dry_run_no_write(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive_root = tmp_path / "drive"
+        dj_music = drive_root / "DJ Music"
+        dj_music.mkdir(parents=True)
+
+        (dj_music / "song.mp3").write_bytes(b"fake mp3")
+
+        with LibraryDB(db_path) as db:
+            stats = index_files(db, drive_root, [dj_music], dry_run=True)
+            assert stats["added"] == 1
+            assert db.count_tracks() == 0
+
+    def test_marks_missing(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive_root = tmp_path / "drive"
+        dj_music = drive_root / "DJ Music"
+        dj_music.mkdir(parents=True)
+
+        song1 = dj_music / "song1.mp3"
+        song2 = dj_music / "song2.mp3"
+        song1.write_bytes(b"fake mp3 1")
+        song2.write_bytes(b"fake mp3 2")
+
+        with LibraryDB(db_path) as db:
+            index_files(db, drive_root, [dj_music])
+            assert db.count_tracks(status="present") == 2
+
+            song2.unlink()
+            stats = index_files(db, drive_root, [dj_music])
+            assert stats["missing"] == 1
+            assert db.count_tracks(status="present") == 1
+            assert db.count_tracks(status="missing") == 1
