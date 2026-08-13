@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -47,6 +48,29 @@ def _get_paths(args_root: Path | None) -> tuple[Path | None, Path, list[Path]]:
         drive_root / "Platnium Notes",
     ]
     return drive_root, sqlite_path, index_roots
+
+
+def _resolve_db_path(explicit_db: Path | None) -> Path:
+    """Resolve database path for query/status (works without drive mounted).
+
+    Fallback order:
+    1. explicit --db PATH if provided
+    2. {drive}/Scripts/data/library.sqlite if drive is mounted
+    3. LIBRARY_SQLITE env variable
+    4. CWD library.sqlite
+    """
+    if explicit_db is not None:
+        return explicit_db
+
+    drive_root = find_drive()
+    if drive_root is not None:
+        return drive_root / "Scripts" / "data" / "library.sqlite"
+
+    env_path = os.environ.get("LIBRARY_SQLITE")
+    if env_path:
+        return Path(env_path)
+
+    return Path("library.sqlite")
 
 
 def cmd_detect(args: argparse.Namespace) -> int:
@@ -158,7 +182,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
 def cmd_query(args: argparse.Namespace) -> int:
     """Query tracks by camelot/bpm/text."""
-    _, sqlite_path, _ = _get_paths(None)
+    sqlite_path = _resolve_db_path(args.db)
 
     if not sqlite_path.exists():
         print(f"Error: database not found at {sqlite_path}", file=sys.stderr)
@@ -185,7 +209,8 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     """Show status of drive, database, and B2 config."""
-    drive_root, sqlite_path, index_roots = _get_paths(None)
+    drive_root = find_drive()
+    sqlite_path = _resolve_db_path(args.db)
     config = RcloneConfig.from_env()
 
     print("=== Library Sync Status ===")
@@ -251,6 +276,7 @@ def main() -> None:
     sub_pull.set_defaults(func=cmd_pull)
 
     sub_query = subparsers.add_parser("query", help="Query tracks by camelot/BPM/text")
+    sub_query.add_argument("--db", type=Path, help="Path to SQLite database")
     sub_query.add_argument("--camelot", help="Target Camelot key (e.g., 8A)")
     sub_query.add_argument("--bpm", type=float, help="Target BPM")
     sub_query.add_argument("--q", help="Text search in artist/title/filename")
@@ -262,6 +288,7 @@ def main() -> None:
     sub_query.set_defaults(func=cmd_query)
 
     sub_status = subparsers.add_parser("status", help="Show status of drive, database, B2 config")
+    sub_status.add_argument("--db", type=Path, help="Path to SQLite database")
     sub_status.set_defaults(func=cmd_status)
 
     args = parser.parse_args()

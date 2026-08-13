@@ -11,9 +11,8 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
 
 from config.paths import PLATINUM_NOTES
+from library_tools.known_artists import KNOWN_ARTISTS
 from library_tools.pn_filename import normalize_parentheses, strip_title_noise
-
-from library_tools.known_artists import KNOWN_ARTISTS, is_known_artist
 
 FEATURE_PATTERNS = [
     r"\bft\.?\b",

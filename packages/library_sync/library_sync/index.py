@@ -77,7 +77,7 @@ def scan_directory(
     root: Path,
     drive_root: Path,
     *,
-    callback: callable | None = None,
+    callback: object = None,
 ) -> list[tuple[Path, str]]:
     """Scan directory for audio files.
 
@@ -117,7 +117,7 @@ def index_files(
     index_roots: list[Path],
     *,
     dry_run: bool = False,
-    progress_callback: callable | None = None,
+    progress_callback: object = None,
 ) -> dict[str, int]:
     """Index audio files into the database.
 

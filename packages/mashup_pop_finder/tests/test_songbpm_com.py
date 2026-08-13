@@ -1,5 +1,4 @@
 import httpx
-import pytest
 import respx
 
 from mashup_pop_finder import songbpm_com

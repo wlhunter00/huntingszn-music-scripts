@@ -23,8 +23,8 @@ from stem_split._bootstrap import ensure_config_importable
 
 ensure_config_importable()
 
-from config.paths import STEM_OUTPUT_MODEL
-from stem_split.pipeline import parse_song_title
+from config.paths import STEM_OUTPUT_MODEL  # noqa: E402
+from stem_split.pipeline import parse_song_title  # noqa: E402
 
 OUTPUT_ROOT = STEM_OUTPUT_MODEL
 
@@ -140,7 +140,9 @@ def check_durations(song_dir: Path, title: str, original: Path):
         info = sf.info(path)
         diff_ms = abs(info.duration - info_orig.duration) * 1000
         if diff_ms > 100:
-            bad.append(f"{f}: {info.duration:.3f}s vs orig {info_orig.duration:.3f}s (diff {diff_ms:.0f} ms)")
+            msg = f"{f}: {info.duration:.3f}s vs orig {info_orig.duration:.3f}s "
+            msg += f"(diff {diff_ms:.0f} ms)"
+            bad.append(msg)
     if bad:
         return False, "; ".join(bad)
     return True, f"All 8 stems within 100 ms of input duration ({info_orig.duration:.2f}s)."
@@ -203,10 +205,16 @@ def check_demucs_stems_vs_no_vocals(song_dir: Path, title: str, original: Path):
     diff_vs_orig = abs(db(rms(sum_dbo)) - db(rms(orig[:n])))
     closest = min(diff_vs_nv, diff_vs_orig)
     if closest > 15.0:
-        return False, f"drums+bass+other RMS diff: vs no_vocals={diff_vs_nv:.2f} dB, vs orig={diff_vs_orig:.2f} dB (both >15)"
+        msg = f"drums+bass+other RMS diff: vs no_vocals={diff_vs_nv:.2f} dB, "
+        msg += f"vs orig={diff_vs_orig:.2f} dB (both >15)"
+        return False, msg
     if closest > 8.0:
-        return True, f"WITHIN-LOOSE-TOLERANCE: drums+bass+other vs no_vocals={diff_vs_nv:.2f} dB, vs orig={diff_vs_orig:.2f} dB (closest>{8.0:.0f} dB but <15 dB; acceptable per plan)"
-    return True, f"drums+bass+other within {closest:.2f} dB RMS of nearest reference (vs no_vocals={diff_vs_nv:.2f}, vs orig={diff_vs_orig:.2f})"
+        msg = f"WITHIN-LOOSE-TOLERANCE: drums+bass+other vs no_vocals={diff_vs_nv:.2f} dB, "
+        msg += f"vs orig={diff_vs_orig:.2f} dB (closest>{8.0:.0f} dB but <15 dB)"
+        return True, msg
+    msg = f"drums+bass+other within {closest:.2f} dB RMS of nearest reference "
+    msg += f"(vs no_vocals={diff_vs_nv:.2f}, vs orig={diff_vs_orig:.2f})"
+    return True, msg
 
 
 def _sha256(path: Path):
@@ -248,8 +256,11 @@ def check_parse_song_title():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("song_dir", nargs="?", default=None)
-    ap.add_argument("--input", default=None,
-                    help="Path to original input file (defaults to None; use this to verify it was moved)")
+    ap.add_argument(
+        "--input",
+        default=None,
+        help="Path to original input file (use to verify it was moved)",
+    )
     args = ap.parse_args()
 
     song_dir = Path(args.song_dir) if args.song_dir else find_latest_song_dir()

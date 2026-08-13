@@ -6,7 +6,6 @@ import argparse
 from pathlib import Path
 
 from config.paths import PLATINUM_NOTES
-
 from library_tools import metadata, pn_filename, pn_rename
 
 
@@ -42,7 +41,7 @@ def main() -> None:
     parser.add_argument(
         "--flip-style",
         action="store_true",
-        help="Optional: drop retail artist prefix on flips during filename normalization (off by default)",
+        help="Drop retail artist prefix on flips during filename normalization",
     )
     parser.add_argument(
         "--force",

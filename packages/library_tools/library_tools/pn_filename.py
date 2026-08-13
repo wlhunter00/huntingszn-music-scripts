@@ -76,7 +76,11 @@ def sanitize_stem(stem: str, *, flip_style: bool = False) -> str:
 
 
 def _keep_producer_prefix(artist: str, rest: str) -> bool:
-    """Producer flips like TYNAN - SONG FLIP keep the prefix; retail Artist - Title (X FLIP) do not."""
+    """Check if producer prefix should be kept.
+
+    Producer flips like TYNAN - SONG FLIP keep the prefix.
+    Retail Artist - Title (X FLIP) do not.
+    """
     if not re.search(r"\bflip\b", rest, re.IGNORECASE):
         return False
     if re.search(r"\([^)]*\bflip\b", rest, re.IGNORECASE):
@@ -128,7 +132,7 @@ def main() -> None:
     parser.add_argument(
         "--flip-style",
         action="store_true",
-        help="Drop retail artist prefix on flips, e.g. 'Rihanna - Diamonds (X FLIP)' -> 'Diamonds (X FLIP)'",
+        help="Drop retail artist prefix on flips (Artist - Song (Flip) -> Song (Flip))",
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
