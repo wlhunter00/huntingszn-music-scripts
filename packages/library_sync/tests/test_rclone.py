@@ -68,6 +68,8 @@ class TestPublishExcludes:
         assert ".DS_Store" in PUBLISH_EXCLUDES
         assert "._*" in PUBLISH_EXCLUDES
         assert ".git/**" in PUBLISH_EXCLUDES
+        assert ".venv/**" in PUBLISH_EXCLUDES
+        assert "**/__pycache__/**" in PUBLISH_EXCLUDES
 
 
 class TestDryRun:
@@ -109,6 +111,40 @@ class TestDryRun:
 
         assert cmd is not None
         assert "Music Production Agent" in cmd or "projects" in cmd.lower()
+        assert " copy " in f" {cmd} " or cmd.startswith("rclone copy")
+        assert "sync" not in cmd
+
+
+class TestPublishMode:
+    def test_default_is_copy_not_sync(self, tmp_path, capsys):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
+        commands = publish_drive(drive_root, config)
+        assert any("rclone copy" in c for c in commands)
+        assert not any("rclone sync" in c for c in commands)
+
+    def test_allow_delete_uses_sync(self, tmp_path):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
+        commands = publish_drive(drive_root, config, allow_delete=True)
+        assert any("rclone sync" in c for c in commands)
+
+    def test_configured_run_raises_on_rclone_failure(self, tmp_path):
+        from library_sync.rclone import RcloneError, _run_rclone
+
+        fake = type("R", (), {})()
+        fake.returncode = 1
+        fake.stderr = "boom"
+        fake.stdout = ""
+        with patch("library_sync.rclone.subprocess.run", return_value=fake):
+            try:
+                _run_rclone(["copy", "a", "b"])
+                raise AssertionError("expected RcloneError")
+            except RcloneError as exc:
+                assert exc.returncode == 1
+                assert "boom" in str(exc)
 
 
 class TestUnconfiguredB2:

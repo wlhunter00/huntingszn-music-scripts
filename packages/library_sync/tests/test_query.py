@@ -110,3 +110,9 @@ class TestQueryTracks:
     def test_limit(self, db_with_tracks):
         results = query_tracks(db_with_tracks, limit=2)
         assert len(results) == 2
+
+    def test_open_key_query(self, db_with_tracks):
+        results = query_tracks(db_with_tracks, camelot="1m")
+        camelot_keys = {t.camelot_key for t in results}
+        assert "8A" in camelot_keys
+        assert "5A" not in camelot_keys

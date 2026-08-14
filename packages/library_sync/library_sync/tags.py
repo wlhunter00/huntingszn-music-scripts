@@ -14,7 +14,7 @@ from mutagen import File as MutagenFile
 from mutagen.id3 import ID3
 from mutagen.mp3 import MP3
 
-from library_sync.camelot import musical_to_camelot
+from library_sync.camelot import musical_to_camelot, open_key_to_camelot
 
 
 @dataclass
@@ -54,6 +54,7 @@ def _parse_key_and_camelot(
     Returns (musical_key, camelot_key)
     """
     camelot_pattern = re.compile(r"\b(1[0-2]|[1-9])[ABab]\b")
+    open_key_pattern = re.compile(r"\b(1[0-2]|[1-9])[mdMD]\b")
 
     musical_key = None
     camelot_key = None
@@ -73,6 +74,10 @@ def _parse_key_and_camelot(
         match = camelot_pattern.search(comment)
         if match:
             camelot_key = match.group(0).upper()
+        else:
+            open_match = open_key_pattern.search(comment)
+            if open_match:
+                camelot_key = open_key_to_camelot(open_match.group(0))
 
     return musical_key, camelot_key
 
@@ -102,19 +107,44 @@ def _get_comment(tags: ID3) -> str | None:
     return None
 
 
+def parse_filename_artist_title(filename: str) -> tuple[str | None, str | None]:
+    """Parse Artist - Title from a filename stem."""
+    stem = Path(filename).stem
+    if " - " in stem:
+        artist, title = stem.split(" - ", 1)
+        artist = artist.strip() or None
+        title = title.strip() or None
+        return artist, title
+    cleaned = stem.strip() or None
+    return None, cleaned
+
+
+def _apply_filename_fallback(path: Path, tags: TrackTags) -> TrackTags:
+    """Fill missing artist/title from the filename."""
+    if tags.artist and tags.title:
+        return tags
+    artist, title = parse_filename_artist_title(path.name)
+    if not tags.artist:
+        tags.artist = artist
+    if not tags.title:
+        tags.title = title
+    return tags
+
+
 def read_tags(path: Path) -> TrackTags:
     """Read audio tags from a file.
 
     Supports MP3, FLAC, AIFF, WAV, and M4A files.
+    Falls back to 'Artist - Title' filename parsing when tags are missing.
     """
     tags = TrackTags()
 
     try:
         audio = MutagenFile(path, easy=False)
         if audio is None:
-            return tags
+            return _apply_filename_fallback(path, tags)
     except Exception:
-        return tags
+        return _apply_filename_fallback(path, tags)
 
     if isinstance(audio, MP3):
         if audio.tags:
@@ -167,4 +197,4 @@ def read_tags(path: Path) -> TrackTags:
         if hasattr(audio, "info") and audio.info:
             tags.duration_sec = audio.info.length
 
-    return tags
+    return _apply_filename_fallback(path, tags)

@@ -78,6 +78,7 @@ CAMELOT_TO_MUSICAL: dict[str, str] = {
 }
 
 _CAMELOT_PATTERN = re.compile(r"^(1[0-2]|[1-9])[ABab]$")
+_OPEN_KEY_PATTERN = re.compile(r"^(1[0-2]|[1-9])[mdMD]$")
 _MUSICAL_KEY_PATTERN = re.compile(
     r"^([A-Ga-g])([#b])?\s*(major|minor|maj|min|m)?$", re.IGNORECASE
 )
@@ -89,6 +90,20 @@ def normalize_camelot(key: str) -> str | None:
     if _CAMELOT_PATTERN.match(key):
         return key.upper()
     return None
+
+
+def open_key_to_camelot(key: str) -> str | None:
+    """Convert Mixed In Key Open Key (1m–12m / 1d–12d) to Camelot.
+
+    Open Key 1m = A minor = Camelot 8A; 1d = C major = Camelot 8B.
+    """
+    key = key.strip()
+    if not _OPEN_KEY_PATTERN.match(key):
+        return None
+    num = int(key[:-1])
+    letter = "A" if key[-1].lower() == "m" else "B"
+    camelot_num = (num + 6) % 12 + 1
+    return f"{camelot_num}{letter}"
 
 
 def parse_musical_key(key_str: str) -> str | None:
@@ -131,6 +146,10 @@ def musical_to_camelot(key: str) -> str | None:
     camelot = normalize_camelot(key)
     if camelot:
         return camelot
+
+    open_key = open_key_to_camelot(key)
+    if open_key:
+        return open_key
 
     musical = parse_musical_key(key)
     if musical:

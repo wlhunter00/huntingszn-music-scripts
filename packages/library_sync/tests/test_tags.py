@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from library_sync.tags import read_tags
+from library_sync.tags import parse_filename_artist_title, read_tags
 
 
 class RaisingDict(dict):
@@ -69,7 +69,7 @@ class TestGetTagValueError:
                 tags = read_tags(tmp_path / "fake.flac")
 
         assert tags.artist is None
-        assert tags.title is None
+        assert tags.title == "fake"
 
 
 class TestReadTagsExceptionHandling:
@@ -80,12 +80,18 @@ class TestReadTagsExceptionHandling:
         with patch("library_sync.tags.MutagenFile", return_value=None):
             tags = read_tags(tmp_path / "fake.mp3")
         assert tags.artist is None
-        assert tags.title is None
+        assert tags.title == "fake"
         assert tags.bpm is None
 
     def test_returns_empty_on_mutagen_exception(self, tmp_path: Path) -> None:
-        """Verify read_tags returns empty TrackTags when MutagenFile raises."""
+        """Verify read_tags falls back to filename when MutagenFile raises."""
         with patch("library_sync.tags.MutagenFile", side_effect=Exception("corrupt file")):
-            tags = read_tags(tmp_path / "fake.mp3")
-        assert tags.artist is None
-        assert tags.title is None
+            tags = read_tags(tmp_path / "Artist - Song.mp3")
+        assert tags.artist == "Artist"
+        assert tags.title == "Song"
+
+
+class TestFilenameFallback:
+    def test_parse_artist_title(self) -> None:
+        assert parse_filename_artist_title("Beyonce - Halo.mp3") == ("Beyonce", "Halo")
+        assert parse_filename_artist_title("JustTitle.wav") == (None, "JustTitle")

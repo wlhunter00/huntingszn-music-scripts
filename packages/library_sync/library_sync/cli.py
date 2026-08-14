@@ -3,8 +3,8 @@
 Subcommands:
 - detect       — print drive path or "not mounted"
 - index        — scan all catalogs: tracks, stems, ableton projects
-- publish      — index + rclone sync FULL drive to B2 bucket root
-- pull         — rclone sync projects/ → Ableton/Music Production Agent/
+- publish      — index all catalogs + rclone copy FULL drive to B2 (sync with --allow-delete)
+- pull         — rclone copy --update projects/ → Ableton/Music Production Agent/
 - query        — search tracks by camelot/bpm/text
 - query-stems  — search stem folders by name/model
 - query-projects — search Ableton projects by name/kind
@@ -32,6 +32,7 @@ from library_sync.mount import find_drive
 from library_sync.query import format_tracks_table, query_tracks, tracks_to_json
 from library_sync.rclone import (
     RcloneConfig,
+    RcloneError,
     publish_drive,
     publish_sqlite,
     publish_template,
@@ -90,6 +91,66 @@ def cmd_detect(args: argparse.Namespace) -> int:
     return 2
 
 
+def _progress(dry_run: bool):
+    def progress(action: str, path: str, item: object) -> None:
+        if dry_run:
+            print(f"[dry-run] {action}: {path}")
+        elif action != "skip":
+            print(f"{action}: {path}")
+
+    return progress
+
+
+def _index_all_catalogs(
+    db: LibraryDB,
+    drive_root: Path,
+    index_roots: list[Path],
+    *,
+    dry_run: bool,
+    progress_callback: object = None,
+) -> None:
+    """Index tracks, stems, and Ableton projects."""
+    existing_roots = [r for r in index_roots if r.exists()]
+    print("=== Indexing Tracks (DJ Music + Platnium Notes) ===")
+    track_stats = index_files(
+        db,
+        drive_root,
+        existing_roots,
+        dry_run=dry_run,
+        progress_callback=progress_callback,
+    )
+    print(
+        f"Tracks: {track_stats['added']} added, {track_stats['updated']} updated, "
+        f"{track_stats['skipped']} skipped, {track_stats['missing']} missing"
+    )
+    print()
+
+    print("=== Indexing Stems ===")
+    stem_stats = index_stems(
+        db,
+        drive_root,
+        dry_run=dry_run,
+        progress_callback=progress_callback,
+    )
+    print(
+        f"Stems: {stem_stats['added']} added, {stem_stats['updated']} updated, "
+        f"{stem_stats['skipped']} skipped, {stem_stats['missing']} missing"
+    )
+    print()
+
+    print("=== Indexing Ableton Projects ===")
+    ableton_stats = index_ableton(
+        db,
+        drive_root,
+        dry_run=dry_run,
+        progress_callback=progress_callback,
+    )
+    print(
+        f"Ableton: {ableton_stats['added']} added, {ableton_stats['updated']} updated, "
+        f"{ableton_stats['skipped']} skipped, {ableton_stats['missing']} missing"
+    )
+
+
 def cmd_index(args: argparse.Namespace) -> int:
     """Index tracks, stems, and Ableton projects into SQLite."""
     drive_root, sqlite_path, index_roots = _get_paths(args.root)
@@ -102,56 +163,20 @@ def cmd_index(args: argparse.Namespace) -> int:
     print(f"SQLite: {sqlite_path}")
     print()
 
-    def progress(action: str, path: str, item: object) -> None:
-        if args.dry_run:
-            print(f"[dry-run] {action}: {path}")
-        elif action != "skip":
-            print(f"{action}: {path}")
-
-    with LibraryDB(sqlite_path) as db:
-        # Index tracks (DJ Music + Platnium Notes)
-        existing_roots = [r for r in index_roots if r.exists()]
-        if existing_roots:
-            print("=== Indexing Tracks (DJ Music + Platnium Notes) ===")
-            track_stats = index_files(
-                db,
-                drive_root,
-                existing_roots,
-                dry_run=args.dry_run,
-                progress_callback=progress,
-            )
-            print(f"Tracks: {track_stats['added']} added, {track_stats['updated']} updated, "
-                  f"{track_stats['skipped']} skipped, {track_stats['missing']} missing")
-            print()
-
-        # Index stems
-        print("=== Indexing Stems ===")
-        stem_stats = index_stems(
+    with LibraryDB(sqlite_path, create=not args.dry_run) as db:
+        _index_all_catalogs(
             db,
             drive_root,
+            index_roots,
             dry_run=args.dry_run,
-            progress_callback=progress,
+            progress_callback=_progress(args.dry_run),
         )
-        print(f"Stems: {stem_stats['added']} added, {stem_stats['updated']} updated, "
-              f"{stem_stats['skipped']} skipped, {stem_stats['missing']} missing")
-        print()
-
-        # Index Ableton projects
-        print("=== Indexing Ableton Projects ===")
-        ableton_stats = index_ableton(
-            db,
-            drive_root,
-            dry_run=args.dry_run,
-            progress_callback=progress,
-        )
-        print(f"Ableton: {ableton_stats['added']} added, {ableton_stats['updated']} updated, "
-              f"{ableton_stats['skipped']} skipped, {ableton_stats['missing']} missing")
 
     return 0
 
 
 def cmd_publish(args: argparse.Namespace) -> int:
-    """Index and publish to B2."""
+    """Index all catalogs and publish to B2."""
     drive_root, sqlite_path, index_roots = _get_paths(args.root)
 
     if drive_root is None:
@@ -161,32 +186,41 @@ def cmd_publish(args: argparse.Namespace) -> int:
     config = RcloneConfig.from_env(drive_root)
 
     if not args.skip_index:
-        print("=== Indexing (DJ Music + Platnium Notes only) ===")
-        with LibraryDB(sqlite_path) as db:
-            stats = index_files(
+        print("=== Indexing tracks, stems, and Ableton projects ===")
+        with LibraryDB(sqlite_path, create=not args.dry_run) as db:
+            _index_all_catalogs(
                 db,
                 drive_root,
-                [r for r in index_roots if r.exists()],
+                index_roots,
                 dry_run=args.dry_run,
             )
-        print(f"Indexed: {stats['added']} new, {stats['updated']} updated")
         print()
 
-    print("=== Publishing full drive to B2 ===")
+    action = "sync (deletes remote extras)" if args.allow_delete else "copy (no remote deletes)"
+    print(f"=== Publishing full drive to B2 via rclone {action} ===")
     if not config.is_configured:
         print("B2 not configured (B2_REMOTE / B2_BUCKET not set)")
         print("Showing planned commands:")
         print()
 
-    publish_drive(drive_root, config, dry_run=args.dry_run)
-    publish_sqlite(sqlite_path, config, dry_run=args.dry_run)
-    publish_template(config, dry_run=args.dry_run)
+    try:
+        publish_drive(
+            drive_root,
+            config,
+            dry_run=args.dry_run,
+            allow_delete=args.allow_delete,
+        )
+        publish_sqlite(sqlite_path, config, dry_run=args.dry_run)
+        publish_template(config, dry_run=args.dry_run)
+    except RcloneError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
     return 0
 
 
 def cmd_pull(args: argparse.Namespace) -> int:
-    """Pull projects from B2."""
+    """Pull projects from B2 without deleting local Ableton work."""
     drive_root, _, _ = _get_paths(args.root)
 
     if drive_root is None:
@@ -195,13 +229,17 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
     config = RcloneConfig.from_env(drive_root)
 
-    print("=== Pulling projects from B2 → Ableton/Music Production Agent ===")
+    print("=== Copying projects from B2 → Ableton/Music Production Agent ===")
     if not config.is_configured:
         print("B2 not configured (B2_REMOTE / B2_BUCKET not set)")
         print("Showing planned command:")
         print()
 
-    pull_projects(drive_root, config, dry_run=args.dry_run)
+    try:
+        pull_projects(drive_root, config, dry_run=args.dry_run)
+    except RcloneError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -425,6 +463,11 @@ def main() -> None:
     sub_publish = subparsers.add_parser("publish", help="Index and publish to B2")
     sub_publish.add_argument("--dry-run", action="store_true", help="Show planned commands only")
     sub_publish.add_argument("--skip-index", action="store_true", help="Skip indexing step")
+    sub_publish.add_argument(
+        "--allow-delete",
+        action="store_true",
+        help="Use rclone sync (deletes remote files not on the drive). Default is copy.",
+    )
     sub_publish.add_argument("--root", type=Path, help="Override drive root path")
     sub_publish.set_defaults(func=cmd_publish)
 

@@ -120,7 +120,7 @@ library-index:
 	uv run --package library-sync library-sync index $(if $(DRY_RUN),--dry-run,) $(ARGS)
 
 library-publish:
-	uv run --package library-sync library-sync publish $(if $(DRY_RUN),--dry-run,) $(if $(SKIP_INDEX),--skip-index,) $(ARGS)
+	uv run --package library-sync library-sync publish $(if $(DRY_RUN),--dry-run,) $(if $(SKIP_INDEX),--skip-index,) $(if $(ALLOW_DELETE),--allow-delete,) $(ARGS)
 
 library-pull:
 	uv run --package library-sync library-sync pull $(if $(DRY_RUN),--dry-run,) $(ARGS)

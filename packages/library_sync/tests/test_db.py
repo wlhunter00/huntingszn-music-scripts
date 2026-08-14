@@ -189,3 +189,56 @@ class TestLibraryDB:
             assert retrieved is not None
             assert "/" in retrieved.relative_path
             assert "\\" not in retrieved.relative_path
+
+    def test_like_wildcards_are_literal(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        with LibraryDB(db_path) as db:
+            db.upsert_track(
+                Track(
+                    id="id1",
+                    relative_path="DJ Music/100%.mp3",
+                    filename="100%.mp3",
+                    title="100%",
+                    file_size=1,
+                    mtime=1.0,
+                    updated_at=utc_now_iso(),
+                    source_root="DJ Music",
+                )
+            )
+            db.upsert_track(
+                Track(
+                    id="id2",
+                    relative_path="DJ Music/halo.mp3",
+                    filename="halo.mp3",
+                    title="Halo",
+                    file_size=1,
+                    mtime=1.0,
+                    updated_at=utc_now_iso(),
+                    source_root="DJ Music",
+                )
+            )
+            results = db.query_tracks(text_search="100%")
+            assert len(results) == 1
+            assert results[0].title == "100%"
+
+    def test_mark_missing_chunks(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        with LibraryDB(db_path) as db:
+            paths = set()
+            for i in range(12):
+                rel = f"DJ Music/song{i}.mp3"
+                paths.add(rel)
+                db.upsert_track(
+                    Track(
+                        id=f"id{i}",
+                        relative_path=rel,
+                        filename=f"song{i}.mp3",
+                        file_size=1,
+                        mtime=1.0,
+                        updated_at=utc_now_iso(),
+                        source_root="DJ Music",
+                    )
+                )
+            count = db.mark_missing(paths, chunk_size=5)
+            assert count == 12
+            assert db.count_tracks(status="missing") == 12

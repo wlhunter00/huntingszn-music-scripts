@@ -43,6 +43,16 @@ class TestFindDrive:
             result = find_drive(explicit=tmp_path / "nonexistent")
             assert result is None
 
+    def test_explicit_path_wins_over_env(self, tmp_path):
+        env_drive = tmp_path / "env_drive"
+        explicit = tmp_path / "explicit"
+        env_drive.mkdir()
+        explicit.mkdir()
+
+        with patch.dict(os.environ, {"MUSIC_DRIVE_ROOT": str(env_drive)}):
+            result = find_drive(explicit=explicit)
+            assert result == explicit
+
     def test_returns_none_when_unmounted(self):
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("MUSIC_DRIVE_ROOT", None)

@@ -8,7 +8,7 @@ Match rules:
 
 from __future__ import annotations
 
-from library_sync.camelot import get_compatible_keys, normalize_camelot
+from library_sync.camelot import get_compatible_keys, musical_to_camelot
 from library_sync.db import LibraryDB, Track
 
 
@@ -61,34 +61,27 @@ def query_tracks(
     """
     camelot_keys: set[str] | None = None
     if camelot:
-        normalized = normalize_camelot(camelot)
+        normalized = musical_to_camelot(camelot)
         if normalized:
             camelot_keys = get_compatible_keys(normalized)
         else:
             return []
 
+    bpm_ranges: list[tuple[float, float]] | None = None
     if bpm is not None:
-        bpm_min = min(bpm - bpm_tolerance, bpm * 0.5 - bpm_tolerance, bpm * 2 - bpm_tolerance)
-        bpm_max = max(bpm + bpm_tolerance, bpm * 0.5 + bpm_tolerance, bpm * 2 + bpm_tolerance)
-        bpm_range = (bpm_min, bpm_max)
-    else:
-        bpm_range = None
+        bpm_ranges = [
+            (bpm - bpm_tolerance, bpm + bpm_tolerance),
+            (bpm * 0.5 - bpm_tolerance, bpm * 0.5 + bpm_tolerance),
+            (bpm * 2 - bpm_tolerance, bpm * 2 + bpm_tolerance),
+        ]
 
-    tracks = db.query_tracks(
+    return db.query_tracks(
         camelot_keys=camelot_keys,
-        bpm_range=bpm_range,
+        bpm_ranges=bpm_ranges,
         text_search=text_search,
         role=role,
-        limit=None,
+        limit=limit,
     )
-
-    if bpm is not None:
-        tracks = [t for t in tracks if bpm_matches(bpm, t.bpm, bpm_tolerance)]
-
-    if limit:
-        tracks = tracks[:limit]
-
-    return tracks
 
 
 def format_tracks_table(tracks: list[Track]) -> str:

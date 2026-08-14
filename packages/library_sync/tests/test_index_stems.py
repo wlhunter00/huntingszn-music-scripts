@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from library_sync.db import LibraryDB
-from library_sync.index_stems import index_stems, scan_stem_folders
+from library_sync.index_stems import _stem_kind, index_stems, scan_stem_folders
 
 
 class TestScanStemFolders:
@@ -48,6 +48,41 @@ class TestScanStemFolders:
 
         folders = scan_stem_folders(drive / "Stem Splitting" / "stem-output", drive)
         assert folders == []
+
+
+class TestPrefixedStemNames:
+    def test_scans_stem_split_pipeline_names(self, tmp_path: Path) -> None:
+        drive = tmp_path / "drive"
+        song_dir = drive / "Stem Splitting" / "stem-output" / "htdemucs_ft" / "As It Was"
+        song_dir.mkdir(parents=True)
+        (song_dir / "As It Was_vocals.wav").write_bytes(b"v" * 10)
+        (song_dir / "As It Was_no_vocals.wav").write_bytes(b"n" * 10)
+        (song_dir / "As It Was_drums.wav").write_bytes(b"d" * 10)
+        (song_dir / "As It Was_drums_2.wav").write_bytes(b"d2")
+        (song_dir / "As It Was_bass.wav").write_bytes(b"b" * 10)
+        (song_dir / "As It Was_other.wav").write_bytes(b"o" * 10)
+
+        folders = scan_stem_folders(drive / "Stem Splitting" / "stem-output", drive)
+        assert len(folders) == 1
+
+        db_path = tmp_path / "library.sqlite"
+        with LibraryDB(db_path) as db:
+            stats = index_stems(db, drive)
+            assert stats["added"] == 1
+            stems = db.query_stems()
+            assert len(stems) == 1
+            assert stems[0].has_vocals == 1
+            assert stems[0].has_no_vocals == 1
+            assert stems[0].has_drums == 1
+            assert stems[0].has_bass == 1
+            assert stems[0].has_other == 1
+            assert stems[0].file_size == 50
+
+    def test_no_vocals_not_classified_as_vocals(self) -> None:
+        assert _stem_kind("no_vocals.wav") == "no_vocals"
+        assert _stem_kind("As It Was_no_vocals.wav") == "no_vocals"
+        assert _stem_kind("As It Was_vocals.wav") == "vocals"
+        assert _stem_kind("As It Was_drums_2.wav") is None
 
 
 class TestIndexStems:

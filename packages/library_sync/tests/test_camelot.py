@@ -7,6 +7,7 @@ from library_sync.camelot import (
     get_relative_key,
     musical_to_camelot,
     normalize_camelot,
+    open_key_to_camelot,
     parse_musical_key,
 )
 
@@ -95,3 +96,12 @@ class TestCompatibleKeys:
         compatible = get_compatible_keys("8a")
         assert "8A" in compatible
         assert "8B" in compatible
+
+
+class TestOpenKey:
+    def test_open_key_to_camelot(self):
+        assert open_key_to_camelot("1m") == "8A"
+        assert open_key_to_camelot("1d") == "8B"
+        assert open_key_to_camelot("12m") == "7A"
+        assert musical_to_camelot("1m") == "8A"
+        assert musical_to_camelot("8A") == "8A"

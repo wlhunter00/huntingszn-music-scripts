@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -74,6 +74,9 @@ CREATE INDEX IF NOT EXISTS idx_ableton_folder ON ableton_projects(folder);
 CREATE INDEX IF NOT EXISTS idx_ableton_kind ON ableton_projects(kind);
 CREATE INDEX IF NOT EXISTS idx_ableton_status ON ableton_projects(status);
 """
+
+# Stay well under SQLite's default SQLITE_MAX_VARIABLE_NUMBER (999).
+IN_CLAUSE_CHUNK = 500
 
 
 @dataclass
@@ -146,25 +149,44 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def escape_like(value: str) -> str:
+    """Escape LIKE wildcards so user search is literal."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _chunks(items: list[str], size: int) -> Iterator[list[str]]:
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
 class LibraryDB:
     """SQLite database wrapper for the library catalog."""
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, *, create: bool = True):
         self.db_path = db_path
+        self._create = create
         self._conn: sqlite3.Connection | None = None
 
     def connect(self) -> sqlite3.Connection:
         """Get or create database connection."""
         if self._conn is None:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(self.db_path)
+            exists = self.db_path.exists()
+            if not exists and not self._create:
+                self._conn = sqlite3.connect(":memory:")
+            else:
+                if not exists:
+                    self.db_path.parent.mkdir(parents=True, exist_ok=True)
+                self._conn = sqlite3.connect(self.db_path)
             self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA busy_timeout=5000")
+            self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(SCHEMA)
         return self._conn
 
     def close(self) -> None:
-        """Close database connection."""
+        """Commit pending writes and close the connection."""
         if self._conn is not None:
+            self._conn.commit()
             self._conn.close()
             self._conn = None
 
@@ -215,7 +237,7 @@ class LibraryDB:
         return row["file_size"], row["mtime"]
 
     def upsert_track(self, track: Track) -> None:
-        """Insert or update a track record."""
+        """Insert or update a track record. Caller commits (transaction or close)."""
         conn = self.connect()
         conn.execute(
             """
@@ -266,26 +288,33 @@ class LibraryDB:
                 track.status,
             ),
         )
-        conn.commit()
 
-    def mark_missing(self, relative_paths: set[str]) -> int:
-        """Mark tracks as missing if their paths are in the given set.
-
-        Returns count of tracks marked missing.
-        """
-        if not relative_paths:
+    def _mark_missing_table(
+        self, table: str, relative_paths: Iterable[str], chunk_size: int = IN_CLAUSE_CHUNK
+    ) -> int:
+        paths = list(relative_paths)
+        if not paths:
             return 0
         conn = self.connect()
-        placeholders = ",".join("?" for _ in relative_paths)
-        cursor = conn.execute(
-            f"""
-            UPDATE tracks SET status = 'missing', updated_at = ?
-            WHERE relative_path IN ({placeholders}) AND status = 'present'
-            """,
-            (utc_now_iso(), *relative_paths),
-        )
-        conn.commit()
-        return cursor.rowcount
+        now = utc_now_iso()
+        total = 0
+        for chunk in _chunks(paths, chunk_size):
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = conn.execute(
+                f"""
+                UPDATE {table} SET status = 'missing', updated_at = ?
+                WHERE relative_path IN ({placeholders}) AND status = 'present'
+                """,
+                (now, *chunk),
+            )
+            total += cursor.rowcount
+        return total
+
+    def mark_missing(
+        self, relative_paths: set[str], *, chunk_size: int = IN_CLAUSE_CHUNK
+    ) -> int:
+        """Mark tracks as missing if their paths are in the given set."""
+        return self._mark_missing_table("tracks", relative_paths, chunk_size)
 
     def get_all_present_paths(self) -> set[str]:
         """Get all relative paths of present (non-missing) tracks."""
@@ -300,6 +329,7 @@ class LibraryDB:
         *,
         camelot_keys: set[str] | None = None,
         bpm_range: tuple[float, float] | None = None,
+        bpm_ranges: list[tuple[float, float]] | None = None,
         text_search: str | None = None,
         role: str | None = None,
         limit: int | None = None,
@@ -309,7 +339,8 @@ class LibraryDB:
 
         Args:
             camelot_keys: Set of Camelot keys to match
-            bpm_range: (min_bpm, max_bpm) tuple
+            bpm_range: Single (min_bpm, max_bpm) window
+            bpm_ranges: Multiple BPM windows combined with OR
             text_search: Case-insensitive search in artist/title/filename
             role: Filter by role (vocal, drop, unknown)
             limit: Maximum results to return
@@ -324,15 +355,22 @@ class LibraryDB:
             conditions.append(f"camelot_key IN ({placeholders})")
             params.extend(camelot_keys)
 
+        windows = list(bpm_ranges) if bpm_ranges else []
         if bpm_range:
-            conditions.append("bpm >= ? AND bpm <= ?")
-            params.extend(bpm_range)
+            windows.append(bpm_range)
+        if windows:
+            bpm_clauses = []
+            for low, high in windows:
+                bpm_clauses.append("(bpm >= ? AND bpm <= ?)")
+                params.extend([low, high])
+            conditions.append("(" + " OR ".join(bpm_clauses) + ")")
 
         if text_search:
             conditions.append(
-                "(artist LIKE ? OR title LIKE ? OR filename LIKE ?)"
+                "(artist LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' "
+                "OR filename LIKE ? ESCAPE '\\')"
             )
-            pattern = f"%{text_search}%"
+            pattern = f"%{escape_like(text_search)}%"
             params.extend([pattern, pattern, pattern])
 
         if role:
@@ -340,8 +378,9 @@ class LibraryDB:
             params.append(role)
 
         sql = "SELECT * FROM tracks WHERE " + " AND ".join(conditions)
-        if limit:
-            sql += f" LIMIT {limit}"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
 
         cursor = conn.execute(sql, params)
         return [self._row_to_track(row) for row in cursor.fetchall()]
@@ -390,8 +429,6 @@ class LibraryDB:
             status=row["status"],
         )
 
-    # --- Stems methods ---
-
     def get_stem_for_update_check(
         self, relative_path: str
     ) -> tuple[int | None, float | None]:
@@ -407,7 +444,7 @@ class LibraryDB:
         return row["file_size"], row["mtime"]
 
     def upsert_stem(self, stem: Stem) -> None:
-        """Insert or update a stem record."""
+        """Insert or update a stem record. Caller commits."""
         conn = self.connect()
         conn.execute(
             """
@@ -446,23 +483,12 @@ class LibraryDB:
                 stem.status,
             ),
         )
-        conn.commit()
 
-    def mark_stems_missing(self, relative_paths: set[str]) -> int:
+    def mark_stems_missing(
+        self, relative_paths: set[str], *, chunk_size: int = IN_CLAUSE_CHUNK
+    ) -> int:
         """Mark stems as missing."""
-        if not relative_paths:
-            return 0
-        conn = self.connect()
-        placeholders = ",".join("?" for _ in relative_paths)
-        cursor = conn.execute(
-            f"""
-            UPDATE stems SET status = 'missing', updated_at = ?
-            WHERE relative_path IN ({placeholders}) AND status = 'present'
-            """,
-            (utc_now_iso(), *relative_paths),
-        )
-        conn.commit()
-        return cursor.rowcount
+        return self._mark_missing_table("stems", relative_paths, chunk_size)
 
     def get_all_present_stem_paths(self) -> set[str]:
         """Get all relative paths of present stems."""
@@ -486,16 +512,17 @@ class LibraryDB:
         params: list[object] = [status]
 
         if text_search:
-            conditions.append("song_name LIKE ?")
-            params.append(f"%{text_search}%")
+            conditions.append("song_name LIKE ? ESCAPE '\\'")
+            params.append(f"%{escape_like(text_search)}%")
 
         if model:
             conditions.append("model = ?")
             params.append(model)
 
         sql = "SELECT * FROM stems WHERE " + " AND ".join(conditions)
-        if limit:
-            sql += f" LIMIT {limit}"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
 
         cursor = conn.execute(sql, params)
         return [self._row_to_stem(row) for row in cursor.fetchall()]
@@ -529,8 +556,6 @@ class LibraryDB:
             status=row["status"],
         )
 
-    # --- Ableton project methods ---
-
     def get_ableton_for_update_check(
         self, relative_path: str
     ) -> tuple[int | None, float | None]:
@@ -546,7 +571,7 @@ class LibraryDB:
         return row["file_size"], row["mtime"]
 
     def upsert_ableton(self, project: AbletonProject) -> None:
-        """Insert or update an Ableton project record."""
+        """Insert or update an Ableton project record. Caller commits."""
         conn = self.connect()
         conn.execute(
             """
@@ -576,23 +601,12 @@ class LibraryDB:
                 project.status,
             ),
         )
-        conn.commit()
 
-    def mark_ableton_missing(self, relative_paths: set[str]) -> int:
+    def mark_ableton_missing(
+        self, relative_paths: set[str], *, chunk_size: int = IN_CLAUSE_CHUNK
+    ) -> int:
         """Mark Ableton projects as missing."""
-        if not relative_paths:
-            return 0
-        conn = self.connect()
-        placeholders = ",".join("?" for _ in relative_paths)
-        cursor = conn.execute(
-            f"""
-            UPDATE ableton_projects SET status = 'missing', updated_at = ?
-            WHERE relative_path IN ({placeholders}) AND status = 'present'
-            """,
-            (utc_now_iso(), *relative_paths),
-        )
-        conn.commit()
-        return cursor.rowcount
+        return self._mark_missing_table("ableton_projects", relative_paths, chunk_size)
 
     def get_all_present_ableton_paths(self) -> set[str]:
         """Get all relative paths of present Ableton projects."""
@@ -616,8 +630,8 @@ class LibraryDB:
         params: list[object] = [status]
 
         if text_search:
-            conditions.append("(name LIKE ? OR folder LIKE ?)")
-            pattern = f"%{text_search}%"
+            conditions.append("(name LIKE ? ESCAPE '\\' OR folder LIKE ? ESCAPE '\\')")
+            pattern = f"%{escape_like(text_search)}%"
             params.extend([pattern, pattern])
 
         if kind:
@@ -625,8 +639,9 @@ class LibraryDB:
             params.append(kind)
 
         sql = "SELECT * FROM ableton_projects WHERE " + " AND ".join(conditions)
-        if limit:
-            sql += f" LIMIT {limit}"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
 
         cursor = conn.execute(sql, params)
         return [self._row_to_ableton(row) for row in cursor.fetchall()]

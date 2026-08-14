@@ -22,6 +22,7 @@ class TestHelpers:
         """Test template detection."""
         assert _get_kind("Ableton/HuntingSzn Template 3.0 Project/song.als") == "template"
         assert _get_kind("Ableton/Crankdat Template/test.als") == "template"
+        assert _get_kind("Ableton/mashup template project/song.als") == "template"
 
     def test_get_kind_project(self) -> None:
         """Test regular project detection."""
@@ -46,6 +47,14 @@ class TestScanAbletonProjects:
         paths = {f[1] for f in files}
         assert "Ableton/Sessions/MySong.als" in paths
         assert "Ableton/Sessions/Another.als" in paths
+
+    def test_scans_uppercase_als(self, tmp_path: Path) -> None:
+        drive = tmp_path / "drive"
+        sessions = drive / "Ableton" / "Sessions"
+        sessions.mkdir(parents=True)
+        (sessions / "Live.ALS").write_bytes(b"ableton")
+        files = scan_ableton_projects(drive / "Ableton", drive)
+        assert len(files) == 1
 
     def test_skips_backup_folders(self, tmp_path: Path) -> None:
         """Test that Backup folders are skipped."""

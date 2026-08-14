@@ -13,6 +13,7 @@ Skipped:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path, PurePosixPath
 
 from library_sync.db import LibraryDB, Track, compute_track_id, utc_now_iso
@@ -31,6 +32,9 @@ SKIP_DIRS = frozenset(
         "serum presets",
     }
 )
+
+_VOCAL_ROLE = re.compile(r"\b(acapella|acappella|acap|vocal|vocals)\b", re.IGNORECASE)
+_DROP_ROLE = re.compile(r"\b(instrumental|inst|drop)\b", re.IGNORECASE)
 
 
 def _should_skip_file(name: str) -> bool:
@@ -71,6 +75,20 @@ def _get_source_root(relative_path: str) -> str:
         if first == "Platnium Notes":
             return "Platnium Notes"
     return ""
+
+
+def infer_role(filename: str, relative_path: str = "") -> str:
+    """Infer vocal/drop/unknown from filename and path."""
+    blob = f"{filename} {relative_path}"
+    if _VOCAL_ROLE.search(blob):
+        return "vocal"
+    if _DROP_ROLE.search(blob):
+        return "drop"
+    return "unknown"
+
+
+def _path_under_prefix(relative_path: str, prefix: str) -> bool:
+    return relative_path == prefix or relative_path.startswith(prefix + "/")
 
 
 def scan_directory(
@@ -121,6 +139,9 @@ def index_files(
 ) -> dict[str, int]:
     """Index audio files into the database.
 
+    Roots that do not exist are skipped and their existing rows are left
+    unchanged (not marked missing).
+
     Args:
         db: Database connection
         drive_root: Root of the music drive
@@ -141,74 +162,90 @@ def index_files(
 
     existing_paths = db.get_all_present_paths() if not dry_run else set()
     seen_paths: set[str] = set()
+    scanned_prefixes: list[str] = []
 
-    for index_root in index_roots:
-        if not index_root.exists():
-            continue
-
-        files = scan_directory(index_root, drive_root)
-
-        for filepath, relative_path in files:
-            stats["scanned"] += 1
-            seen_paths.add(relative_path)
-
-            try:
-                file_stat = filepath.stat()
-                file_size = file_stat.st_size
-                mtime = file_stat.st_mtime
-            except OSError:
+    def _index_one() -> None:
+        nonlocal stats
+        for index_root in index_roots:
+            if not index_root.exists():
                 continue
 
-            existing_size, existing_mtime = db.get_track_for_update_check(relative_path)
-            if (
-                existing_size is not None
-                and existing_size == file_size
-                and existing_mtime is not None
-                and existing_mtime == mtime
-            ):
-                stats["skipped"] += 1
+            scanned_prefixes.append(_to_posix_relative(index_root, drive_root))
+            files = scan_directory(index_root, drive_root)
+
+            for filepath, relative_path in files:
+                stats["scanned"] += 1
+                seen_paths.add(relative_path)
+
+                try:
+                    file_stat = filepath.stat()
+                    file_size = file_stat.st_size
+                    mtime = file_stat.st_mtime
+                except OSError:
+                    continue
+
+                existing_size, existing_mtime = db.get_track_for_update_check(relative_path)
+                if (
+                    existing_size is not None
+                    and existing_size == file_size
+                    and existing_mtime is not None
+                    and existing_mtime == mtime
+                ):
+                    stats["skipped"] += 1
+                    if progress_callback:
+                        progress_callback("skip", relative_path, None)
+                    continue
+
+                tags = read_tags(filepath)
+
+                track = Track(
+                    id=compute_track_id(relative_path, file_size),
+                    relative_path=relative_path,
+                    filename=filepath.name,
+                    artist=tags.artist,
+                    title=tags.title,
+                    album=tags.album,
+                    genre=tags.genre,
+                    duration_sec=tags.duration_sec,
+                    bpm=tags.bpm,
+                    key=tags.key,
+                    camelot_key=tags.camelot_key,
+                    file_size=file_size,
+                    mtime=mtime,
+                    audio_object_key=relative_path,
+                    updated_at=utc_now_iso(),
+                    role=infer_role(filepath.name, relative_path),
+                    source_root=_get_source_root(relative_path),
+                    status="present",
+                )
+
+                if existing_size is not None:
+                    stats["updated"] += 1
+                    action = "update"
+                else:
+                    stats["added"] += 1
+                    action = "add"
+
                 if progress_callback:
-                    progress_callback("skip", relative_path, None)
-                continue
+                    progress_callback(action, relative_path, track)
 
-            tags = read_tags(filepath)
+                if not dry_run:
+                    db.upsert_track(track)
 
-            track = Track(
-                id=compute_track_id(relative_path, file_size),
-                relative_path=relative_path,
-                filename=filepath.name,
-                artist=tags.artist,
-                title=tags.title,
-                album=tags.album,
-                genre=tags.genre,
-                duration_sec=tags.duration_sec,
-                bpm=tags.bpm,
-                key=tags.key,
-                camelot_key=tags.camelot_key,
-                file_size=file_size,
-                mtime=mtime,
-                audio_object_key=f"audio/{relative_path}",
-                updated_at=utc_now_iso(),
-                source_root=_get_source_root(relative_path),
-                status="present",
-            )
+        if not dry_run and scanned_prefixes:
+            eligible = {
+                path
+                for path in existing_paths
+                if any(_path_under_prefix(path, prefix) for prefix in scanned_prefixes)
+            }
+            missing_paths = eligible - seen_paths
+            if missing_paths:
+                stats["missing"] = db.mark_missing(missing_paths)
 
-            if existing_size is not None:
-                stats["updated"] += 1
-                action = "update"
-            else:
-                stats["added"] += 1
-                action = "add"
-
-            if progress_callback:
-                progress_callback(action, relative_path, track)
-
-            if not dry_run:
-                db.upsert_track(track)
-
-    if not dry_run:
-        missing_paths = existing_paths - seen_paths
-        if missing_paths:
-            stats["missing"] = db.mark_missing(missing_paths)
+    if dry_run:
+        _index_one()
+    else:
+        with db.transaction():
+            _index_one()
 
     return stats

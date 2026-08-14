@@ -58,11 +58,14 @@ def find_drive(explicit: Path | None = None) -> Path | None:
     """Find the music drive.
 
     Args:
-        explicit: If provided, use this path directly (for MUSIC_DRIVE_ROOT override)
+        explicit: If provided, use this path and ignore MUSIC_DRIVE_ROOT
 
     Returns:
         Path to the drive root, or None if not found/mounted
     """
+    if explicit is not None:
+        return explicit if explicit.exists() else None
+
     env_override = os.environ.get("MUSIC_DRIVE_ROOT")
     if env_override:
         p = Path(env_override)
@@ -71,9 +74,6 @@ def find_drive(explicit: Path | None = None) -> Path | None:
         if p.exists():
             return p
         return None
-
-    if explicit is not None:
-        return explicit if explicit.exists() else None
 
     if sys.platform == "darwin":
         for vol_path in _MACOS_VOLUME_PATHS:

@@ -6,9 +6,10 @@ B2 layout:
 - templates/mashup/ — one-way UP from Ableton/HuntingSzn Mashup Template Project
 - projects/<slug>/ — one-way DOWN to Ableton/Music Production Agent/<slug>/
 
-Publish excludes:
-- $RECYCLE.BIN, System Volume Information, .Spotlight-V100
-- .TemporaryItems, .Trashes, .fseventsd, .DS_Store, ._, .git
+Publish defaults to `rclone copy --update` (no remote deletes). Pass
+allow_delete=True for `rclone sync`, which removes dest files absent locally.
+
+Pull uses `rclone copy --update` so local Ableton work is never deleted.
 
 Env vars:
 - B2_BUCKET       — bucket name (stub)
@@ -16,13 +17,14 @@ Env vars:
 - MASHUP_TEMPLATE_PATH — override template path
   (default: Ableton/HuntingSzn Mashup Template Project)
 
-If B2_REMOTE is not set, --dry-run prints planned commands and exits 0.
+If B2_REMOTE is not set, prints planned commands and exits 0.
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,7 +38,25 @@ PUBLISH_EXCLUDES = [
     ".DS_Store",
     "._*",
     ".git/**",
+    ".venv/**",
+    "**/.venv/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    ".uv/**",
+    "**/node_modules/**",
 ]
+
+
+class RcloneError(RuntimeError):
+    """rclone subprocess failed."""
+
+    def __init__(self, cmd: list[str], returncode: int, stderr: str):
+        self.cmd = cmd
+        self.returncode = returncode
+        self.stderr = stderr
+        pretty = " ".join(cmd)
+        detail = stderr.strip() or "no stderr"
+        super().__init__(f"rclone failed ({returncode}): {pretty}\n{detail}")
 
 
 @dataclass
@@ -72,12 +92,17 @@ class RcloneConfig:
 
 
 def _run_rclone(args: list[str], *, dry_run: bool = False) -> subprocess.CompletedProcess:
-    """Run rclone command, optionally in dry-run mode."""
+    """Run rclone command. Raises RcloneError on non-zero exit."""
     cmd = ["rclone"] + args
     if dry_run:
         print(f"[dry-run] would run: {' '.join(cmd)}")
         return subprocess.CompletedProcess(cmd, 0, "", "")
-    return subprocess.run(cmd, capture_output=True, text=True, check=False)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RcloneError(cmd, result.returncode, result.stderr)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
+    return result
 
 
 def _get_exclude_args() -> list[str]:
@@ -93,18 +118,22 @@ def publish_drive(
     config: RcloneConfig,
     *,
     dry_run: bool = False,
+    allow_delete: bool = False,
 ) -> list[str]:
-    """Mirror the entire drive to B2 bucket root.
+    """Copy (default) or sync the drive to B2 bucket root.
 
-    Excludes system files and metadata directories.
+    Default is copy --update: never deletes remote files. allow_delete uses
+    sync, which removes dest files that are not on the local drive.
+
     Returns list of commands that were (or would be) executed.
     """
     commands = []
+    action = "sync" if allow_delete else "copy"
     excludes_str = " ".join(f"--exclude '{p}'" for p in PUBLISH_EXCLUDES)
 
     if not config.is_configured:
         target = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/"
-        cmd = f"rclone sync {excludes_str} --update {drive_root} {target}"
+        cmd = f"rclone {action} {excludes_str} --update {drive_root} {target}"
         print(f"[no B2 configured] planned command: {cmd}")
         commands.append(cmd)
         return commands
@@ -112,7 +141,7 @@ def publish_drive(
     target = f"{config.remote}:{config.bucket}/"
 
     args = [
-        "sync",
+        action,
         str(drive_root),
         target,
         *_get_exclude_args(),
@@ -197,7 +226,9 @@ def pull_projects(
     *,
     dry_run: bool = False,
 ) -> str | None:
-    """Pull projects from B2 to Ableton/Music Production Agent folder.
+    """Copy projects from B2 to Ableton/Music Production Agent.
+
+    Uses copy --update: never deletes local files, does not overwrite newer local work.
 
     B2 projects/<slug>/ → {DRIVE}/Ableton/Music Production Agent/<slug>/
 
@@ -207,7 +238,7 @@ def pull_projects(
 
     if not config.is_configured:
         source = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/projects/"
-        cmd = f"rclone sync {source} {agent_projects}"
+        cmd = f"rclone copy --update {source} {agent_projects}"
         print(f"[no B2 configured] planned command: {cmd}")
         return cmd
 
@@ -215,7 +246,7 @@ def pull_projects(
         agent_projects.mkdir(parents=True, exist_ok=True)
 
     source = f"{config.remote}:{config.bucket}/projects/"
-    args = ["sync", source, str(agent_projects)]
+    args = ["copy", "--update", source, str(agent_projects)]
     cmd = f"rclone {' '.join(args)}"
 
     if not dry_run:

@@ -134,10 +134,11 @@ uv run --package library-sync library-sync query-stems --q "as it was" --model h
 # Query Ableton projects
 uv run --package library-sync library-sync query-projects --q "mashup" --kind template
 
-# Publish FULL drive to B2 (requires B2_REMOTE + B2_BUCKET in .env)
+# Publish FULL drive to B2 (copy --update; never deletes remote unless --allow-delete)
 uv run --package library-sync library-sync publish --dry-run
+uv run --package library-sync library-sync publish --allow-delete --dry-run
 
-# Pull projects from B2 to Ableton/Music Production Agent
+# Copy projects from B2 to Ableton/Music Production Agent (does not delete local work)
 uv run --package library-sync library-sync pull --dry-run
 
 # Show status (counts for tracks, stems, Ableton projects)
@@ -151,8 +152,8 @@ uv run --package library-sync library-sync status
 
 **Full-drive mirror vs catalog-only:**
 - **Index** catalogs tracks, stems, and Ableton projects into SQLite
-- **Publish** mirrors the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.)
-- Excludes system files: `$RECYCLE.BIN`, `.Spotlight-V100`, `.Trashes`, `.DS_Store`, `._*`, `.git`
+- **Publish** copies the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.). Does not delete remote files unless you pass `--allow-delete` (rclone sync).
+- Excludes system files: `$RECYCLE.BIN`, `.Spotlight-V100`, `.Trashes`, `.DS_Store`, `._*`, `.git`, `.venv`, `__pycache__`
 
 **Harmonic mixing rules (tracks only):**
 - Camelot: matches ±1 on wheel plus relative major/minor (e.g., 8A matches 7A, 8A, 9A, 8B)

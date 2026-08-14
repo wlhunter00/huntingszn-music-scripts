@@ -2,6 +2,9 @@
 
 Scans {DRIVE}/Stem Splitting/stem-output/{model}/{song}/ folders.
 Creates one row per song folder (not per wav file).
+
+Accepts both Demucs-style names (vocals.wav) and stem_split output
+({title}_vocals.wav, {title}_drums.wav, …).
 """
 
 from __future__ import annotations
@@ -10,7 +13,9 @@ from pathlib import Path, PurePosixPath
 
 from library_sync.db import LibraryDB, Stem, compute_track_id, utc_now_iso
 
-STEM_FILES = frozenset({"vocals.wav", "drums.wav", "bass.wav", "other.wav", "no_vocals.wav"})
+# Check longer tokens first so no_vocals is not classified as vocals.
+STEM_KINDS = ("no_vocals", "vocals", "drums", "bass", "other")
+_DRUMS_COPY_SUFFIXES = ("_drums_2.wav", "_drums_3.wav", "_drums_4.wav")
 
 
 def _to_posix_relative(path: Path, root: Path) -> str:
@@ -20,6 +25,37 @@ def _to_posix_relative(path: Path, root: Path) -> str:
         return str(PurePosixPath(rel))
     except ValueError:
         return str(PurePosixPath(path))
+
+
+def _stem_kind(filename: str) -> str | None:
+    """Return stem kind for a wav filename, or None if it is not a stem."""
+    lower = filename.lower()
+    if not lower.endswith(".wav"):
+        return None
+    if any(lower.endswith(suffix) for suffix in _DRUMS_COPY_SUFFIXES):
+        return None
+    if lower == "drums_2.wav" or lower == "drums_3.wav" or lower == "drums_4.wav":
+        return None
+    for kind in STEM_KINDS:
+        if lower == f"{kind}.wav" or lower.endswith(f"_{kind}.wav"):
+            return kind
+    return None
+
+
+def stem_files_in_folder(folder: Path) -> dict[str, Path]:
+    """Map stem kind → file path for a song folder."""
+    found: dict[str, Path] = {}
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return found
+    for path in entries:
+        if not path.is_file():
+            continue
+        kind = _stem_kind(path.name)
+        if kind and kind not in found:
+            found[kind] = path
+    return found
 
 
 def scan_stem_folders(
@@ -49,8 +85,7 @@ def scan_stem_folders(
             if not song_dir.is_dir():
                 continue
 
-            has_any_stem = any((song_dir / stem).exists() for stem in STEM_FILES)
-            if not has_any_stem:
+            if not stem_files_in_folder(song_dir):
                 continue
 
             relative_path = _to_posix_relative(song_dir, drive_root)
@@ -67,6 +102,9 @@ def index_stems(
     progress_callback: object = None,
 ) -> dict[str, int]:
     """Index stem folders into the database.
+
+    If stem-output is missing, do not mark existing rows missing — the tree
+    was not scanned.
 
     Args:
         db: Database connection
@@ -94,16 +132,16 @@ def index_stems(
 
     folders = scan_stem_folders(stem_output_root, drive_root)
 
-    for folder_path, relative_path, song_name, model in folders:
-        stats["scanned"] += 1
-        seen_paths.add(relative_path)
+    def _index_one() -> None:
+        nonlocal stats
+        for folder_path, relative_path, song_name, model in folders:
+            stats["scanned"] += 1
+            seen_paths.add(relative_path)
 
-        total_size = 0
-        latest_mtime = 0.0
-
-        for stem_file in STEM_FILES:
-            stem_path = folder_path / stem_file
-            if stem_path.exists():
+            stem_map = stem_files_in_folder(folder_path)
+            total_size = 0
+            latest_mtime = 0.0
+            for stem_path in stem_map.values():
                 try:
                     st = stem_path.stat()
                     total_size += st.st_size
@@ -111,50 +149,56 @@ def index_stems(
                 except OSError:
                     pass
 
-        existing_size, existing_mtime = db.get_stem_for_update_check(relative_path)
-        if (
-            existing_size is not None
-            and existing_size == total_size
-            and existing_mtime is not None
-            and existing_mtime == latest_mtime
-        ):
-            stats["skipped"] += 1
+            existing_size, existing_mtime = db.get_stem_for_update_check(relative_path)
+            if (
+                existing_size is not None
+                and existing_size == total_size
+                and existing_mtime is not None
+                and existing_mtime == latest_mtime
+            ):
+                stats["skipped"] += 1
+                if progress_callback:
+                    progress_callback("skip", relative_path, None)
+                continue
+
+            stem = Stem(
+                id=compute_track_id(relative_path, total_size),
+                relative_path=relative_path,
+                song_name=song_name,
+                model=model,
+                has_vocals=int("vocals" in stem_map),
+                has_drums=int("drums" in stem_map),
+                has_bass=int("bass" in stem_map),
+                has_other=int("other" in stem_map),
+                has_no_vocals=int("no_vocals" in stem_map),
+                file_size=total_size,
+                mtime=latest_mtime,
+                updated_at=utc_now_iso(),
+                status="present",
+            )
+
+            if existing_size is not None:
+                stats["updated"] += 1
+                action = "update"
+            else:
+                stats["added"] += 1
+                action = "add"
+
             if progress_callback:
-                progress_callback("skip", relative_path, None)
-            continue
+                progress_callback(action, relative_path, stem)
 
-        stem = Stem(
-            id=compute_track_id(relative_path, total_size),
-            relative_path=relative_path,
-            song_name=song_name,
-            model=model,
-            has_vocals=int((folder_path / "vocals.wav").exists()),
-            has_drums=int((folder_path / "drums.wav").exists()),
-            has_bass=int((folder_path / "bass.wav").exists()),
-            has_other=int((folder_path / "other.wav").exists()),
-            has_no_vocals=int((folder_path / "no_vocals.wav").exists()),
-            file_size=total_size,
-            mtime=latest_mtime,
-            updated_at=utc_now_iso(),
-            status="present",
-        )
-
-        if existing_size is not None:
-            stats["updated"] += 1
-            action = "update"
-        else:
-            stats["added"] += 1
-            action = "add"
-
-        if progress_callback:
-            progress_callback(action, relative_path, stem)
+            if not dry_run:
+                db.upsert_stem(stem)
 
         if not dry_run:
-            db.upsert_stem(stem)
+            missing_paths = existing_paths - seen_paths
+            if missing_paths:
+                stats["missing"] = db.mark_stems_missing(missing_paths)
 
-    if not dry_run:
-        missing_paths = existing_paths - seen_paths
-        if missing_paths:
-            stats["missing"] = db.mark_stems_missing(missing_paths)
+    if dry_run:
+        _index_one()
+    else:
+        with db.transaction():
+            _index_one()
 
     return stats

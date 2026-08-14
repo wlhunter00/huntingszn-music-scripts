@@ -190,3 +190,72 @@ class TestIndexFiles:
             assert stats["missing"] == 1
             assert db.count_tracks(status="present") == 1
             assert db.count_tracks(status="missing") == 1
+
+    def test_missing_root_does_not_mark_other_catalog_missing(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive_root = tmp_path / "drive"
+        dj_music = drive_root / "DJ Music"
+        platinum = drive_root / "Platnium Notes"
+        dj_music.mkdir(parents=True)
+        platinum.mkdir(parents=True)
+        (dj_music / "dj.mp3").write_bytes(b"dj")
+        (platinum / "pn.mp3").write_bytes(b"pn")
+
+        with LibraryDB(db_path) as db:
+            index_files(db, drive_root, [dj_music, platinum])
+            assert db.count_tracks(status="present") == 2
+
+            import shutil
+
+            shutil.rmtree(platinum)
+            stats = index_files(db, drive_root, [dj_music, platinum])
+            assert stats["missing"] == 0
+            paths = {t.relative_path: t.status for t in db.query_tracks(status="present")}
+            assert "DJ Music/dj.mp3" in paths
+            pn = db.get_track_by_path("Platnium Notes/pn.mp3")
+            assert pn is not None
+            assert pn.status == "present"
+
+    def test_audio_object_key_is_bucket_relative_path(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive_root = tmp_path / "drive"
+        dj_music = drive_root / "DJ Music"
+        dj_music.mkdir(parents=True)
+        (dj_music / "song.mp3").write_bytes(b"fake")
+
+        with LibraryDB(db_path) as db:
+            index_files(db, drive_root, [dj_music])
+            track = db.get_track_by_path("DJ Music/song.mp3")
+            assert track is not None
+            assert track.audio_object_key == "DJ Music/song.mp3"
+
+    def test_infers_role_from_filename(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive_root = tmp_path / "drive"
+        dj_music = drive_root / "DJ Music"
+        dj_music.mkdir(parents=True)
+        (dj_music / "Artist - Song (Vocal Mix).mp3").write_bytes(b"v")
+        (dj_music / "Artist - Song (Instrumental).mp3").write_bytes(b"i")
+        (dj_music / "Artist - Song.mp3").write_bytes(b"s")
+
+        with LibraryDB(db_path) as db:
+            index_files(db, drive_root, [dj_music])
+            roles = {
+                t.filename: t.role
+                for t in db.query_tracks()
+            }
+            assert roles["Artist - Song (Vocal Mix).mp3"] == "vocal"
+            assert roles["Artist - Song (Instrumental).mp3"] == "drop"
+            assert roles["Artist - Song.mp3"] == "unknown"
+
+    def test_dry_run_does_not_create_db_file(self, tmp_path):
+        db_path = tmp_path / "data" / "library.sqlite"
+        drive_root = tmp_path / "drive"
+        dj_music = drive_root / "DJ Music"
+        dj_music.mkdir(parents=True)
+        (dj_music / "song.mp3").write_bytes(b"fake")
+
+        with LibraryDB(db_path, create=False) as db:
+            index_files(db, drive_root, [dj_music], dry_run=True)
+
+        assert not db_path.exists()
