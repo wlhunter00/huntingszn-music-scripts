@@ -417,6 +417,29 @@ def test_volume_copy_when_release_folder_missing(
     assert dest.is_dir()
 
 
+def test_failed_volume_copy_does_not_leave_blocking_dest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volume = tmp_path / "Releases"
+    volume.mkdir()
+    dest = volume / "The Cure x Pray"
+
+    def fake_copytree(src: Path, dst: Path, **kwargs: object) -> None:
+        dst.mkdir()
+        (dst / "partial.png").write_text("incomplete")
+        raise OSError("disk full")
+
+    with (
+        patch("huntingszn_cover.mashup.shutil.copytree", side_effect=fake_copytree),
+        pytest.raises(MashupError, match="Failed to copy mashup to volume"),
+    ):
+        _run_mashup_with_local_covers(tmp_path, monkeypatch, volume_path=volume)
+
+    assert not dest.exists()
+    local_manifest = json.loads((tmp_path / "the-cure-x-pray" / "manifest.json").read_text())
+    assert local_manifest["copied_to_volume"] is None
+
+
 def test_missing_openai_key_fails_before_fetch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

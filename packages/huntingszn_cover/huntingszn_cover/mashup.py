@@ -363,25 +363,37 @@ def run_mashup(
             manifest.copied_to_volume = str(dest)
 
     manifest_path = mashup_dir / "manifest.json"
-    with open(manifest_path, "w") as f:
-        json.dump(
-            {
-                "mashup_name": manifest.mashup_name,
-                "slug": manifest.slug,
-                "tracks": manifest.tracks,
-                "created_at": manifest.created_at,
-                "originals": manifest.originals,
-                "composite_path": manifest.composite_path,
-                "composite_method": manifest.composite_method,
-                "transformed": manifest.transformed,
-                "output_dir": manifest.output_dir,
-                "copied_to_volume": manifest.copied_to_volume,
-            },
-            f,
-            indent=2,
-        )
+
+    def _write_manifest() -> None:
+        with open(manifest_path, "w") as f:
+            json.dump(
+                {
+                    "mashup_name": manifest.mashup_name,
+                    "slug": manifest.slug,
+                    "tracks": manifest.tracks,
+                    "created_at": manifest.created_at,
+                    "originals": manifest.originals,
+                    "composite_path": manifest.composite_path,
+                    "composite_method": manifest.composite_method,
+                    "transformed": manifest.transformed,
+                    "output_dir": manifest.output_dir,
+                    "copied_to_volume": manifest.copied_to_volume,
+                },
+                f,
+                indent=2,
+            )
+
+    _write_manifest()
 
     if dest is not None:
-        shutil.copytree(mashup_dir, dest)
+        try:
+            shutil.copytree(mashup_dir, dest)
+        except OSError as e:
+            # Skip-if-exists would treat a partial dest as finished work.
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            manifest.copied_to_volume = None
+            _write_manifest()
+            raise MashupError(f"Failed to copy mashup to volume {dest}: {e}") from e
 
     return manifest
