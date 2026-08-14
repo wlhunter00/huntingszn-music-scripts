@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import base64
+import json
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx2
 import pytest
+from click.testing import CliRunner
 from openai import OpenAI
 from PIL import Image
 
+from huntingszn_cover.cli import cli
+from huntingszn_cover.cli import mashup as mashup_cmd
 from huntingszn_cover.fetch import FetchedImage
 from huntingszn_cover.mashup import (
     MashupError,
@@ -20,6 +24,7 @@ from huntingszn_cover.mashup import (
     create_pillow_composite,
     run_mashup,
 )
+from huntingszn_cover.transform import FALLBACK_MODEL, PREFERRED_MODEL, TransformResult
 
 
 def write_png(
@@ -105,7 +110,7 @@ def test_create_openai_composite_sends_image_png_not_octet_stream(
     assert 'name="image[]"' in body
 
 
-def test_create_openai_composite_falls_back_to_pillow(
+def test_create_openai_composite_raises_on_edit_failure_without_pillow_split(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -116,12 +121,49 @@ def test_create_openai_composite_falls_back_to_pillow(
     mock_client = MagicMock()
     mock_client.images.edit.side_effect = RuntimeError("api down")
 
+    with (
+        patch("openai.OpenAI", return_value=mock_client),
+        pytest.raises(MashupError, match="Image edit failed"),
+    ):
+        create_openai_composite([a, b], out, "blend")
+
+    assert not out.exists()
+    assert mock_client.images.edit.call_count == 2
+    models = [c.kwargs["model"] for c in mock_client.images.edit.call_args_list]
+    assert models == [PREFERRED_MODEL, FALLBACK_MODEL]
+    mock_client.images.generate.assert_not_called()
+    for call in mock_client.images.edit.call_args_list:
+        image_arg = call.kwargs["image"]
+        assert isinstance(image_arg, list)
+        assert all(part[2] == "image/png" for part in image_arg)
+
+
+def test_create_openai_composite_falls_back_to_gpt_image_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    a = write_png(tmp_path / "a.png")
+    b = write_png(tmp_path / "b.png", color=(0, 0, 255))
+    out = tmp_path / "composite.png"
+
+    png_b64 = base64.b64encode(png_bytes((16, 16))).decode("ascii")
+    mock_image = MagicMock()
+    mock_image.b64_json = png_b64
+    mock_image.url = None
+    success = MagicMock(data=[mock_image])
+
+    mock_client = MagicMock()
+    mock_client.images.edit.side_effect = [RuntimeError("gpt-image-1.5 unavailable"), success]
+
     with patch("openai.OpenAI", return_value=mock_client):
         path, method = create_openai_composite([a, b], out, "blend")
 
     assert path == out
-    assert method == "pillow-split"
+    assert method == FALLBACK_MODEL
     assert out.is_file()
+    assert mock_client.images.edit.call_count == 2
+    assert mock_client.images.edit.call_args_list[0].kwargs["model"] == PREFERRED_MODEL
+    assert mock_client.images.edit.call_args_list[1].kwargs["model"] == FALLBACK_MODEL
     mock_client.images.generate.assert_not_called()
 
 
@@ -195,8 +237,95 @@ def test_pick_with_picker_uses_selected_covers(
 
     assert picked == tracks
     assert manifest.composite_path
+    assert manifest.composite_method == PREFERRED_MODEL
     assert Path(manifest.composite_path).is_file()
     mock_client.images.generate.assert_not_called()
     image_arg = mock_client.images.edit.call_args_list[0].kwargs["image"]
     assert isinstance(image_arg, list)
     assert all(part[2] == "image/png" for part in image_arg)
+    manifest_json = json.loads((tmp_path / "the-cure-x-pray" / "manifest.json").read_text())
+    assert manifest_json["composite_method"] == PREFERRED_MODEL
+
+
+def test_pick_transforms_selected_cover_not_auto_best(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--pick must reuse the chosen cover for per-track transforms, not re-select squarest."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray"]
+    composite_sources: list[Path] = []
+    transform_sources: list[Path] = []
+
+    def fake_fetch(artist, title, output_dir, *, target_count, client):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        square = output_dir / "cover_00.png"
+        picked = output_dir / "cover_01.png"
+        write_png(square, (1000, 1000), (255, 0, 0))
+        write_png(picked, (400, 400), (0, 255, 0))
+        return [_fetched(square, 1000, 1000), _fetched(picked, 400, 400)]
+
+    def picker(track: str, images: list[FetchedImage]) -> FetchedImage | None:
+        return images[1]
+
+    def fake_composite(images, output_path, prompt, **kwargs):
+        composite_sources.extend(images)
+        write_png(output_path, (16, 16))
+        return output_path, PREFERRED_MODEL
+
+    def fake_transform(image_path, prompt, output_path, **kwargs):
+        transform_sources.append(image_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        write_png(output_path, (16, 16))
+        return TransformResult(image_path, output_path, "clean", PREFERRED_MODEL)
+
+    with (
+        patch("huntingszn_cover.mashup.fetch_album_covers", side_effect=fake_fetch),
+        patch("huntingszn_cover.mashup.create_openai_composite", side_effect=fake_composite),
+        patch("huntingszn_cover.mashup.transform_image", side_effect=fake_transform),
+        patch("huntingszn_cover.mashup.get_prompt", side_effect=lambda name: f"HUNTINGSZN EDIT {name}"),
+    ):
+        run_mashup("The Cure x Pray", tracks, tmp_path, auto=False, picker=picker)
+
+    assert [p.name for p in composite_sources[:2]] == ["cover_01.png", "cover_01.png"]
+    track_sources = [p for p in transform_sources if p.name.startswith("cover_")]
+    assert track_sources
+    assert all(p.name == "cover_01.png" for p in track_sources)
+
+
+def test_run_mashup_does_not_pillow_split_when_edit_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray"]
+
+    def fake_fetch(artist, title, output_dir, *, target_count, client):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        dest = output_dir / "cover_00.png"
+        write_png(dest)
+        return [_fetched(dest, 500, 500)]
+
+    mock_client = MagicMock()
+    mock_client.images.edit.side_effect = RuntimeError("api down")
+
+    with (
+        patch("huntingszn_cover.mashup.fetch_album_covers", side_effect=fake_fetch),
+        patch("openai.OpenAI", return_value=mock_client),
+        patch("huntingszn_cover.mashup.get_prompt", side_effect=lambda name: f"HUNTINGSZN EDIT {name}"),
+        pytest.raises(MashupError, match="Image edit failed"),
+    ):
+        run_mashup("The Cure x Pray", tracks, tmp_path)
+
+    mashup_dir = tmp_path / "the-cure-x-pray"
+    assert not (mashup_dir / "the-cure-x-pray-composite.png").exists()
+    mock_client.images.generate.assert_not_called()
+
+
+def test_mashup_cli_default_output_is_not_workspace_path() -> None:
+    output_opt = next(p for p in mashup_cmd.params if p.name == "output")
+    assert "/workspace" not in str(output_opt.default)
+    assert Path(output_opt.default) == Path("./covers")
+
+    result = CliRunner().invoke(cli, ["mashup", "--help"])
+    assert result.exit_code == 0
+    assert "/workspace/" not in result.output
+

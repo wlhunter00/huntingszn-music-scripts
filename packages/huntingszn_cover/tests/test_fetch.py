@@ -1,14 +1,20 @@
 """Tests for fetch module with mocked SerpAPI responses."""
 
+from io import BytesIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+from PIL import Image
 
 from huntingszn_cover.fetch import (
+    SERPAPI_BASE_URL,
     FetchError,
     _get_serpapi_key,
     _is_duplicate,
     _is_roughly_square,
+    fetch_album_covers,
     search_album_covers,
 )
 
@@ -108,9 +114,11 @@ class TestSearchAlbumCoversMocked:
             assert results[0]["original"] == "https://example.com/cover1.jpg"
             mock_client.get.assert_called_once()
             _args, kwargs = mock_client.get.call_args
+            assert _args[0] == SERPAPI_BASE_URL
             assert kwargs["params"]["engine"] == "google_images"
             assert kwargs["params"]["q"] == "Artist Title album cover square"
             assert kwargs["params"]["api_key"] == "test-key"
+            assert kwargs["params"]["tbm"] == "isch"
 
     def test_search_handles_api_error(self) -> None:
         """Should raise FetchError on API error response."""
@@ -144,3 +152,84 @@ class TestSearchAlbumCoversMocked:
             results = search_album_covers("Unknown", "Track", client=mock_client)
 
             assert results == []
+
+
+def _png_bytes(size: tuple[int, int], *, seed: int) -> bytes:
+    """Patterned PNG so perceptual hashes differ across seeds (solid colors do not)."""
+    img = Image.new("RGB", size)
+    pixels = img.load()
+    for x in range(size[0]):
+        for y in range(size[1]):
+            pixels[x, y] = ((x * seed) % 256, (y * (seed + 3)) % 256, (x + y + seed) % 256)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_search_http_error_does_not_leak_api_key() -> None:
+    secret = "super-secret-serpapi-key"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with (
+        patch.dict("os.environ", {"SERPAPI_API_KEY": secret}),
+        pytest.raises(FetchError, match="HTTP error during SerpAPI request: 401") as exc,
+    ):
+        search_album_covers("Artist", "Title", client=client)
+
+    assert secret not in str(exc.value)
+    assert "api_key=" not in str(exc.value)
+
+
+def test_fetch_album_covers_uses_google_images_saves_square_pngs(tmp_path: Path) -> None:
+    square = _png_bytes((120, 120), seed=1)
+    wide = _png_bytes((200, 80), seed=2)
+    duplicate = _png_bytes((120, 120), seed=1)
+    unique = _png_bytes((100, 100), seed=9)
+    serpapi_calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "serpapi.com" in url:
+            serpapi_calls.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "images_results": [
+                        {"original": "https://cdn.example.com/square.png"},
+                        {"original": "https://cdn.example.com/wide.png"},
+                        {"original": "https://cdn.example.com/dup.png"},
+                        {"original": "https://cdn.example.com/unique.png"},
+                    ]
+                },
+                request=request,
+            )
+        if url.endswith("wide.png"):
+            return httpx.Response(200, content=wide, request=request)
+        if url.endswith("dup.png"):
+            return httpx.Response(200, content=duplicate, request=request)
+        if url.endswith("unique.png"):
+            return httpx.Response(200, content=unique, request=request)
+        return httpx.Response(200, content=square, request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    with patch.dict("os.environ", {"SERPAPI_API_KEY": "test-key"}):
+        fetched = fetch_album_covers(
+            "Olivia Rodrigo", "The Cure", tmp_path, target_count=5, client=client
+        )
+
+    assert len(serpapi_calls) == 1
+    params = serpapi_calls[0].url.params
+    assert params["engine"] == "google_images"
+    assert params["q"] == "Olivia Rodrigo The Cure album cover square"
+    assert "google_images" in params["engine"]
+    assert len(fetched) == 2
+    assert fetched[0].local_path.is_file()
+    assert fetched[1].local_path.is_file()
+    assert Image.open(fetched[0].local_path).size == (120, 120)
+    assert Image.open(fetched[1].local_path).size == (100, 100)
+    names = {f.local_path.name for f in fetched}
+    assert "cover_00.png" in names
+    assert all(p.suffix == ".png" for p in [f.local_path for f in fetched])

@@ -33,9 +33,9 @@ huntingszn-cover = "huntingszn_cover.cli:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["huntingszn_cover"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"huntingszn_cover/prompts" = "huntingszn_cover/prompts"
+# Prompt .txt files live inside the package and are included by hatchling.
+# Do not force-include that directory: it double-adds the same paths and
+# fails the wheel build.
 
 [tool.ruff]
 line-length = 100

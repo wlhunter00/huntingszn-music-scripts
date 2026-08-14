@@ -204,7 +204,7 @@ def transform(
     "--output",
     "-o",
     type=click.Path(path_type=Path),
-    default=Path("/workspace/huntingszn-assets/covers"),
+    default=Path("./covers"),
     show_default=True,
     help="Output directory base.",
 )
@@ -235,7 +235,8 @@ def mashup(
 
     ALWAYS fetches fresh album covers via SerpAPI Google Images (default behavior).
     Auto-selects the best square cover per track, then creates a composite via
-    OpenAI multi-image edit and transforms with clean + crystal prompts.
+    OpenAI multi-image edit (gpt-image-1.5, falling back to gpt-image-1) and
+    transforms with clean + crystal prompts.
 
     Does NOT read from existing Releases folders - those are finished work only.
     Use --image only as a rare override when fetch returns unusable results.
@@ -315,7 +316,8 @@ def mashup(
                 console.print(f"  {track}: {len(paths)} image(s)")
 
         if manifest.composite_path:
-            console.print(f"\n[bold]Composite:[/bold] {manifest.composite_path}")
+            method = manifest.composite_method or "unknown"
+            console.print(f"\n[bold]Composite:[/bold] {manifest.composite_path} [{method}]")
 
         if manifest.transformed:
             console.print("\n[bold]Transformed images:[/bold]")

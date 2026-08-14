@@ -144,3 +144,33 @@ def test_transform_image_does_not_call_generate(
     assert isinstance(image_arg, tuple)
     assert image_arg[0] == "image.png"
     assert image_arg[2] == "image/png"
+
+
+def test_transform_image_falls_back_to_gpt_image_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from huntingszn_cover.transform import FALLBACK_MODEL, PREFERRED_MODEL
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    src = write_png(tmp_path / "src.png")
+    out = tmp_path / "out.png"
+
+    mock_client = MagicMock()
+    mock_image = MagicMock()
+    mock_image.b64_json = base64.b64encode(png_bytes()).decode("ascii")
+    mock_image.url = None
+    success = MagicMock(data=[mock_image])
+    mock_client.images.edit.side_effect = [RuntimeError("gpt-image-1.5 unavailable"), success]
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        result = transform_image(src, "HUNTINGSZN EDIT prompt", out)
+
+    assert result.model_used == FALLBACK_MODEL
+    assert mock_client.images.edit.call_count == 2
+    assert mock_client.images.edit.call_args_list[0].kwargs["model"] == PREFERRED_MODEL
+    assert mock_client.images.edit.call_args_list[1].kwargs["model"] == FALLBACK_MODEL
+    mock_client.images.generate.assert_not_called()
+    for call in mock_client.images.edit.call_args_list:
+        image_arg = call.kwargs["image"]
+        assert image_arg[0] == "image.png"
+        assert image_arg[2] == "image/png"

@@ -95,8 +95,12 @@ def search_album_covers(
             raise FetchError(f"SerpAPI error: {data['error']}")
 
         return data.get("images_results", [])
+    except httpx.HTTPStatusError as e:
+        raise FetchError(
+            f"HTTP error during SerpAPI request: {e.response.status_code}"
+        ) from e
     except httpx.HTTPError as e:
-        raise FetchError(f"HTTP error during SerpAPI request: {e}") from e
+        raise FetchError("HTTP error during SerpAPI request") from e
     finally:
         if should_close:
             client.close()

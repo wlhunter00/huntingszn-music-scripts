@@ -69,12 +69,14 @@ huntingszn-cover mashup \
 **Default behavior** (web fetch is required, not optional):
 1. **ALWAYS** fetches fresh album covers via SerpAPI Google Images (~5 per track)
 2. Auto-selects the best square cover per track (default, use `--pick` to manually select)
-3. Creates a composite via OpenAI multi-image edit (falls back to Pillow 50/50 split)
+3. Creates a composite via OpenAI multi-image edit (`gpt-image-1.5`, fallback `gpt-image-1`)
 4. Transforms composite + each original with clean and crystal prompts
 5. Generates `manifest.json` tracking all outputs
 6. Copies to `/Volumes/HuntingSzn/Thumbnails/Releases/<Mashup Name>/` if mounted
 
 **Important**: Does NOT read from existing Releases folders - those are finished work only. A new run for "The Cure x Pray" will Google those two covers fresh; it will not open the existing release folder.
+
+**If OpenAI image edit fails** (after trying `gpt-image-1.5` then `gpt-image-1`), the command fails clearly. It does not silently replace the mashup with a Pillow 50/50 split.
 
 **If fetch returns unusable results**, the command fails clearly with a list of candidate paths. Use `--image` as a rare override only:
 
@@ -142,7 +144,7 @@ The wordmark in prompt files should be `HUNTINGSZN EDIT` (not FLIP).
 ## Output Structure
 
 ```
-/workspace/huntingszn-assets/covers/<slug>/
+./covers/<slug>/
 ├── manifest.json
 ├── <slug>-composite.png
 ├── <slug>-composite-clean.png

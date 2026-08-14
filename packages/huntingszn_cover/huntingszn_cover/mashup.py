@@ -17,6 +17,7 @@ from PIL import Image
 from huntingszn_cover.fetch import FetchedImage, fetch_album_covers
 from huntingszn_cover.prompts import get_prompt
 from huntingszn_cover.transform import (
+    FALLBACK_MODEL,
     OUTPUT_SIZE,
     PREFERRED_MODEL,
     prepare_openai_image,
@@ -37,6 +38,7 @@ class MashupManifest:
     created_at: str
     originals: dict[str, list[str]] = field(default_factory=dict)
     composite_path: str | None = None
+    composite_method: str | None = None
     transformed: dict[str, list[str]] = field(default_factory=dict)
     output_dir: str = ""
     copied_to_volume: str | None = None
@@ -94,6 +96,27 @@ def create_pillow_composite(
     return output_path
 
 
+def _image_from_composite_response(response: object) -> Image.Image:
+    """Decode a PNG from an OpenAI images.edit response."""
+    data = getattr(response, "data", None)
+    if not data:
+        raise MashupError("No composite data returned")
+
+    image_data = data[0]
+
+    if getattr(image_data, "b64_json", None):
+        img_bytes = base64.b64decode(image_data.b64_json)
+        return Image.open(BytesIO(img_bytes))
+    if getattr(image_data, "url", None):
+        import httpx
+
+        with httpx.Client(timeout=60.0) as http_client:
+            img_response = http_client.get(image_data.url)
+            img_response.raise_for_status()
+            return Image.open(BytesIO(img_response.content))
+    raise MashupError("No image data in response")
+
+
 def create_openai_composite(
     images: list[Path],
     output_path: Path,
@@ -101,18 +124,23 @@ def create_openai_composite(
     *,
     model: str | None = None,
 ) -> tuple[Path, str]:
-    """Create composite using OpenAI multi-image edit (gpt-image-1.5).
+    """Create composite using OpenAI multi-image edit.
 
-    Falls back to Pillow composite if multi-image edit fails.
+    Uses ``gpt-image-1.5``, falling back to ``gpt-image-1``. Does **not**
+    silently fall back to a Pillow 50/50 split — that hid production
+    ``images.edit`` failures (including the octet-stream content-type bug).
 
     Args:
         images: List of source image paths.
         output_path: Output path for composite.
         prompt: Prompt for the composite edit.
-        model: Model to use.
+        model: Model to use. If omitted, try PREFERRED_MODEL then FALLBACK_MODEL.
 
     Returns:
-        Tuple of (output path, model/method used).
+        Tuple of (output path, model used).
+
+    Raises:
+        MashupError: If edit fails (including after model fallback).
     """
     from openai import OpenAI
 
@@ -120,14 +148,17 @@ def create_openai_composite(
     if not api_key:
         raise MashupError("OPENAI_API_KEY required for composite creation")
 
-    model_to_use = model or PREFERRED_MODEL
+    if len(images) < 2:
+        raise MashupError("Need at least 2 images for composite")
+
+    image_files = [
+        prepare_openai_image(path, filename=f"image_{i}.png") for i, path in enumerate(images[:2])
+    ]
+
     client = OpenAI()
+    model_to_use = model or PREFERRED_MODEL
 
     try:
-        image_files = [
-            prepare_openai_image(path, filename=f"image_{i}.png") for i, path in enumerate(images[:2])
-        ]
-
         response = client.images.edit(
             model=model_to_use,
             image=image_files,
@@ -135,34 +166,31 @@ def create_openai_composite(
             n=1,
             size=OUTPUT_SIZE,
         )
-
-        if not response.data:
-            raise MashupError("No composite data returned")
-
-        image_data = response.data[0]
-
-        if hasattr(image_data, "b64_json") and image_data.b64_json:
-            img_bytes = base64.b64decode(image_data.b64_json)
-            img = Image.open(BytesIO(img_bytes))
-        elif hasattr(image_data, "url") and image_data.url:
-            import httpx
-
-            with httpx.Client(timeout=60.0) as http_client:
-                img_response = http_client.get(image_data.url)
-                img_response.raise_for_status()
-                img = Image.open(BytesIO(img_response.content))
+        img = _image_from_composite_response(response)
+    except Exception as e:
+        if model is None and model_to_use != FALLBACK_MODEL:
+            try:
+                response = client.images.edit(
+                    model=FALLBACK_MODEL,
+                    image=image_files,
+                    prompt=prompt,
+                    n=1,
+                    size=OUTPUT_SIZE,
+                )
+                img = _image_from_composite_response(response)
+                model_to_use = FALLBACK_MODEL
+            except Exception as fallback_e:
+                raise MashupError(
+                    f"Image edit failed with both {PREFERRED_MODEL} and {FALLBACK_MODEL}: {fallback_e}"
+                ) from fallback_e
         else:
-            raise MashupError("No image data in response")
+            raise MashupError(f"Image edit failed: {e}") from e
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.save(output_path, "PNG")
-        return output_path, model_to_use
-
-    except Exception:
-        create_pillow_composite(images, output_path)
-        return output_path, "pillow-split"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    img.save(output_path, "PNG")
+    return output_path, model_to_use
 
 
 def _format_candidate_paths(all_candidates: dict[str, list[str]]) -> str:
@@ -219,6 +247,7 @@ def run_mashup(
 
     best_covers: list[Path] = []
     track_images: dict[str, list[FetchedImage]] = {}
+    selected_covers: dict[str, Path] = {}
 
     if override_images:
         best_covers = override_images
@@ -258,6 +287,7 @@ def run_mashup(
                 best = picker(track, fetched) if picker is not None else None
             if best:
                 best_covers.append(best.local_path)
+                selected_covers[track] = best.local_path
             else:
                 failed_tracks.append(track)
 
@@ -286,10 +316,11 @@ def run_mashup(
         f"the visual elements of both covers into one cohesive design."
     )
 
-    composite_path, _method = create_openai_composite(
+    composite_path, method = create_openai_composite(
         best_covers, composite_path, composite_prompt
     )
     manifest.composite_path = str(composite_path)
+    manifest.composite_method = method
 
     prompt_clean = get_prompt("clean")
     prompt_crystal = get_prompt("crystal")
@@ -304,15 +335,14 @@ def run_mashup(
 
     if not override_images:
         for track in tracks:
-            fetched = track_images.get(track, [])
-            best = _select_best_cover(fetched)
-            if best:
+            selected = selected_covers.get(track)
+            if selected:
                 tslug = track_slug(track)
                 track_results = []
                 for prompt, ptype in [(prompt_clean, "clean"), (prompt_crystal, "crystal")]:
                     out_path = mashup_dir / "transformed" / tslug / f"{tslug}-{ptype}.png"
                     out_path.parent.mkdir(parents=True, exist_ok=True)
-                    result = transform_image(best.local_path, prompt, out_path)
+                    result = transform_image(selected, prompt, out_path)
                     track_results.append(result)
                 manifest.transformed[track] = [str(r.output_path) for r in track_results]
 
@@ -332,6 +362,7 @@ def run_mashup(
                 "created_at": manifest.created_at,
                 "originals": manifest.originals,
                 "composite_path": manifest.composite_path,
+                "composite_method": manifest.composite_method,
                 "transformed": manifest.transformed,
                 "output_dir": manifest.output_dir,
                 "copied_to_volume": manifest.copied_to_volume,
