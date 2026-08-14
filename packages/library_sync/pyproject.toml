@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "library-sync"
+version = "0.1.0"
+description = "Music library inventory layer: index portable HDD, sync to B2, query by key/BPM"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "huntingszn-music-scripts",
+    "mutagen>=1.47",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+library-sync = "library_sync.cli:main"
+
+[tool.uv.sources]
+huntingszn-music-scripts = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["library_sync"]

@@ -1,5 +1,7 @@
 # HuntingSzn Music Scripts — run from repo root with uv
-MUSIC_ROOT ?= /Volumes/Will Hunter Music
+# Default: parent of this repo (the portable HDD when Scripts lives on it).
+# Override: make MUSIC_ROOT="/Volumes/Will Hunter Music" ...
+MUSIC_ROOT ?= $(abspath $(CURDIR)/..)
 export MUSIC_DRIVE_ROOT := $(MUSIC_ROOT)
 export PYTHONPATH := $(CURDIR)
 
@@ -13,6 +15,9 @@ help:
 	@echo "HuntingSzn Music Scripts"
 	@echo ""
 	@echo "  make sync              Install workspace (uv sync --all-packages)"
+	@echo "  make sync-stem-cpu     Sync stem-split with CPU extra (no NVIDIA)"
+	@echo "  make sync-stem-gpu     Sync stem-split with GPU extra (NVIDIA CUDA)"
+	@echo "  make sync-stem-mac     Sync stem-split with macOS extra (MLX)"
 	@echo "  make stem-split        Process songs-to-split -> stem-output"
 	@echo "  make stem-verify       Verify latest stem folder"
 	@echo "  make pn-pipeline       pn-rename -> pn-filename -> library-metadata (FLIP_STYLE=1 optional)"
@@ -31,11 +36,25 @@ help:
 	@echo "  make vst-index         Scan VST plugins -> CSV"
 	@echo "  make minimal-catalog   Scan Minimal plugin XML -> CSV"
 	@echo "  make rift-catalog      Scan Rift presets -> CSV"
+	@echo "  make library-index     Index library to SQLite"
+	@echo "  make library-publish   Publish library to B2"
+	@echo "  make library-pull      Pull projects from B2"
+	@echo "  make library-query     Query library (CAMELOT=..., BPM=..., Q=...)"
 	@echo "  make test              Run mashup-pop-finder tests"
 	@echo "  make test-library      Run library_tools metadata tests"
+	@echo "  make test-library-sync Run library_sync tests"
 
 sync:
 	uv sync --all-packages
+
+sync-stem-cpu:
+	uv sync --package stem-split --extra cpu
+
+sync-stem-gpu:
+	uv sync --package stem-split --extra gpu
+
+sync-stem-mac:
+	uv sync --package stem-split --extra mac
 
 stem-split:
 	uv run --package stem-split stem-split --input "$(STEM_IN)" --output "$(STEM_OUT)"
@@ -98,6 +117,22 @@ test:
 test-library:
 	uv sync --package library-tools --extra dev
 	uv run --package library-tools pytest packages/library_tools/tests
+
+library-index:
+	uv run --package library-sync library-sync index $(if $(DRY_RUN),--dry-run,) $(ARGS)
+
+library-publish:
+	uv run --package library-sync library-sync publish $(if $(DRY_RUN),--dry-run,) $(if $(SKIP_INDEX),--skip-index,) $(if $(ALLOW_DELETE),--allow-delete,) $(ARGS)
+
+library-pull:
+	uv run --package library-sync library-sync pull $(if $(DRY_RUN),--dry-run,) $(ARGS)
+
+library-query:
+	uv run --package library-sync library-sync query $(if $(CAMELOT),--camelot "$(CAMELOT)",) $(if $(BPM),--bpm $(BPM),) $(if $(Q),--q "$(Q)",) $(if $(ROLE),--role $(ROLE),) $(if $(LIMIT),--limit $(LIMIT),) $(if $(JSON),--json,) $(ARGS)
+
+test-library-sync:
+	uv sync --package library-sync --extra dev
+	uv run --package library-sync pytest packages/library_sync/tests
 
 lint:
 	uv run ruff check packages config

@@ -1,8 +1,7 @@
 import dataclasses
 
-from serato_tools.track_cues_v2 import TrackCuesV2
-
 from library_tools.serato_clear_cues import clear_cues_rule
+from serato_tools.track_cues_v2 import TrackCuesV2
 
 
 def test_clear_cues_rule_returns_none_when_empty():

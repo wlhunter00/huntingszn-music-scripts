@@ -11,7 +11,8 @@ Private monorepo for DJ library tools, stem splitting, downloads, and harmonic m
 - [ffmpeg](https://ffmpeg.org/) and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for downloaders
 - [ffprobe](https://ffmpeg.org/) for key catalog step
 - Stem splitting on macOS: `mlx-audio-separator` (installed via `uv sync --package stem-split --extra mac`)
-- Stem splitting on Windows/Linux: `audio-separator[gpu]` + CUDA PyTorch (via `uv sync --package stem-split --extra gpu`; needs NVIDIA GPU)
+- Stem splitting on Windows/Linux with NVIDIA GPU: `audio-separator[gpu]` + CUDA PyTorch (via `uv sync --package stem-split --extra gpu`)
+- Stem splitting on CPU (no GPU): `audio-separator` (via `uv sync --package stem-split --extra cpu`)
 
 ## Setup
 
@@ -72,7 +73,7 @@ uv run --package stem-split stem-split
 uv run --package stem-split stem-verify
 ```
 
-Defaults: input `Stem Splitting/songs-to-split`, output `Stem Splitting/stem-output`. Override with `--input` / `--output`. On macOS sync with `--extra mac`; on Windows/Linux with NVIDIA GPU use `--extra gpu`.
+Defaults: input `Stem Splitting/songs-to-split`, output `Stem Splitting/stem-output`. Override with `--input` / `--output`. On macOS sync with `--extra mac`; on Windows/Linux with NVIDIA GPU use `--extra gpu`; for CPU-only use `--extra cpu`.
 
 ### `mashup-pop-finder` — mashup/pop matcher
 
@@ -111,6 +112,59 @@ uv run --package soundcloud-repost sc-unrepost
 
 Optional: `--profile-url`. Opens Chrome via Selenium.
 
+### `library-sync` — music inventory layer
+
+Index portable HDD library, sync to B2, query by Camelot key and BPM:
+
+```bash
+# Check if drive is mounted (supports "Will Hunter Music" or "HuntingSzn" volumes)
+uv run --package library-sync library-sync detect
+
+# Index all catalogs: tracks, stems, Ableton projects
+uv run --package library-sync library-sync index --dry-run
+uv run --package library-sync library-sync index
+
+# Query tracks (for Music Production Agent)
+uv run --package library-sync library-sync query --camelot 8A --bpm 140
+uv run --package library-sync library-sync query --q "halo" --json
+
+# Query stem folders
+uv run --package library-sync library-sync query-stems --q "as it was" --model htdemucs_ft
+
+# Query Ableton projects
+uv run --package library-sync library-sync query-projects --q "mashup" --kind template
+
+# Publish FULL drive to B2 (copy; --allow-delete syncs but keeps projects/metadata/templates)
+uv run --package library-sync library-sync publish --dry-run
+uv run --package library-sync library-sync publish --allow-delete --dry-run
+
+# Copy projects from B2 to Ableton/Music Production Agent (does not delete local work)
+uv run --package library-sync library-sync pull --dry-run
+
+# Show status (counts for tracks, stems, Ableton projects)
+uv run --package library-sync library-sync status
+```
+
+**Catalogs indexed:**
+- **Tracks** (`DJ Music/` + `Platnium Notes/`) — searchable via `query` with Camelot/BPM
+- **Stems** (`Stem Splitting/stem-output/{model}/{song}/`) — searchable via `query-stems`
+- **Ableton projects** (`Ableton/**/*.als`, skips Backup) — searchable via `query-projects`
+
+**Full-drive mirror vs catalog-only:**
+- **Index** catalogs tracks, stems, and Ableton projects into SQLite
+- **Publish** copies the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.). Does not delete remote files unless you pass `--allow-delete` (rclone sync). Sync still keeps B2-only prefixes: `projects/`, `metadata/`, `templates/`.
+- Excludes system files, Ableton `Backup/`, secrets (`.env`, `cookies.txt`, `*.pem`), and `Scripts/data/library.sqlite` (catalog is uploaded separately to `metadata/library.sqlite`)
+
+**Harmonic mixing rules (tracks only):**
+- Camelot: matches ±1 on wheel plus relative major/minor (e.g., 8A matches 7A, 8A, 9A, 8B)
+- BPM: matches ±6 of target, plus ±6 of half-time (0.5×) and double-time (2×)
+
+**B2 layout:**
+- Bucket root mirrors drive folders (DJ Music, Ableton, Stem Splitting, Set Recording, etc.)
+- `metadata/library.sqlite` — track catalog for queries
+- `templates/mashup/` — from `Ableton/HuntingSzn Mashup Template Project`
+- `projects/<slug>/` — pulled to `Ableton/Music Production Agent/<slug>/`
+
 ### Tests & lint
 
 ```bash
@@ -119,6 +173,9 @@ uv run --package mashup-pop-finder pytest packages/mashup_pop_finder/tests
 
 uv sync --package library-tools --extra dev
 uv run --package library-tools pytest packages/library_tools/tests
+
+uv sync --package library-sync --extra dev
+uv run --package library-sync pytest packages/library_sync/tests
 
 uv run ruff check packages config
 ```
@@ -134,6 +191,7 @@ uv run ruff check packages config
 | `mashup_pop_finder` | Mashup/pop key + BPM matcher |
 | `stem_split` | Vocal ensemble + Demucs stems |
 | `library_tools` | Metadata, duplicates, Platinum Notes cleanup, key correction |
+| `library_sync` | Music inventory: index HDD, sync B2, query by key/BPM |
 | `music-downloads` | SoundCloud (MP3 320) / YouTube |
 | `music-catalogs` | Sample/plugin CSV scanners |
 | `soundcloud_repost` | Selenium unrepost tool |

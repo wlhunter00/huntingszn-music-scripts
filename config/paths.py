@@ -8,6 +8,11 @@ from pathlib import Path
 # Repo root: …/Scripts/config/paths.py -> …/Scripts
 _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 
+# Volume names for portable HDD detection
+VOLUME_NAME = "Will Hunter Music"
+VOLUME_NAME_ALT = "HuntingSzn"
+VOLUME_NAMES = (VOLUME_NAME, VOLUME_NAME_ALT)
+
 
 def _normalize_drive_root(raw: str) -> Path:
     """Normalize drive roots like ``G:`` to ``G:\\`` on Windows."""
@@ -56,3 +61,12 @@ DEFAULT_SAMPLE_ROOTS = (
     DRIVE_ROOT / "Instruments",
     DRIVE_ROOT / "serum presets",
 )
+
+# library-sync paths
+DJ_MUSIC = DRIVE_ROOT / "DJ Music"
+LIBRARY_SQLITE = SCRIPTS_ROOT / "data" / "library.sqlite"
+LIBRARY_INDEX_ROOTS = (DJ_MUSIC, PLATINUM_NOTES)
+
+# Mashup template path (optional, from env)
+_mashup_template = os.environ.get("MASHUP_TEMPLATE_PATH")
+MASHUP_TEMPLATE_PATH = Path(_mashup_template) if _mashup_template else None

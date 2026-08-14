@@ -9,8 +9,8 @@ from stem_split._bootstrap import ensure_config_importable
 
 ensure_config_importable()
 
-from config.paths import STEM_INPUT, STEM_OUTPUT
-from stem_split.pipeline import process_audio_folder
+from config.paths import STEM_INPUT, STEM_OUTPUT  # noqa: E402
+from stem_split.pipeline import process_audio_folder  # noqa: E402
 
 
 def main() -> None:

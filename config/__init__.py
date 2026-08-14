@@ -1,16 +1,23 @@
 """Shared configuration for HuntingSzn music scripts."""
 
 from config.paths import (
+    DJ_MUSIC,
     DJ_SPOTIFY,
     DOWNLOADS,
     DRIVE_ROOT,
     KEY_CORRECTION_OUTPUT,
+    LIBRARY_INDEX_ROOTS,
+    LIBRARY_SQLITE,
+    MASHUP_TEMPLATE_PATH,
     PLATINUM_NOTES,
     SCRIPTS_ROOT,
     STEM_DIR,
     STEM_INPUT,
     STEM_OUTPUT,
     STEM_OUTPUT_MODEL,
+    VOLUME_NAME,
+    VOLUME_NAME_ALT,
+    VOLUME_NAMES,
 )
 
 __all__ = [
@@ -18,10 +25,17 @@ __all__ = [
     "SCRIPTS_ROOT",
     "PLATINUM_NOTES",
     "DJ_SPOTIFY",
+    "DJ_MUSIC",
     "DOWNLOADS",
     "STEM_DIR",
     "STEM_INPUT",
     "STEM_OUTPUT",
     "STEM_OUTPUT_MODEL",
     "KEY_CORRECTION_OUTPUT",
+    "LIBRARY_SQLITE",
+    "LIBRARY_INDEX_ROOTS",
+    "MASHUP_TEMPLATE_PATH",
+    "VOLUME_NAME",
+    "VOLUME_NAME_ALT",
+    "VOLUME_NAMES",
 ]
