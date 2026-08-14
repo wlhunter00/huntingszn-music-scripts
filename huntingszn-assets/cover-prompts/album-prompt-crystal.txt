@@ -1,0 +1,11 @@
+Transform this album cover with a crystal/teal aesthetic treatment. Apply the following style guidelines:
+
+- Add a cyan/teal color grade while preserving the composition
+- Enhance with crystalline, glass-like visual elements
+- Apply a dreamy, ethereal atmosphere
+- Add subtle light rays or prismatic effects
+- Maintain recognizable elements from the original
+
+This is a HUNTINGSZN EDIT - create a distinctive teal-crystal aesthetic while honoring the source material.
+
+Output a high-quality 1024x1024 PNG image.

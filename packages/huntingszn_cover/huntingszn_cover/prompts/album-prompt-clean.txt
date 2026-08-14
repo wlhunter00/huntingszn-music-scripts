@@ -1,0 +1,11 @@
+Transform this album cover into a clean, minimalist aesthetic edit. Apply the following style guidelines:
+
+- Clean up the visual noise while preserving the core composition
+- Enhance contrast and color clarity
+- Apply subtle lighting adjustments for a polished look
+- Maintain the original artwork's identity and mood
+- Keep the image crisp and professional
+
+This is a HUNTINGSZN EDIT - preserve the artistic integrity while elevating the visual quality.
+
+Output a high-quality 1024x1024 PNG image.
