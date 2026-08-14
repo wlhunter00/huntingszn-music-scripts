@@ -11,7 +11,8 @@ Private monorepo for DJ library tools, stem splitting, downloads, and harmonic m
 - [ffmpeg](https://ffmpeg.org/) and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for downloaders
 - [ffprobe](https://ffmpeg.org/) for key catalog step
 - Stem splitting on macOS: `mlx-audio-separator` (installed via `uv sync --package stem-split --extra mac`)
-- Stem splitting on Windows/Linux: `audio-separator[gpu]` + CUDA PyTorch (via `uv sync --package stem-split --extra gpu`; needs NVIDIA GPU)
+- Stem splitting on Windows/Linux with NVIDIA GPU: `audio-separator[gpu]` + CUDA PyTorch (via `uv sync --package stem-split --extra gpu`)
+- Stem splitting on CPU (no GPU): `audio-separator` (via `uv sync --package stem-split --extra cpu`)
 
 ## Setup
 
@@ -72,7 +73,7 @@ uv run --package stem-split stem-split
 uv run --package stem-split stem-verify
 ```
 
-Defaults: input `Stem Splitting/songs-to-split`, output `Stem Splitting/stem-output`. Override with `--input` / `--output`. On macOS sync with `--extra mac`; on Windows/Linux with NVIDIA GPU use `--extra gpu`.
+Defaults: input `Stem Splitting/songs-to-split`, output `Stem Splitting/stem-output`. Override with `--input` / `--output`. On macOS sync with `--extra mac`; on Windows/Linux with NVIDIA GPU use `--extra gpu`; for CPU-only use `--extra cpu`.
 
 ### `mashup-pop-finder` — mashup/pop matcher
 

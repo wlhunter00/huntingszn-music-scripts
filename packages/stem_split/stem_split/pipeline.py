@@ -23,8 +23,13 @@ operate on the original input mix. Demucs's own vocals output is discarded
 input (full mix with vocals) and avoids inheriting Roformer artifacts.
 
 Tooling per platform (auto-selected):
-    Windows / Linux:  audio-separator           (CUDA via [gpu] extras)
-    macOS:            mlx-audio-separator       (MLX-native, Apple Silicon)
+    Windows / Linux:  audio-separator           (CUDA via [gpu] extra, CPU via [cpu] extra)
+    macOS:            mlx-audio-separator       (MLX-native, Apple Silicon via [mac] extra)
+
+Install extras:
+    uv sync --package stem-split --extra gpu   # NVIDIA GPU with CUDA
+    uv sync --package stem-split --extra cpu   # CPU-only (no NVIDIA required)
+    uv sync --package stem-split --extra mac   # macOS Apple Silicon
 
 Verified audio-separator CLI flags (from
 https://github.com/nomadkaraoke/python-audio-separator README, fetched

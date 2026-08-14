@@ -13,6 +13,9 @@ help:
 	@echo "HuntingSzn Music Scripts"
 	@echo ""
 	@echo "  make sync              Install workspace (uv sync --all-packages)"
+	@echo "  make sync-stem-cpu     Sync stem-split with CPU extra (no NVIDIA)"
+	@echo "  make sync-stem-gpu     Sync stem-split with GPU extra (NVIDIA CUDA)"
+	@echo "  make sync-stem-mac     Sync stem-split with macOS extra (MLX)"
 	@echo "  make stem-split        Process songs-to-split -> stem-output"
 	@echo "  make stem-verify       Verify latest stem folder"
 	@echo "  make pn-pipeline       pn-rename -> pn-filename -> library-metadata (FLIP_STYLE=1 optional)"
@@ -41,6 +44,15 @@ help:
 
 sync:
 	uv sync --all-packages
+
+sync-stem-cpu:
+	uv sync --package stem-split --extra cpu
+
+sync-stem-gpu:
+	uv sync --package stem-split --extra gpu
+
+sync-stem-mac:
+	uv sync --package stem-split --extra mac
 
 stem-split:
 	uv run --package stem-split stem-split --input "$(STEM_IN)" --output "$(STEM_OUT)"
