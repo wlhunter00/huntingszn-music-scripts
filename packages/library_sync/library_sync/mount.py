@@ -1,7 +1,7 @@
 """Drive detection for the portable music drive.
 
-Volume name: "Will Hunter Music"
-- macOS: /Volumes/Will Hunter Music
+Volume names: "Will Hunter Music" or "HuntingSzn"
+- macOS: /Volumes/Will Hunter Music or /Volumes/HuntingSzn
 - Windows: scan volumes for label, or accept Scripts-parent drive (G:/H:/E:)
 - Linux: MUSIC_DRIVE_ROOT env only
 """
@@ -14,8 +14,10 @@ import sys
 from pathlib import Path
 
 VOLUME_NAME = "Will Hunter Music"
+VOLUME_NAME_ALT = "HuntingSzn"
+VOLUME_NAMES = (VOLUME_NAME, VOLUME_NAME_ALT)
 
-_MACOS_VOLUME_PATH = Path("/Volumes") / VOLUME_NAME
+_MACOS_VOLUME_PATHS = [Path("/Volumes") / name for name in VOLUME_NAMES]
 
 
 def _find_windows_volume() -> Path | None:
@@ -34,7 +36,7 @@ def _find_windows_volume() -> Path | None:
             if len(parts) >= 2:
                 drive_letter = parts[0]
                 volume_name = " ".join(parts[1:])
-                if volume_name == VOLUME_NAME:
+                if volume_name in VOLUME_NAMES:
                     return Path(drive_letter + os.sep)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
@@ -74,8 +76,9 @@ def find_drive(explicit: Path | None = None) -> Path | None:
         return explicit if explicit.exists() else None
 
     if sys.platform == "darwin":
-        if _MACOS_VOLUME_PATH.exists():
-            return _MACOS_VOLUME_PATH
+        for vol_path in _MACOS_VOLUME_PATHS:
+            if vol_path.exists():
+                return vol_path
         return None
 
     if sys.platform == "win32":

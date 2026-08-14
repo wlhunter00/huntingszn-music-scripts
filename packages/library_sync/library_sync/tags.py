@@ -79,20 +79,26 @@ def _parse_key_and_camelot(
 
 def _get_id3_text(tags: ID3, key: str) -> str | None:
     """Get text value from ID3 tags."""
-    frame = tags.get(key)
-    if frame:
-        text = frame.text[0] if hasattr(frame, "text") and frame.text else None
-        return str(text) if text else None
+    try:
+        frame = tags.get(key)
+        if frame:
+            text = frame.text[0] if hasattr(frame, "text") and frame.text else None
+            return str(text) if text else None
+    except (ValueError, KeyError, TypeError):
+        pass
     return None
 
 
 def _get_comment(tags: ID3) -> str | None:
     """Get comment from ID3 tags (various COMM frames)."""
-    for key in tags.keys():
-        if key.startswith("COMM"):
-            frame = tags[key]
-            if hasattr(frame, "text") and frame.text:
-                return str(frame.text[0])
+    try:
+        for key in tags.keys():
+            if key.startswith("COMM"):
+                frame = tags[key]
+                if hasattr(frame, "text") and frame.text:
+                    return str(frame.text[0])
+    except (ValueError, KeyError, TypeError):
+        pass
     return None
 
 
@@ -138,9 +144,12 @@ def read_tags(path: Path) -> TrackTags:
 
         def get_tag(keys: list[str]) -> str | None:
             for k in keys:
-                val = audio_tags.get(k)
-                if val:
-                    return str(val[0]) if isinstance(val, list) else str(val)
+                try:
+                    val = audio_tags.get(k)
+                    if val:
+                        return str(val[0]) if isinstance(val, list) else str(val)
+                except (ValueError, KeyError, TypeError):
+                    continue
             return None
 
         tags.artist = get_tag(["artist", "ARTIST", "\xa9ART", "TPE1"])

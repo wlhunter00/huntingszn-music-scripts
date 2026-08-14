@@ -3,7 +3,13 @@
 import os
 from unittest.mock import patch
 
-from library_sync.mount import VOLUME_NAME, drive_is_mounted, find_drive
+from library_sync.mount import (
+    VOLUME_NAME,
+    VOLUME_NAME_ALT,
+    VOLUME_NAMES,
+    drive_is_mounted,
+    find_drive,
+)
 
 
 class TestFindDrive:
@@ -40,12 +46,10 @@ class TestFindDrive:
     def test_returns_none_when_unmounted(self):
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("MUSIC_DRIVE_ROOT", None)
-            with patch("library_sync.mount._MACOS_VOLUME_PATH") as mock_path:
-                mock_path.exists.return_value = False
-                with patch("library_sync.mount.sys") as mock_sys:
-                    mock_sys.platform = "linux"
-                    result = find_drive()
-                    assert result is None
+            with patch("library_sync.mount.sys") as mock_sys:
+                mock_sys.platform = "linux"
+                result = find_drive()
+                assert result is None
 
 
 class TestDriveIsMounted:
@@ -63,3 +67,42 @@ class TestDriveIsMounted:
 
 def test_volume_name():
     assert VOLUME_NAME == "Will Hunter Music"
+
+
+def test_volume_name_alt():
+    assert VOLUME_NAME_ALT == "HuntingSzn"
+
+
+def test_volume_names_tuple():
+    assert VOLUME_NAMES == ("Will Hunter Music", "HuntingSzn")
+
+
+class TestMacOSVolumeDetection:
+    def test_detects_primary_volume(self, tmp_path):
+        """Test that primary volume name is detected on macOS."""
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("MUSIC_DRIVE_ROOT", None)
+            with patch("library_sync.mount.sys") as mock_sys:
+                mock_sys.platform = "darwin"
+                with patch("library_sync.mount._MACOS_VOLUME_PATHS") as mock_paths:
+                    mock_vol = tmp_path / "Will Hunter Music"
+                    mock_vol.mkdir()
+                    mock_paths.__iter__ = lambda self: iter([mock_vol])
+                    result = find_drive()
+                    assert result == mock_vol
+
+    def test_detects_alt_volume(self, tmp_path):
+        """Test that alternate volume name (HuntingSzn) is detected on macOS."""
+        with patch.dict(os.environ, {}, clear=True):
+            os.environ.pop("MUSIC_DRIVE_ROOT", None)
+            with patch("library_sync.mount.sys") as mock_sys:
+                mock_sys.platform = "darwin"
+                with patch("library_sync.mount._MACOS_VOLUME_PATHS") as mock_paths:
+                    mock_vol_alt = tmp_path / "HuntingSzn"
+                    mock_vol_alt.mkdir()
+                    mock_paths.__iter__ = lambda self: iter([
+                        tmp_path / "nonexistent",
+                        mock_vol_alt,
+                    ])
+                    result = find_drive()
+                    assert result == mock_vol_alt
