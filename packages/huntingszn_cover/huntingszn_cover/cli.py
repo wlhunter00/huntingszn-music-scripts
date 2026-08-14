@@ -190,9 +190,15 @@ def transform(
     help='Track in "Artist:Title" format. Can be specified multiple times.',
 )
 @click.option(
-    "--auto",
+    "--pick",
     is_flag=True,
-    help="Auto-select best covers for composite.",
+    help="Manually pick covers instead of auto-selecting best square cover.",
+)
+@click.option(
+    "--image",
+    multiple=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Override: use these local images instead of fetching. Rare use only.",
 )
 @click.option(
     "--output",
@@ -219,16 +225,20 @@ def transform(
 def mashup(
     mashup: str,
     tracks: tuple[str, ...],
-    auto: bool,
+    pick: bool,
+    image: tuple[Path, ...],
     output: Path,
     count: int,
     volume: Path | None,
 ) -> None:
     """Create a mashup album cover composite.
 
-    Fetches album covers for each track, creates a composite image via
-    OpenAI multi-image edit (or Pillow 50/50 split fallback), then transforms
-    both the composite and original covers with clean and crystal prompts.
+    ALWAYS fetches fresh album covers via SerpAPI Google Images (default behavior).
+    Auto-selects the best square cover per track, then creates a composite via
+    OpenAI multi-image edit and transforms with clean + crystal prompts.
+
+    Does NOT read from existing Releases folders - those are finished work only.
+    Use --image only as a rare override when fetch returns unusable results.
 
     Requires both SERPAPI_API_KEY and OPENAI_API_KEY environment variables.
 
@@ -236,8 +246,7 @@ def mashup(
         huntingszn-cover mashup \\
             --mashup "The Cure x Pray" \\
             --tracks "Olivia Rodrigo:The Cure" \\
-            --tracks "Illenium:Pray" \\
-            --auto
+            --tracks "Illenium:Pray"
     """
     from huntingszn_cover.fetch import FetchError
     from huntingszn_cover.mashup import MashupError, run_mashup
@@ -249,9 +258,15 @@ def mashup(
         if default_volume.exists():
             volume_path = default_volume
 
+    override_images = list(image) if image else None
+
     try:
         console.print(f"[bold]Creating mashup: {mashup}[/bold]")
         console.print(f"Tracks: {', '.join(tracks)}")
+        if override_images:
+            console.print(f"[yellow]Using override images:[/yellow] {override_images}")
+        else:
+            console.print("[dim]Fetching fresh covers via SerpAPI (default)[/dim]")
         console.print(f"Output: {output}")
         if volume_path:
             console.print(f"Will copy to volume: {volume_path}")
@@ -261,9 +276,10 @@ def mashup(
             mashup,
             list(tracks),
             output,
-            auto=auto,
+            auto=not pick,
             target_covers=count,
             volume_path=volume_path,
+            override_images=override_images,
         )
 
         console.print("\n[bold green]Mashup complete![/bold green]")

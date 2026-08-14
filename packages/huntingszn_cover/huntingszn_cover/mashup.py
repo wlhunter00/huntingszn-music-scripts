@@ -176,22 +176,31 @@ def run_mashup(
     tracks: list[str],
     output_dir: Path,
     *,
-    auto: bool = False,
+    auto: bool = True,
     target_covers: int = 5,
     volume_path: Path | None = None,
+    override_images: list[Path] | None = None,
 ) -> MashupManifest:
     """Run the full mashup pipeline: fetch, composite, transform.
+
+    ALWAYS fetches fresh covers via SerpAPI unless override_images is provided.
+    Does NOT read from existing Releases folders - those are finished work only.
 
     Args:
         mashup_name: Name for the mashup (e.g., "The Cure x Pray").
         tracks: List of tracks in "Artist:Title" format.
         output_dir: Output directory.
-        auto: If True, auto-select best covers for composite.
+        auto: If True (default), auto-select best square covers for composite.
         target_covers: Number of covers to fetch per track.
         volume_path: Optional path to copy results (e.g., /Volumes/HuntingSzn/Thumbnails/Releases).
+        override_images: Optional list of local image paths to use instead of fetching.
+                        Rare override only - use when fetch returns unusable results.
 
     Returns:
         MashupManifest documenting all created files.
+
+    Raises:
+        MashupError: If fetch returns no usable square covers and no override provided.
     """
     slug = slugify(mashup_name)
     mashup_dir = output_dir / slug
@@ -205,53 +214,84 @@ def run_mashup(
         output_dir=str(mashup_dir),
     )
 
-    import httpx
-
-    track_images: dict[str, list[FetchedImage]] = {}
     best_covers: list[Path] = []
 
-    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-        for track in tracks:
-            artist, title = parse_track(track)
-            tslug = track_slug(track)
-            track_dir = mashup_dir / "originals" / tslug
+    if override_images:
+        best_covers = override_images
+        manifest.originals["override"] = [str(p) for p in override_images]
+    else:
+        import httpx
 
-            fetched = fetch_album_covers(
-                artist, title, track_dir, target_count=target_covers, client=client
+        track_images: dict[str, list[FetchedImage]] = {}
+        failed_tracks: list[str] = []
+        all_candidates: dict[str, list[str]] = {}
+
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            for track in tracks:
+                artist, title = parse_track(track)
+                tslug = track_slug(track)
+                track_dir = mashup_dir / "originals" / tslug
+
+                fetched = fetch_album_covers(
+                    artist, title, track_dir, target_count=target_covers, client=client
+                )
+                track_images[track] = fetched
+                manifest.originals[track] = [str(f.local_path) for f in fetched]
+                all_candidates[track] = [str(f.local_path) for f in fetched]
+
+                if auto:
+                    best = _select_best_cover(fetched)
+                    if best:
+                        best_covers.append(best.local_path)
+                    else:
+                        failed_tracks.append(track)
+
+        if auto and len(best_covers) < 2:
+            candidate_info = "\n".join(
+                f"  {track}: {paths if paths else '(no images fetched)'}"
+                for track, paths in all_candidates.items()
             )
-            track_images[track] = fetched
-            manifest.originals[track] = [str(f.local_path) for f in fetched]
+            raise MashupError(
+                f"Fetch did not return usable square covers for all tracks.\n"
+                f"Need at least 2 covers for composite, got {len(best_covers)}.\n"
+                f"Failed tracks: {failed_tracks}\n"
+                f"Candidate images fetched:\n{candidate_info}\n\n"
+                f"Options:\n"
+                f"  1. Re-run with different track names\n"
+                f"  2. Use --image to provide local images as override"
+            )
 
-            if auto and fetched:
-                best = _select_best_cover(fetched)
-                if best:
-                    best_covers.append(best.local_path)
-
-    if len(best_covers) >= 2:
-        composite_path = mashup_dir / f"{slug}-composite.png"
-
-        composite_prompt = (
-            f"Create a seamless mashup album cover blending these two album art images. "
-            f"This is for '{mashup_name}'. Create an artistic composite that merges "
-            f"the visual elements of both covers into one cohesive design."
+    if len(best_covers) < 2:
+        raise MashupError(
+            f"Need at least 2 images for composite, got {len(best_covers)}. "
+            f"Provide more tracks or use --image override."
         )
 
-        composite_path, _method = create_openai_composite(
-            best_covers, composite_path, composite_prompt
-        )
-        manifest.composite_path = str(composite_path)
+    composite_path = mashup_dir / f"{slug}-composite.png"
 
-        prompt_clean = get_prompt("clean")
-        prompt_crystal = get_prompt("crystal")
+    composite_prompt = (
+        f"Create a seamless mashup album cover blending these two album art images. "
+        f"This is for '{mashup_name}'. Create an artistic composite that merges "
+        f"the visual elements of both covers into one cohesive design."
+    )
 
-        composite_results = []
-        for prompt, ptype in [(prompt_clean, "clean"), (prompt_crystal, "crystal")]:
-            out_path = mashup_dir / f"{slug}-composite-{ptype}.png"
-            result = transform_image(composite_path, prompt, out_path)
-            composite_results.append(result)
+    composite_path, _method = create_openai_composite(
+        best_covers, composite_path, composite_prompt
+    )
+    manifest.composite_path = str(composite_path)
 
-        manifest.transformed["composite"] = [str(r.output_path) for r in composite_results]
+    prompt_clean = get_prompt("clean")
+    prompt_crystal = get_prompt("crystal")
 
+    composite_results = []
+    for prompt, ptype in [(prompt_clean, "clean"), (prompt_crystal, "crystal")]:
+        out_path = mashup_dir / f"{slug}-composite-{ptype}.png"
+        result = transform_image(composite_path, prompt, out_path)
+        composite_results.append(result)
+
+    manifest.transformed["composite"] = [str(r.output_path) for r in composite_results]
+
+    if not override_images:
         for track in tracks:
             fetched = track_images.get(track, [])
             best = _select_best_cover(fetched)
