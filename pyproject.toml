@@ -23,6 +23,7 @@ members = [
     "packages/mashup_pop_finder",
     "packages/stem_split",
     "packages/library_tools",
+    "packages/library_sync",
     "packages/downloads",
     "packages/catalogs",
     "packages/soundcloud_repost",
