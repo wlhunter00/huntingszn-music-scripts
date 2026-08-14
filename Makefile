@@ -43,6 +43,7 @@ help:
 	@echo "  make test              Run mashup-pop-finder tests"
 	@echo "  make test-library      Run library_tools metadata tests"
 	@echo "  make test-library-sync Run library_sync tests"
+	@echo "  make test-cover        Run huntingszn-cover tests"
 
 sync:
 	uv sync --all-packages
@@ -133,6 +134,10 @@ library-query:
 test-library-sync:
 	uv sync --package library-sync --extra dev
 	uv run --package library-sync pytest packages/library_sync/tests
+
+test-cover:
+	uv sync --package huntingszn-cover --extra dev
+	uv run --package huntingszn-cover pytest packages/huntingszn_cover/tests
 
 lint:
 	uv run ruff check packages config

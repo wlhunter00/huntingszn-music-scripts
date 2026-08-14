@@ -28,6 +28,7 @@ members = [
     "packages/catalogs",
     "packages/soundcloud_repost",
     "packages/gpt_trainer",
+    "packages/huntingszn_cover",
 ]
 
 [dependency-groups]
