@@ -454,3 +454,105 @@ def test_bad_prompt_fails_before_fetch(
         )
     mock_fetch.assert_not_called()
 
+
+def test_create_openai_composite_sends_all_source_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    a = write_png(tmp_path / "a.png")
+    b = write_png(tmp_path / "b.png", color=(0, 0, 255))
+    c = write_png(tmp_path / "c.png", color=(0, 255, 0))
+    out = tmp_path / "composite.png"
+    cap = CaptureTransport(png_bytes((16, 16)))
+    real_client = OpenAI(api_key="sk-test", http_client=httpx2.Client(transport=cap))
+
+    with patch("openai.OpenAI", return_value=real_client):
+        create_openai_composite([a, b, c], out, "blend these covers")
+
+    assert cap.request is not None
+    body = cap.request.content.decode("latin1")
+    assert 'filename="image_0.png"' in body
+    assert 'filename="image_1.png"' in body
+    assert 'filename="image_2.png"' in body
+    assert "Content-Type: image/png" in body
+    assert "application/octet-stream" not in body
+    assert "generations" not in str(cap.request.url)
+
+
+def test_run_mashup_fails_if_any_track_missing_cover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
+    tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray", "New Order:Blue Monday"]
+
+    def fake_fetch(artist, title, output_dir, *, target_count, client):
+        if "Blue" in title:
+            return []
+        output_dir.mkdir(parents=True, exist_ok=True)
+        dest = output_dir / "cover_00.png"
+        write_png(dest)
+        return [_fetched(dest, 500, 500)]
+
+    with (
+        patch("huntingszn_cover.mashup.fetch_album_covers", side_effect=fake_fetch),
+        patch(
+            "huntingszn_cover.mashup.get_prompt",
+            side_effect=lambda name: f"HUNTINGSZN EDIT {name}",
+        ),
+        patch("huntingszn_cover.mashup.create_openai_composite") as composite,
+        pytest.raises(MashupError, match="Failed tracks") as exc,
+    ):
+        run_mashup("Triple Mashup", tracks, tmp_path)
+
+    assert "New Order:Blue Monday" in str(exc.value)
+    composite.assert_not_called()
+
+
+def test_create_openai_composite_fallback_resends_png_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    a = write_png(tmp_path / "a.png")
+    b = write_png(tmp_path / "b.png", color=(0, 0, 255))
+    out = tmp_path / "composite.png"
+
+    class FailThenSucceedTransport(httpx2.BaseTransport):
+        def __init__(self) -> None:
+            self.requests: list[httpx2.Request] = []
+
+        def handle_request(self, request: httpx2.Request) -> httpx2.Response:
+            request.read()
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return httpx2.Response(
+                    400, json={"error": {"message": "gpt-image-1.5 down"}}, request=request
+                )
+            b64 = base64.b64encode(png_bytes((16, 16))).decode("ascii")
+            return httpx2.Response(
+                200,
+                json={"created": 1, "data": [{"b64_json": b64}]},
+                request=request,
+            )
+
+    cap = FailThenSucceedTransport()
+    real_client = OpenAI(
+        api_key="sk-test",
+        http_client=httpx2.Client(transport=cap),
+        max_retries=0,
+    )
+
+    with patch("openai.OpenAI", return_value=real_client):
+        path, method = create_openai_composite([a, b], out, "blend")
+
+    assert path == out
+    assert method == FALLBACK_MODEL
+    assert len(cap.requests) == 2
+    for req in cap.requests:
+        assert "/images/edits" in str(req.url)
+        body = req.content.decode("latin1")
+        assert "Content-Type: image/png" in body
+        assert "application/octet-stream" not in body
+        assert 'filename="image_0.png"' in body
+        assert 'filename="image_1.png"' in body
+

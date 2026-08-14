@@ -77,7 +77,7 @@ def fetch(tracks: tuple[str, ...], output: Path, count: int) -> None:
         total = sum(len(imgs) for imgs in results.values())
         console.print(f"\n[green]Fetched {total} unique image(s) total.[/green]")
 
-    except FetchError as e:
+    except (FetchError, ValueError) as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
 

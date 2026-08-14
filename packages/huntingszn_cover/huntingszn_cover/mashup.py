@@ -26,6 +26,7 @@ from huntingszn_cover.transform import (
 from huntingszn_cover.utils import parse_track, slugify, track_slug
 
 CoverPicker = Callable[[str, list[FetchedImage]], FetchedImage | None]
+MAX_COMPOSITE_IMAGES = 16
 
 
 @dataclass
@@ -152,7 +153,8 @@ def create_openai_composite(
         raise MashupError("Need at least 2 images for composite")
 
     image_files = [
-        prepare_openai_image(path, filename=f"image_{i}.png") for i, path in enumerate(images[:2])
+        prepare_openai_image(path, filename=f"image_{i}.png")
+        for i, path in enumerate(images[:MAX_COMPOSITE_IMAGES])
     ]
 
     client = OpenAI()
@@ -299,10 +301,11 @@ def run_mashup(
             else:
                 failed_tracks.append(track)
 
-        if len(best_covers) < 2:
+        if failed_tracks or len(best_covers) < 2:
             raise MashupError(
                 f"Fetch did not return usable square covers for all tracks.\n"
-                f"Need at least 2 covers for composite, got {len(best_covers)}.\n"
+                f"Need a selected cover for every track and at least 2 covers for composite, "
+                f"got {len(best_covers)}.\n"
                 f"Failed tracks: {failed_tracks}\n"
                 f"Candidate images fetched:\n{_format_candidate_paths(all_candidates)}\n\n"
                 f"Options:\n"
@@ -319,9 +322,9 @@ def run_mashup(
     composite_path = mashup_dir / f"{slug}-composite.png"
 
     composite_prompt = (
-        f"Create a seamless mashup album cover blending these two album art images. "
+        f"Create a seamless mashup album cover blending these album art images. "
         f"This is for '{mashup_name}'. Create an artistic composite that merges "
-        f"the visual elements of both covers into one cohesive design."
+        f"the visual elements of the covers into one cohesive design."
     )
 
     composite_path, method = create_openai_composite(

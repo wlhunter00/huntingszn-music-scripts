@@ -94,20 +94,19 @@ def search_album_covers(
     client = client or httpx.Client(timeout=30.0)
 
     try:
-        # POST keeps api_key out of the request URL (GET query strings show up in
-        # httpx HTTPStatusError messages and tracebacks).
-        response = client.post(SERPAPI_BASE_URL, data=params)
-        response.raise_for_status()
+        # SerpAPI requires api_key as a URL query parameter, not form data or
+        # headers. Do not POST: that puts the key in the body, which SerpAPI
+        # rejects. Do not use raise_for_status(): httpx interpolates the GET
+        # URL (including api_key) into HTTPStatusError and exception chains.
+        response = client.get(SERPAPI_BASE_URL, params=params)
+        if response.status_code >= 400:
+            raise FetchError(f"HTTP error during SerpAPI request: {response.status_code}")
         try:
             data = response.json()
         except ValueError:
             raise FetchError("Invalid JSON in SerpAPI response") from None
-    except httpx.HTTPStatusError as e:
-        # from None: httpx interpolates the request URL into HTTPStatusError,
-        # which used to leak api_key even after the FetchError message was sanitized.
-        raise FetchError(
-            f"HTTP error during SerpAPI request: {e.response.status_code}"
-        ) from None
+    except FetchError:
+        raise
     except httpx.HTTPError:
         raise FetchError("HTTP error during SerpAPI request") from None
     finally:
