@@ -37,6 +37,42 @@ CREATE INDEX IF NOT EXISTS idx_tracks_camelot ON tracks(camelot_key);
 CREATE INDEX IF NOT EXISTS idx_tracks_bpm ON tracks(bpm);
 CREATE INDEX IF NOT EXISTS idx_tracks_status ON tracks(status);
 CREATE INDEX IF NOT EXISTS idx_tracks_source_root ON tracks(source_root);
+
+CREATE TABLE IF NOT EXISTS stems (
+    id TEXT PRIMARY KEY,
+    relative_path TEXT NOT NULL UNIQUE,
+    song_name TEXT,
+    model TEXT,
+    has_vocals INTEGER DEFAULT 0,
+    has_drums INTEGER DEFAULT 0,
+    has_bass INTEGER DEFAULT 0,
+    has_other INTEGER DEFAULT 0,
+    has_no_vocals INTEGER DEFAULT 0,
+    file_size INTEGER,
+    mtime REAL,
+    updated_at TEXT,
+    status TEXT DEFAULT 'present'
+);
+
+CREATE INDEX IF NOT EXISTS idx_stems_model ON stems(model);
+CREATE INDEX IF NOT EXISTS idx_stems_status ON stems(status);
+CREATE INDEX IF NOT EXISTS idx_stems_song_name ON stems(song_name);
+
+CREATE TABLE IF NOT EXISTS ableton_projects (
+    id TEXT PRIMARY KEY,
+    relative_path TEXT NOT NULL UNIQUE,
+    name TEXT,
+    folder TEXT,
+    kind TEXT,
+    file_size INTEGER,
+    mtime REAL,
+    updated_at TEXT,
+    status TEXT DEFAULT 'present'
+);
+
+CREATE INDEX IF NOT EXISTS idx_ableton_folder ON ableton_projects(folder);
+CREATE INDEX IF NOT EXISTS idx_ableton_kind ON ableton_projects(kind);
+CREATE INDEX IF NOT EXISTS idx_ableton_status ON ableton_projects(status);
 """
 
 
@@ -62,6 +98,40 @@ class Track:
     updated_at: str = ""
     role: str | None = None
     source_root: str = ""
+    status: str = "present"
+
+
+@dataclass
+class Stem:
+    """A stem folder record from the library database."""
+
+    id: str
+    relative_path: str
+    song_name: str
+    model: str
+    has_vocals: int = 0
+    has_drums: int = 0
+    has_bass: int = 0
+    has_other: int = 0
+    has_no_vocals: int = 0
+    file_size: int = 0
+    mtime: float = 0.0
+    updated_at: str = ""
+    status: str = "present"
+
+
+@dataclass
+class AbletonProject:
+    """An Ableton project record from the library database."""
+
+    id: str
+    relative_path: str
+    name: str
+    folder: str
+    kind: str
+    file_size: int = 0
+    mtime: float = 0.0
+    updated_at: str = ""
     status: str = "present"
 
 
@@ -317,5 +387,271 @@ class LibraryDB:
             updated_at=row["updated_at"],
             role=row["role"],
             source_root=row["source_root"],
+            status=row["status"],
+        )
+
+    # --- Stems methods ---
+
+    def get_stem_for_update_check(
+        self, relative_path: str
+    ) -> tuple[int | None, float | None]:
+        """Get file_size and mtime for incremental stem update check."""
+        conn = self.connect()
+        cursor = conn.execute(
+            "SELECT file_size, mtime FROM stems WHERE relative_path = ?",
+            (relative_path,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None, None
+        return row["file_size"], row["mtime"]
+
+    def upsert_stem(self, stem: Stem) -> None:
+        """Insert or update a stem record."""
+        conn = self.connect()
+        conn.execute(
+            """
+            INSERT INTO stems (
+                id, relative_path, song_name, model,
+                has_vocals, has_drums, has_bass, has_other, has_no_vocals,
+                file_size, mtime, updated_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(relative_path) DO UPDATE SET
+                id = excluded.id,
+                song_name = excluded.song_name,
+                model = excluded.model,
+                has_vocals = excluded.has_vocals,
+                has_drums = excluded.has_drums,
+                has_bass = excluded.has_bass,
+                has_other = excluded.has_other,
+                has_no_vocals = excluded.has_no_vocals,
+                file_size = excluded.file_size,
+                mtime = excluded.mtime,
+                updated_at = excluded.updated_at,
+                status = excluded.status
+            """,
+            (
+                stem.id,
+                stem.relative_path,
+                stem.song_name,
+                stem.model,
+                stem.has_vocals,
+                stem.has_drums,
+                stem.has_bass,
+                stem.has_other,
+                stem.has_no_vocals,
+                stem.file_size,
+                stem.mtime,
+                stem.updated_at,
+                stem.status,
+            ),
+        )
+        conn.commit()
+
+    def mark_stems_missing(self, relative_paths: set[str]) -> int:
+        """Mark stems as missing."""
+        if not relative_paths:
+            return 0
+        conn = self.connect()
+        placeholders = ",".join("?" for _ in relative_paths)
+        cursor = conn.execute(
+            f"""
+            UPDATE stems SET status = 'missing', updated_at = ?
+            WHERE relative_path IN ({placeholders}) AND status = 'present'
+            """,
+            (utc_now_iso(), *relative_paths),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+    def get_all_present_stem_paths(self) -> set[str]:
+        """Get all relative paths of present stems."""
+        conn = self.connect()
+        cursor = conn.execute(
+            "SELECT relative_path FROM stems WHERE status = 'present'"
+        )
+        return {row["relative_path"] for row in cursor.fetchall()}
+
+    def query_stems(
+        self,
+        *,
+        text_search: str | None = None,
+        model: str | None = None,
+        limit: int | None = None,
+        status: str = "present",
+    ) -> list[Stem]:
+        """Query stems with filters."""
+        conn = self.connect()
+        conditions = ["status = ?"]
+        params: list[object] = [status]
+
+        if text_search:
+            conditions.append("song_name LIKE ?")
+            params.append(f"%{text_search}%")
+
+        if model:
+            conditions.append("model = ?")
+            params.append(model)
+
+        sql = "SELECT * FROM stems WHERE " + " AND ".join(conditions)
+        if limit:
+            sql += f" LIMIT {limit}"
+
+        cursor = conn.execute(sql, params)
+        return [self._row_to_stem(row) for row in cursor.fetchall()]
+
+    def count_stems(self, status: str | None = None) -> int:
+        """Count stems, optionally filtered by status."""
+        conn = self.connect()
+        if status:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM stems WHERE status = ?", (status,)
+            )
+        else:
+            cursor = conn.execute("SELECT COUNT(*) FROM stems")
+        return cursor.fetchone()[0]
+
+    def _row_to_stem(self, row: sqlite3.Row) -> Stem:
+        """Convert a database row to a Stem object."""
+        return Stem(
+            id=row["id"],
+            relative_path=row["relative_path"],
+            song_name=row["song_name"],
+            model=row["model"],
+            has_vocals=row["has_vocals"],
+            has_drums=row["has_drums"],
+            has_bass=row["has_bass"],
+            has_other=row["has_other"],
+            has_no_vocals=row["has_no_vocals"],
+            file_size=row["file_size"],
+            mtime=row["mtime"],
+            updated_at=row["updated_at"],
+            status=row["status"],
+        )
+
+    # --- Ableton project methods ---
+
+    def get_ableton_for_update_check(
+        self, relative_path: str
+    ) -> tuple[int | None, float | None]:
+        """Get file_size and mtime for incremental Ableton update check."""
+        conn = self.connect()
+        cursor = conn.execute(
+            "SELECT file_size, mtime FROM ableton_projects WHERE relative_path = ?",
+            (relative_path,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None, None
+        return row["file_size"], row["mtime"]
+
+    def upsert_ableton(self, project: AbletonProject) -> None:
+        """Insert or update an Ableton project record."""
+        conn = self.connect()
+        conn.execute(
+            """
+            INSERT INTO ableton_projects (
+                id, relative_path, name, folder, kind,
+                file_size, mtime, updated_at, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(relative_path) DO UPDATE SET
+                id = excluded.id,
+                name = excluded.name,
+                folder = excluded.folder,
+                kind = excluded.kind,
+                file_size = excluded.file_size,
+                mtime = excluded.mtime,
+                updated_at = excluded.updated_at,
+                status = excluded.status
+            """,
+            (
+                project.id,
+                project.relative_path,
+                project.name,
+                project.folder,
+                project.kind,
+                project.file_size,
+                project.mtime,
+                project.updated_at,
+                project.status,
+            ),
+        )
+        conn.commit()
+
+    def mark_ableton_missing(self, relative_paths: set[str]) -> int:
+        """Mark Ableton projects as missing."""
+        if not relative_paths:
+            return 0
+        conn = self.connect()
+        placeholders = ",".join("?" for _ in relative_paths)
+        cursor = conn.execute(
+            f"""
+            UPDATE ableton_projects SET status = 'missing', updated_at = ?
+            WHERE relative_path IN ({placeholders}) AND status = 'present'
+            """,
+            (utc_now_iso(), *relative_paths),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+    def get_all_present_ableton_paths(self) -> set[str]:
+        """Get all relative paths of present Ableton projects."""
+        conn = self.connect()
+        cursor = conn.execute(
+            "SELECT relative_path FROM ableton_projects WHERE status = 'present'"
+        )
+        return {row["relative_path"] for row in cursor.fetchall()}
+
+    def query_ableton(
+        self,
+        *,
+        text_search: str | None = None,
+        kind: str | None = None,
+        limit: int | None = None,
+        status: str = "present",
+    ) -> list[AbletonProject]:
+        """Query Ableton projects with filters."""
+        conn = self.connect()
+        conditions = ["status = ?"]
+        params: list[object] = [status]
+
+        if text_search:
+            conditions.append("(name LIKE ? OR folder LIKE ?)")
+            pattern = f"%{text_search}%"
+            params.extend([pattern, pattern])
+
+        if kind:
+            conditions.append("kind = ?")
+            params.append(kind)
+
+        sql = "SELECT * FROM ableton_projects WHERE " + " AND ".join(conditions)
+        if limit:
+            sql += f" LIMIT {limit}"
+
+        cursor = conn.execute(sql, params)
+        return [self._row_to_ableton(row) for row in cursor.fetchall()]
+
+    def count_ableton(self, status: str | None = None) -> int:
+        """Count Ableton projects, optionally filtered by status."""
+        conn = self.connect()
+        if status:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM ableton_projects WHERE status = ?", (status,)
+            )
+        else:
+            cursor = conn.execute("SELECT COUNT(*) FROM ableton_projects")
+        return cursor.fetchone()[0]
+
+    def _row_to_ableton(self, row: sqlite3.Row) -> AbletonProject:
+        """Convert a database row to an AbletonProject object."""
+        return AbletonProject(
+            id=row["id"],
+            relative_path=row["relative_path"],
+            name=row["name"],
+            folder=row["folder"],
+            kind=row["kind"],
+            file_size=row["file_size"],
+            mtime=row["mtime"],
+            updated_at=row["updated_at"],
             status=row["status"],
         )

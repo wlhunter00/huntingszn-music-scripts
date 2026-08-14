@@ -119,7 +119,7 @@ Index portable HDD library, sync to B2, query by Camelot key and BPM:
 # Check if drive is mounted (supports "Will Hunter Music" or "HuntingSzn" volumes)
 uv run --package library-sync library-sync detect
 
-# Index library to SQLite (DJ Music + Platnium Notes only)
+# Index all catalogs: tracks, stems, Ableton projects
 uv run --package library-sync library-sync index --dry-run
 uv run --package library-sync library-sync index
 
@@ -127,22 +127,33 @@ uv run --package library-sync library-sync index
 uv run --package library-sync library-sync query --camelot 8A --bpm 140
 uv run --package library-sync library-sync query --q "halo" --json
 
+# Query stem folders
+uv run --package library-sync library-sync query-stems --q "as it was" --model htdemucs_ft
+
+# Query Ableton projects
+uv run --package library-sync library-sync query-projects --q "mashup" --kind template
+
 # Publish FULL drive to B2 (requires B2_REMOTE + B2_BUCKET in .env)
 uv run --package library-sync library-sync publish --dry-run
 
 # Pull projects from B2 to Ableton/Music Production Agent
 uv run --package library-sync library-sync pull --dry-run
 
-# Show status
+# Show status (counts for tracks, stems, Ableton projects)
 uv run --package library-sync library-sync status
 ```
 
+**Catalogs indexed:**
+- **Tracks** (`DJ Music/` + `Platnium Notes/`) — searchable via `query` with Camelot/BPM
+- **Stems** (`Stem Splitting/stem-output/{model}/{song}/`) — searchable via `query-stems`
+- **Ableton projects** (`Ableton/**/*.als`, skips Backup) — searchable via `query-projects`
+
 **Full-drive mirror vs catalog-only:**
-- **Index** catalogs only `DJ Music/` and `Platnium Notes/` — tracks searchable via `query`
+- **Index** catalogs tracks, stems, and Ableton projects into SQLite
 - **Publish** mirrors the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.)
 - Excludes system files: `$RECYCLE.BIN`, `.Spotlight-V100`, `.Trashes`, `.DS_Store`, `._*`, `.git`
 
-**Harmonic mixing rules:**
+**Harmonic mixing rules (tracks only):**
 - Camelot: matches ±1 on wheel plus relative major/minor (e.g., 8A matches 7A, 8A, 9A, 8B)
 - BPM: matches ±6 of target, plus ±6 of half-time (0.5×) and double-time (2×)
 
