@@ -1,9 +1,13 @@
 """Tests for rclone/B2 operations."""
 
+import argparse
 import os
+import shlex
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+from library_sync.cli import parse_cli_limit
 from library_sync.rclone import (
     PUBLISH_EXCLUDES,
     RcloneConfig,
@@ -70,6 +74,16 @@ class TestPublishExcludes:
         assert ".git/**" in PUBLISH_EXCLUDES
         assert ".venv/**" in PUBLISH_EXCLUDES
         assert "**/__pycache__/**" in PUBLISH_EXCLUDES
+        assert "**/Backup/**" in PUBLISH_EXCLUDES
+        assert ".env" in PUBLISH_EXCLUDES
+        assert ".env.*" in PUBLISH_EXCLUDES
+        assert "**/.env" in PUBLISH_EXCLUDES
+        assert "cookies.txt" in PUBLISH_EXCLUDES
+        assert "*.pem" in PUBLISH_EXCLUDES
+        assert "/Scripts/data/library.sqlite" in PUBLISH_EXCLUDES
+        assert "/projects/**" in PUBLISH_EXCLUDES
+        assert "/metadata/**" in PUBLISH_EXCLUDES
+        assert "/templates/**" in PUBLISH_EXCLUDES
 
 
 class TestDryRun:
@@ -112,6 +126,7 @@ class TestDryRun:
         assert cmd is not None
         assert "Music Production Agent" in cmd or "projects" in cmd.lower()
         assert " copy " in f" {cmd} " or cmd.startswith("rclone copy")
+        assert "--update" in cmd
         assert "sync" not in cmd
 
 
@@ -123,6 +138,8 @@ class TestPublishMode:
         commands = publish_drive(drive_root, config)
         assert any("rclone copy" in c for c in commands)
         assert not any("rclone sync" in c for c in commands)
+        assert all("--update" not in c for c in commands)
+        assert any("--progress" in c for c in commands)
 
     def test_allow_delete_uses_sync(self, tmp_path):
         drive_root = tmp_path / "drive"
@@ -130,6 +147,19 @@ class TestPublishMode:
         config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
         commands = publish_drive(drive_root, config, allow_delete=True)
         assert any("rclone sync" in c for c in commands)
+        assert all("--update" not in c for c in commands)
+        tokens = shlex.split(commands[0])
+        assert "/projects/**" in tokens
+        assert "/metadata/**" in tokens
+        assert "/templates/**" in tokens
+
+    def test_planned_command_quotes_spaces(self, tmp_path):
+        drive_root = tmp_path / "Will Hunter Music"
+        drive_root.mkdir()
+        config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
+        commands = publish_drive(drive_root, config)
+        tokens = shlex.split(commands[0])
+        assert str(drive_root) in tokens
 
     def test_configured_run_raises_on_rclone_failure(self, tmp_path):
         from library_sync.rclone import RcloneError, _run_rclone
@@ -144,7 +174,18 @@ class TestPublishMode:
                 raise AssertionError("expected RcloneError")
             except RcloneError as exc:
                 assert exc.returncode == 1
-                assert "boom" in str(exc)
+                assert "see rclone output above" in str(exc)
+
+    def test_missing_rclone_binary(self):
+        from library_sync.rclone import RcloneError, _run_rclone
+
+        with patch("library_sync.rclone.subprocess.run", side_effect=FileNotFoundError("rclone")):
+            try:
+                _run_rclone(["copy", "a", "b"])
+                raise AssertionError("expected RcloneError")
+            except RcloneError as exc:
+                assert exc.returncode == 127
+                assert "rclone not found" in str(exc)
 
 
 class TestUnconfiguredB2:
@@ -191,3 +232,13 @@ class TestPublishTemplate:
 
         assert result is not None
         assert "templates/mashup" in result
+
+
+class TestCliLimit:
+    def test_zero_and_positive(self):
+        assert parse_cli_limit("0") == 0
+        assert parse_cli_limit("200") == 200
+
+    def test_rejects_negative(self):
+        with pytest.raises(argparse.ArgumentTypeError, match=">= 0"):
+            parse_cli_limit("-1")

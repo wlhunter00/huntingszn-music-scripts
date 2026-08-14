@@ -131,6 +131,26 @@ def _apply_filename_fallback(path: Path, tags: TrackTags) -> TrackTags:
     return tags
 
 
+def _apply_id3(tags: TrackTags, id3: ID3) -> None:
+    """Fill TrackTags from an ID3 mapping (MP3, WAV, AIFF)."""
+    tags.artist = _get_id3_text(id3, "TPE1")
+    tags.title = _get_id3_text(id3, "TIT2")
+    tags.album = _get_id3_text(id3, "TALB")
+    tags.genre = _get_id3_text(id3, "TCON")
+
+    bpm_str = _get_id3_text(id3, "TBPM")
+    tags.bpm = _parse_bpm(bpm_str)
+
+    key_str = _get_id3_text(id3, "TKEY")
+    initial_key = _get_id3_text(id3, "TXXX:INITIALKEY") or _get_id3_text(
+        id3, "TXXX:initialkey"
+    )
+    comment = _get_comment(id3)
+
+    key_str = key_str or initial_key
+    tags.key, tags.camelot_key = _parse_key_and_camelot(key_str, comment)
+
+
 def read_tags(path: Path) -> TrackTags:
     """Read audio tags from a file.
 
@@ -146,28 +166,14 @@ def read_tags(path: Path) -> TrackTags:
     except Exception:
         return _apply_filename_fallback(path, tags)
 
-    if isinstance(audio, MP3):
-        if audio.tags:
-            id3 = audio.tags
-            tags.artist = _get_id3_text(id3, "TPE1")
-            tags.title = _get_id3_text(id3, "TIT2")
-            tags.album = _get_id3_text(id3, "TALB")
-            tags.genre = _get_id3_text(id3, "TCON")
+    id3 = None
+    if isinstance(audio, MP3) and audio.tags:
+        id3 = audio.tags
+    elif isinstance(getattr(audio, "tags", None), ID3):
+        id3 = audio.tags
 
-            bpm_str = _get_id3_text(id3, "TBPM")
-            tags.bpm = _parse_bpm(bpm_str)
-
-            key_str = _get_id3_text(id3, "TKEY")
-            initial_key = _get_id3_text(id3, "TXXX:INITIALKEY") or _get_id3_text(
-                id3, "TXXX:initialkey"
-            )
-            comment = _get_comment(id3)
-
-            key_str = key_str or initial_key
-            tags.key, tags.camelot_key = _parse_key_and_camelot(key_str, comment)
-
-        if audio.info:
-            tags.duration_sec = audio.info.length
+    if id3 is not None:
+        _apply_id3(tags, id3)
 
     elif hasattr(audio, "tags") and audio.tags:
         audio_tags = audio.tags
@@ -194,7 +200,7 @@ def read_tags(path: Path) -> TrackTags:
         comment = get_tag(["comment", "COMMENT"])
         tags.key, tags.camelot_key = _parse_key_and_camelot(key_str, comment)
 
-        if hasattr(audio, "info") and audio.info:
-            tags.duration_sec = audio.info.length
+    if hasattr(audio, "info") and audio.info:
+        tags.duration_sec = audio.info.length
 
     return _apply_filename_fallback(path, tags)

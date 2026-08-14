@@ -134,7 +134,7 @@ uv run --package library-sync library-sync query-stems --q "as it was" --model h
 # Query Ableton projects
 uv run --package library-sync library-sync query-projects --q "mashup" --kind template
 
-# Publish FULL drive to B2 (copy --update; never deletes remote unless --allow-delete)
+# Publish FULL drive to B2 (copy; --allow-delete syncs but keeps projects/metadata/templates)
 uv run --package library-sync library-sync publish --dry-run
 uv run --package library-sync library-sync publish --allow-delete --dry-run
 
@@ -152,8 +152,8 @@ uv run --package library-sync library-sync status
 
 **Full-drive mirror vs catalog-only:**
 - **Index** catalogs tracks, stems, and Ableton projects into SQLite
-- **Publish** copies the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.). Does not delete remote files unless you pass `--allow-delete` (rclone sync).
-- Excludes system files: `$RECYCLE.BIN`, `.Spotlight-V100`, `.Trashes`, `.DS_Store`, `._*`, `.git`, `.venv`, `__pycache__`
+- **Publish** copies the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.). Does not delete remote files unless you pass `--allow-delete` (rclone sync). Sync still keeps B2-only prefixes: `projects/`, `metadata/`, `templates/`.
+- Excludes system files, Ableton `Backup/`, secrets (`.env`, `cookies.txt`, `*.pem`), and `Scripts/data/library.sqlite` (catalog is uploaded separately to `metadata/library.sqlite`)
 
 **Harmonic mixing rules (tracks only):**
 - Camelot: matches ±1 on wheel plus relative major/minor (e.g., 8A matches 7A, 8A, 9A, 8B)

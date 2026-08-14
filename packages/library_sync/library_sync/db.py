@@ -179,14 +179,19 @@ class LibraryDB:
                 self._conn = sqlite3.connect(self.db_path)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA busy_timeout=5000")
-            self._conn.execute("PRAGMA journal_mode=WAL")
+            # DELETE journal: WAL sidecars on a USB drive are easy to copy torn.
+            if self._create:
+                self._conn.execute("PRAGMA journal_mode=DELETE")
             self._conn.executescript(SCHEMA)
         return self._conn
 
-    def close(self) -> None:
-        """Commit pending writes and close the connection."""
+    def close(self, *, commit: bool = True) -> None:
+        """Close the connection. Commit on success; rollback on failure."""
         if self._conn is not None:
-            self._conn.commit()
+            if commit:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
             self._conn.close()
             self._conn = None
 
@@ -194,8 +199,15 @@ class LibraryDB:
         self.connect()
         return self
 
-    def __exit__(self, *_: object) -> None:
-        self.close()
+    def __exit__(self, exc_type: object, *_: object) -> None:
+        self.close(commit=exc_type is None)
+
+    def prepare_for_copy(self) -> None:
+        """Checkpoint any leftover WAL and switch to DELETE before file copy."""
+        conn = self.connect()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.commit()
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -378,6 +390,7 @@ class LibraryDB:
             params.append(role)
 
         sql = "SELECT * FROM tracks WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY relative_path"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
@@ -397,10 +410,19 @@ class LibraryDB:
         return cursor.fetchone()[0]
 
     def get_last_updated(self) -> str | None:
-        """Get the most recent updated_at timestamp."""
+        """Get the most recent updated_at across tracks, stems, and Ableton."""
         conn = self.connect()
         cursor = conn.execute(
-            "SELECT MAX(updated_at) FROM tracks WHERE status = 'present'"
+            """
+            SELECT MAX(ts) FROM (
+                SELECT MAX(updated_at) AS ts FROM tracks WHERE status = 'present'
+                UNION ALL
+                SELECT MAX(updated_at) AS ts FROM stems WHERE status = 'present'
+                UNION ALL
+                SELECT MAX(updated_at) AS ts FROM ableton_projects
+                    WHERE status = 'present'
+            )
+            """
         )
         row = cursor.fetchone()
         return row[0] if row else None
@@ -520,6 +542,7 @@ class LibraryDB:
             params.append(model)
 
         sql = "SELECT * FROM stems WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY song_name, relative_path"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
@@ -639,6 +662,7 @@ class LibraryDB:
             params.append(kind)
 
         sql = "SELECT * FROM ableton_projects WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY name, relative_path"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))

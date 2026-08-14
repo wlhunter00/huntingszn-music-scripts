@@ -1,5 +1,7 @@
 # HuntingSzn Music Scripts — run from repo root with uv
-MUSIC_ROOT ?= /Volumes/Will Hunter Music
+# Default: parent of this repo (the portable HDD when Scripts lives on it).
+# Override: make MUSIC_ROOT="/Volumes/Will Hunter Music" ...
+MUSIC_ROOT ?= $(abspath $(CURDIR)/..)
 export MUSIC_DRIVE_ROOT := $(MUSIC_ROOT)
 export PYTHONPATH := $(CURDIR)
 

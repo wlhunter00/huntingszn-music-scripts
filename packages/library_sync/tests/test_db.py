@@ -242,3 +242,85 @@ class TestLibraryDB:
             count = db.mark_missing(paths, chunk_size=5)
             assert count == 12
             assert db.count_tracks(status="missing") == 12
+
+    def test_delete_journal_mode(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        with LibraryDB(db_path) as db:
+            mode = db.connect().execute("PRAGMA journal_mode").fetchone()[0]
+            assert mode.lower() == "delete"
+
+    def test_exit_rolls_back_on_error(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        try:
+            with LibraryDB(db_path) as db:
+                db.upsert_track(
+                    Track(
+                        id="abc",
+                        relative_path="DJ Music/fail.mp3",
+                        filename="fail.mp3",
+                        file_size=1,
+                        mtime=1.0,
+                        updated_at=utc_now_iso(),
+                        source_root="DJ Music",
+                    )
+                )
+                raise RuntimeError("fail")
+        except RuntimeError:
+            pass
+        with LibraryDB(db_path) as db:
+            assert db.get_track_by_path("DJ Music/fail.mp3") is None
+
+    def test_last_updated_across_catalogs(self, tmp_path):
+        from library_sync.db import AbletonProject, Stem
+
+        db_path = tmp_path / "test.sqlite"
+        with LibraryDB(db_path) as db:
+            db.upsert_track(
+                Track(
+                    id="t1",
+                    relative_path="DJ Music/old.mp3",
+                    filename="old.mp3",
+                    file_size=1,
+                    mtime=1.0,
+                    updated_at="2020-01-01T00:00:00+00:00",
+                    source_root="DJ Music",
+                )
+            )
+            db.upsert_stem(
+                Stem(
+                    id="s1",
+                    relative_path="Stem Splitting/stem-output/htdemucs_ft/song",
+                    song_name="song",
+                    model="htdemucs_ft",
+                    updated_at="2024-06-01T00:00:00+00:00",
+                )
+            )
+            db.upsert_ableton(
+                AbletonProject(
+                    id="a1",
+                    relative_path="Ableton/Project/Project.als",
+                    name="Project",
+                    folder="Ableton",
+                    kind="project",
+                    updated_at="2023-01-01T00:00:00+00:00",
+                )
+            )
+            assert db.get_last_updated() == "2024-06-01T00:00:00+00:00"
+
+    def test_query_tracks_ordered_by_path(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        with LibraryDB(db_path) as db:
+            for name in ("c.mp3", "a.mp3", "b.mp3"):
+                db.upsert_track(
+                    Track(
+                        id=name,
+                        relative_path=f"DJ Music/{name}",
+                        filename=name,
+                        file_size=1,
+                        mtime=1.0,
+                        updated_at=utc_now_iso(),
+                        source_root="DJ Music",
+                    )
+                )
+            names = [t.filename for t in db.query_tracks()]
+            assert names == ["a.mp3", "b.mp3", "c.mp3"]

@@ -33,8 +33,11 @@ SKIP_DIRS = frozenset(
     }
 )
 
+_NO_VOCAL_ROLE = re.compile(
+    r"\b(no[\s_\-]?vocals?|instrumental|inst)\b", re.IGNORECASE
+)
 _VOCAL_ROLE = re.compile(r"\b(acapella|acappella|acap|vocal|vocals)\b", re.IGNORECASE)
-_DROP_ROLE = re.compile(r"\b(instrumental|inst|drop)\b", re.IGNORECASE)
+_DROP_ROLE = re.compile(r"\bdrop\b", re.IGNORECASE)
 
 
 def _should_skip_file(name: str) -> bool:
@@ -80,6 +83,8 @@ def _get_source_root(relative_path: str) -> str:
 def infer_role(filename: str, relative_path: str = "") -> str:
     """Infer vocal/drop/unknown from filename and path."""
     blob = f"{filename} {relative_path}"
+    if _NO_VOCAL_ROLE.search(blob):
+        return "drop"
     if _VOCAL_ROLE.search(blob):
         return "vocal"
     if _DROP_ROLE.search(blob):

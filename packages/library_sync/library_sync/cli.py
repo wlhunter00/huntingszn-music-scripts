@@ -92,13 +92,36 @@ def cmd_detect(args: argparse.Namespace) -> int:
 
 
 def _progress(dry_run: bool):
+    n = 0
+
     def progress(action: str, path: str, item: object) -> None:
+        nonlocal n
         if dry_run:
             print(f"[dry-run] {action}: {path}")
-        elif action != "skip":
-            print(f"{action}: {path}")
+            return
+        if action == "skip":
+            return
+        n += 1
+        if n == 1 or n % 100 == 0:
+            print(f"{action}: {path} ({n})")
 
     return progress
+
+
+def parse_cli_limit(value: str) -> int:
+    """Argparse type for --limit. 0 means unlimited; negatives are rejected."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("limit must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("limit must be >= 0 (0 = unlimited)")
+    return parsed
+
+
+def _cli_limit(limit: int) -> int | None:
+    """CLI --limit: 0 means unlimited."""
+    return None if limit == 0 else limit
 
 
 def _index_all_catalogs(
@@ -196,6 +219,10 @@ def cmd_publish(args: argparse.Namespace) -> int:
             )
         print()
 
+    if not args.dry_run and sqlite_path.exists():
+        with LibraryDB(sqlite_path) as db:
+            db.prepare_for_copy()
+
     action = "sync (deletes remote extras)" if args.allow_delete else "copy (no remote deletes)"
     print(f"=== Publishing full drive to B2 via rclone {action} ===")
     if not config.is_configured:
@@ -251,14 +278,14 @@ def cmd_query(args: argparse.Namespace) -> int:
         print(f"Error: database not found at {sqlite_path}", file=sys.stderr)
         return 2
 
-    with LibraryDB(sqlite_path) as db:
+    with LibraryDB(sqlite_path, create=False) as db:
         tracks = query_tracks(
             db,
             camelot=args.camelot,
             bpm=args.bpm,
             text_search=args.q,
             role=args.role,
-            limit=args.limit,
+            limit=_cli_limit(args.limit),
         )
 
     if args.json:
@@ -316,11 +343,11 @@ def cmd_query_stems(args: argparse.Namespace) -> int:
         print(f"Error: database not found at {sqlite_path}", file=sys.stderr)
         return 2
 
-    with LibraryDB(sqlite_path) as db:
+    with LibraryDB(sqlite_path, create=False) as db:
         stems = db.query_stems(
             text_search=args.q,
             model=args.model,
-            limit=args.limit,
+            limit=_cli_limit(args.limit),
         )
 
     if args.json:
@@ -368,11 +395,11 @@ def cmd_query_projects(args: argparse.Namespace) -> int:
         print(f"Error: database not found at {sqlite_path}", file=sys.stderr)
         return 2
 
-    with LibraryDB(sqlite_path) as db:
+    with LibraryDB(sqlite_path, create=False) as db:
         projects = db.query_ableton(
             text_search=args.q,
             kind=args.kind,
-            limit=args.limit,
+            limit=_cli_limit(args.limit),
         )
 
     if args.json:
@@ -401,7 +428,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"SQLite: {sqlite_path}")
 
     if sqlite_path.exists():
-        with LibraryDB(sqlite_path) as db:
+        with LibraryDB(sqlite_path, create=False) as db:
             # Tracks
             track_total = db.count_tracks()
             track_present = db.count_tracks(status="present")
@@ -466,7 +493,11 @@ def main() -> None:
     sub_publish.add_argument(
         "--allow-delete",
         action="store_true",
-        help="Use rclone sync (deletes remote files not on the drive). Default is copy.",
+        help=(
+            "Use rclone sync (deletes remote files not on the drive). "
+            "Does not delete B2-only prefixes: projects/, metadata/, templates/. "
+            "Default is copy."
+        ),
     )
     sub_publish.add_argument("--root", type=Path, help="Override drive root path")
     sub_publish.set_defaults(func=cmd_publish)
@@ -486,7 +517,12 @@ def main() -> None:
     sub_query.add_argument(
         "--role", choices=["vocal", "drop", "unknown"], help="Filter by role"
     )
-    sub_query.add_argument("--limit", type=int, help="Maximum results")
+    sub_query.add_argument(
+        "--limit",
+        type=parse_cli_limit,
+        default=200,
+        help="Maximum results (default 200; 0 = unlimited)",
+    )
     sub_query.add_argument("--json", action="store_true", help="Output as JSON")
     sub_query.set_defaults(func=cmd_query)
 
@@ -494,7 +530,12 @@ def main() -> None:
     sub_query_stems.add_argument("--db", type=Path, help="Path to SQLite database")
     sub_query_stems.add_argument("--q", help="Text search in song name")
     sub_query_stems.add_argument("--model", help="Filter by model (e.g., htdemucs_ft)")
-    sub_query_stems.add_argument("--limit", type=int, help="Maximum results")
+    sub_query_stems.add_argument(
+        "--limit",
+        type=parse_cli_limit,
+        default=200,
+        help="Maximum results (default 200; 0 = unlimited)",
+    )
     sub_query_stems.add_argument("--json", action="store_true", help="Output as JSON")
     sub_query_stems.set_defaults(func=cmd_query_stems)
 
@@ -506,7 +547,12 @@ def main() -> None:
     sub_query_projects.add_argument(
         "--kind", choices=["template", "project"], help="Filter by kind"
     )
-    sub_query_projects.add_argument("--limit", type=int, help="Maximum results")
+    sub_query_projects.add_argument(
+        "--limit",
+        type=parse_cli_limit,
+        default=200,
+        help="Maximum results (default 200; 0 = unlimited)",
+    )
     sub_query_projects.add_argument("--json", action="store_true", help="Output as JSON")
     sub_query_projects.set_defaults(func=cmd_query_projects)
 

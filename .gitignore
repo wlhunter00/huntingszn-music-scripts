@@ -28,6 +28,8 @@ cookies.txt
 *.csv
 *.log
 *.sqlite
+*.sqlite-wal
+*.sqlite-shm
 !docs/**/*.csv
 
 # Audio and large binaries (not source)

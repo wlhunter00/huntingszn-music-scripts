@@ -8,8 +8,10 @@ from pathlib import Path
 # Repo root: …/Scripts/config/paths.py -> …/Scripts
 _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 
-# Volume name for portable HDD detection
+# Volume names for portable HDD detection
 VOLUME_NAME = "Will Hunter Music"
+VOLUME_NAME_ALT = "HuntingSzn"
+VOLUME_NAMES = (VOLUME_NAME, VOLUME_NAME_ALT)
 
 
 def _normalize_drive_root(raw: str) -> Path:
@@ -62,7 +64,6 @@ DEFAULT_SAMPLE_ROOTS = (
 
 # library-sync paths
 DJ_MUSIC = DRIVE_ROOT / "DJ Music"
-READY_TO_MIX = DRIVE_ROOT / "Ready to Mix"
 LIBRARY_SQLITE = SCRIPTS_ROOT / "data" / "library.sqlite"
 LIBRARY_INDEX_ROOTS = (DJ_MUSIC, PLATINUM_NOTES)
 

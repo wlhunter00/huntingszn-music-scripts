@@ -6,10 +6,11 @@ B2 layout:
 - templates/mashup/ — one-way UP from Ableton/HuntingSzn Mashup Template Project
 - projects/<slug>/ — one-way DOWN to Ableton/Music Production Agent/<slug>/
 
-Publish defaults to `rclone copy --update` (no remote deletes). Pass
-allow_delete=True for `rclone sync`, which removes dest files absent locally.
+Publish defaults to `rclone copy` (no remote deletes, overwrites dest from
+the drive). Pass allow_delete=True for `rclone sync`. Sync excludes the
+B2-only prefixes (projects/, metadata/, templates/) so they are not deleted.
 
-Pull uses `rclone copy --update` so local Ableton work is never deleted.
+Pull uses `rclone copy --update` so newer local Ableton work is kept.
 
 Env vars:
 - B2_BUCKET       — bucket name (stub)
@@ -23,8 +24,8 @@ If B2_REMOTE is not set, prints planned commands and exits 0.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +45,25 @@ PUBLISH_EXCLUDES = [
     "**/*.pyc",
     ".uv/**",
     "**/node_modules/**",
+    "**/Backup/**",
+    # Secrets: gitignored, must not land in B2.
+    ".env",
+    ".env.*",
+    "**/.env",
+    "**/.env.*",
+    "cookies.txt",
+    "**/cookies.txt",
+    "*.pem",
+    "**/*.pem",
+    # Catalog is published separately to metadata/library.sqlite.
+    "/Scripts/data/library.sqlite",
+    "/Scripts/data/library.sqlite-wal",
+    "/Scripts/data/library.sqlite-shm",
+    # B2-only prefixes. rclone does not delete excluded dest paths on sync,
+    # so --allow-delete will not wipe projects/, metadata/, or templates/.
+    "/projects/**",
+    "/metadata/**",
+    "/templates/**",
 ]
 
 
@@ -54,7 +74,7 @@ class RcloneError(RuntimeError):
         self.cmd = cmd
         self.returncode = returncode
         self.stderr = stderr
-        pretty = " ".join(cmd)
+        pretty = shlex.join(cmd)
         detail = stderr.strip() or "no stderr"
         super().__init__(f"rclone failed ({returncode}): {pretty}\n{detail}")
 
@@ -91,17 +111,26 @@ class RcloneConfig:
         return bool(self.remote and self.bucket)
 
 
+def _format_rclone_cmd(args: list[str]) -> str:
+    """Shell-safe rclone command string for logs and copy-paste."""
+    return shlex.join(["rclone", *args])
+
+
 def _run_rclone(args: list[str], *, dry_run: bool = False) -> subprocess.CompletedProcess:
-    """Run rclone command. Raises RcloneError on non-zero exit."""
+    """Run rclone with inherited stdio so progress is visible.
+
+    Raises RcloneError on non-zero exit or if rclone is not on PATH.
+    """
     cmd = ["rclone"] + args
     if dry_run:
-        print(f"[dry-run] would run: {' '.join(cmd)}")
+        print(f"[dry-run] would run: {_format_rclone_cmd(args)}")
         return subprocess.CompletedProcess(cmd, 0, "", "")
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(cmd, check=False)
+    except FileNotFoundError as exc:
+        raise RcloneError(cmd, 127, "rclone not found on PATH") from exc
     if result.returncode != 0:
-        raise RcloneError(cmd, result.returncode, result.stderr)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr)
+        raise RcloneError(cmd, result.returncode, "see rclone output above")
     return result
 
 
@@ -113,6 +142,30 @@ def _get_exclude_args() -> list[str]:
     return args
 
 
+def _bucket_target(config: RcloneConfig, suffix: str = "/") -> str:
+    remote = config.remote or "b2"
+    bucket = config.bucket or "BUCKET"
+    return f"{remote}:{bucket}{suffix}"
+
+
+def _print_or_run(
+    args: list[str],
+    config: RcloneConfig,
+    *,
+    dry_run: bool,
+) -> str:
+    """Print a planned command or run rclone. Returns the formatted command."""
+    cmd = _format_rclone_cmd(args)
+    if not config.is_configured:
+        print(f"[no B2 configured] planned command: {cmd}")
+        return cmd
+    if dry_run:
+        print(f"[dry-run] {cmd}")
+        return cmd
+    _run_rclone(args)
+    return cmd
+
+
 def publish_drive(
     drive_root: Path,
     config: RcloneConfig,
@@ -122,41 +175,21 @@ def publish_drive(
 ) -> list[str]:
     """Copy (default) or sync the drive to B2 bucket root.
 
-    Default is copy --update: never deletes remote files. allow_delete uses
-    sync, which removes dest files that are not on the local drive.
+    Default is copy: never deletes remote files; overwrites dest from the drive.
+    allow_delete uses sync, which removes dest files that are not on the local
+    drive, except excluded B2-only prefixes (projects/, metadata/, templates/).
 
     Returns list of commands that were (or would be) executed.
     """
-    commands = []
     action = "sync" if allow_delete else "copy"
-    excludes_str = " ".join(f"--exclude '{p}'" for p in PUBLISH_EXCLUDES)
-
-    if not config.is_configured:
-        target = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/"
-        cmd = f"rclone {action} {excludes_str} --update {drive_root} {target}"
-        print(f"[no B2 configured] planned command: {cmd}")
-        commands.append(cmd)
-        return commands
-
-    target = f"{config.remote}:{config.bucket}/"
-
     args = [
         action,
+        "--progress",
         str(drive_root),
-        target,
+        _bucket_target(config, "/"),
         *_get_exclude_args(),
-        "--update",
     ]
-
-    cmd = f"rclone {' '.join(args)}"
-    commands.append(cmd)
-
-    if not dry_run:
-        _run_rclone(args)
-    else:
-        print(f"[dry-run] {cmd}")
-
-    return commands
+    return [_print_or_run(args, config, dry_run=dry_run)]
 
 
 def publish_sqlite(
@@ -172,22 +205,12 @@ def publish_sqlite(
     if not db_path.exists():
         return None
 
-    if not config.is_configured:
-        target = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/metadata/library.sqlite"
-        cmd = f"rclone copyto {db_path} {target}"
-        print(f"[no B2 configured] planned command: {cmd}")
-        return cmd
-
-    target = f"{config.remote}:{config.bucket}/metadata/library.sqlite"
-    args = ["copyto", str(db_path), target]
-    cmd = f"rclone {' '.join(args)}"
-
-    if not dry_run:
-        _run_rclone(args)
-    else:
-        print(f"[dry-run] {cmd}")
-
-    return cmd
+    args = [
+        "copyto",
+        str(db_path),
+        _bucket_target(config, "/metadata/library.sqlite"),
+    ]
+    return _print_or_run(args, config, dry_run=dry_run)
 
 
 def publish_template(
@@ -202,22 +225,12 @@ def publish_template(
     if not config.mashup_template_path or not config.mashup_template_path.exists():
         return None
 
-    if not config.is_configured:
-        target = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/templates/mashup/"
-        cmd = f"rclone copy {config.mashup_template_path} {target}"
-        print(f"[no B2 configured] planned command: {cmd}")
-        return cmd
-
-    target = f"{config.remote}:{config.bucket}/templates/mashup/"
-    args = ["copy", str(config.mashup_template_path), target]
-    cmd = f"rclone {' '.join(args)}"
-
-    if not dry_run:
-        _run_rclone(args)
-    else:
-        print(f"[dry-run] {cmd}")
-
-    return cmd
+    args = [
+        "copy",
+        str(config.mashup_template_path),
+        _bucket_target(config, "/templates/mashup/"),
+    ]
+    return _print_or_run(args, config, dry_run=dry_run)
 
 
 def pull_projects(
@@ -236,22 +249,14 @@ def pull_projects(
     """
     agent_projects = drive_root / "Ableton" / "Music Production Agent"
 
-    if not config.is_configured:
-        source = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/projects/"
-        cmd = f"rclone copy --update {source} {agent_projects}"
-        print(f"[no B2 configured] planned command: {cmd}")
-        return cmd
-
-    if not dry_run:
+    if config.is_configured and not dry_run:
         agent_projects.mkdir(parents=True, exist_ok=True)
 
-    source = f"{config.remote}:{config.bucket}/projects/"
-    args = ["copy", "--update", source, str(agent_projects)]
-    cmd = f"rclone {' '.join(args)}"
-
-    if not dry_run:
-        _run_rclone(args)
-    else:
-        print(f"[dry-run] {cmd}")
-
-    return cmd
+    args = [
+        "copy",
+        "--progress",
+        "--update",
+        _bucket_target(config, "/projects/"),
+        str(agent_projects),
+    ]
+    return _print_or_run(args, config, dry_run=dry_run)

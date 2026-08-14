@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from library_sync.tags import parse_filename_artist_title, read_tags
+from mutagen.id3 import ID3, TBPM, TIT2, TKEY, TPE1
 
 
 class RaisingDict(dict):
@@ -95,3 +96,27 @@ class TestFilenameFallback:
     def test_parse_artist_title(self) -> None:
         assert parse_filename_artist_title("Beyonce - Halo.mp3") == ("Beyonce", "Halo")
         assert parse_filename_artist_title("JustTitle.wav") == (None, "JustTitle")
+
+
+class TestWavAiffId3:
+    def test_reads_id3_from_wav(self, tmp_path: Path) -> None:
+        id3 = ID3()
+        id3.add(TPE1(encoding=3, text=["WAV Artist"]))
+        id3.add(TIT2(encoding=3, text=["WAV Title"]))
+        id3.add(TBPM(encoding=3, text=["128"]))
+        id3.add(TKEY(encoding=3, text=["8A"]))
+
+        fake_audio = MagicMock()
+        fake_audio.tags = id3
+        fake_audio.info = MagicMock()
+        fake_audio.info.length = 12.0
+
+        with patch("library_sync.tags.MutagenFile", return_value=fake_audio):
+            with patch("library_sync.tags.MP3", new=type("FakeMP3", (), {})):
+                tags = read_tags(tmp_path / "song.wav")
+
+        assert tags.artist == "WAV Artist"
+        assert tags.title == "WAV Title"
+        assert tags.bpm == 128.0
+        assert tags.camelot_key == "8A"
+        assert tags.duration_sec == 12.0

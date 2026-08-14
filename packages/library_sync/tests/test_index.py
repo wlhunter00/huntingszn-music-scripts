@@ -236,6 +236,7 @@ class TestIndexFiles:
         dj_music.mkdir(parents=True)
         (dj_music / "Artist - Song (Vocal Mix).mp3").write_bytes(b"v")
         (dj_music / "Artist - Song (Instrumental).mp3").write_bytes(b"i")
+        (dj_music / "Artist - Song (No Vocals).mp3").write_bytes(b"n")
         (dj_music / "Artist - Song.mp3").write_bytes(b"s")
 
         with LibraryDB(db_path) as db:
@@ -246,6 +247,7 @@ class TestIndexFiles:
             }
             assert roles["Artist - Song (Vocal Mix).mp3"] == "vocal"
             assert roles["Artist - Song (Instrumental).mp3"] == "drop"
+            assert roles["Artist - Song (No Vocals).mp3"] == "drop"
             assert roles["Artist - Song.mp3"] == "unknown"
 
     def test_dry_run_does_not_create_db_file(self, tmp_path):
