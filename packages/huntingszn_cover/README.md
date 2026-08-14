@@ -76,6 +76,44 @@ Full pipeline:
 5. Generates `manifest.json` tracking all outputs
 6. Optionally copies to `/Volumes/HuntingSzn/Thumbnails/Releases/` if mounted
 
+## Naming Conventions
+
+### Releases Directory
+
+Default volume path: `/Volumes/HuntingSzn/Thumbnails/Releases/`
+
+Folders are named using the **mashup name** (not a slug), matching how audio releases are organized:
+- Audio title: `The Cure x Sad Songs x Pray`
+- Folder name: `The Cure x Pray` (often shorter, focusing on key tracks)
+
+When copying to the volume, the `--mashup` name is used directly as the folder name.
+
+### Vendor Originals
+
+You may see existing originals in release folders with these naming patterns:
+- SoundCloud: `artworks-…-t500x500.jpg`
+- Spotify: `ab67616d0000b273….jpg`
+- Generic: `download.jpg`, UUID-based `.png` files
+
+Fetched images are saved under `originals/<track-slug>/` with sequential naming (`cover_00.png`, etc.).
+
+### Our Output Naming
+
+Transformed outputs follow this pattern:
+- `<slug>-composite.png` - Raw composite
+- `<slug>-composite-clean.png` - Composite with clean prompt
+- `<slug>-composite-crystal.png` - Composite with crystal prompt
+- `<track-slug>-clean.png` - Individual track, clean
+- `<track-slug>-crystal.png` - Individual track, crystal
+
+**Note**: Renaming to `final.png` or similar is a human task - this tool does not auto-rename outputs.
+
+### ChatGPT Outputs (Historical)
+
+Previous ChatGPT image generations used: `ChatGPT Image MMM DD, YYYY, HH_MM_SS AM.png`
+
+Our tool uses the structured naming above instead.
+
 ## Prompt Files
 
 Prompts are loaded at runtime from these locations (in order):
@@ -86,6 +124,8 @@ Prompts are loaded at runtime from these locations (in order):
 4. Volume: `/Volumes/HuntingSzn/Thumbnails/Album Prompt - *.txt`
 
 The wordmark in prompt files should be `HUNTINGSZN EDIT` (not FLIP).
+
+**Important**: Prompt files already forbid adding extra logos. Brand assets live at `/Volumes/HuntingSzn/Thumbnails/Logos/` - do not bake additional logos into transforms.
 
 ## Output Structure
 
@@ -107,6 +147,21 @@ The wordmark in prompt files should be `HUNTINGSZN EDIT` (not FLIP).
     │   └── <track1-slug>-crystal.png
     └── ...
 ```
+
+When copied to volume:
+```
+/Volumes/HuntingSzn/Thumbnails/Releases/<Mashup Name>/
+└── (same structure as above)
+```
+
+## Scope
+
+This package handles **image assets only**:
+- Album cover fetching
+- Image transformation
+- Composite creation
+
+**Not in scope**: videos, audio files (wav/mp3), .env files, databases (sqlite).
 
 ## Development
 
