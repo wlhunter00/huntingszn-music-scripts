@@ -33,7 +33,7 @@ def _lookup_paths(prompt_type: PromptType) -> list[Path]:
     for fname in filenames:
         paths.append(pkg_dir / fname)
 
-    workspace_dir = Path("/workspace/huntingszn-assets/cover-prompts")
+    workspace_dir = Path.cwd() / "huntingszn-assets" / "cover-prompts"
     for fname in filenames:
         paths.append(workspace_dir / fname)
 
@@ -50,7 +50,7 @@ def load_prompt(prompt_type: PromptType) -> str:
     Lookup order:
     1. Environment variable (HUNTINGSZN_PROMPT_CLEAN or HUNTINGSZN_PROMPT_CRYSTAL)
     2. Package prompts/ directory
-    3. /workspace/huntingszn-assets/cover-prompts/
+    3. ./huntingszn-assets/cover-prompts/ (relative to cwd)
     4. /Volumes/HuntingSzn/Thumbnails/
 
     Raises:

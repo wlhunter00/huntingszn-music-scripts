@@ -63,7 +63,10 @@ def prepare_openai_image(image_path: Path, *, filename: str = "image.png") -> Op
     Returns:
         ``(filename, png_bytes, "image/png")`` suitable for ``client.images.edit``.
     """
-    img = Image.open(image_path)
+    try:
+        img = Image.open(image_path)
+    except OSError as e:
+        raise TransformError(f"Cannot read image {image_path}: {e}") from e
 
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGB")
@@ -113,24 +116,38 @@ def transform_image(
 
     image_file = prepare_openai_image(image_path)
 
-    try:
-        response = client.images.edit(
-            model=model_to_use,
+    def _edit(model_name: str) -> object:
+        return client.images.edit(
+            model=model_name,
             image=image_file,
             prompt=prompt,
             n=1,
             size=OUTPUT_SIZE,
         )
+
+    def _image_from_response(response: object) -> Image.Image:
+        data = getattr(response, "data", None)
+        if not data:
+            raise TransformError("No image data returned from API")
+        image_data = data[0]
+        if getattr(image_data, "b64_json", None):
+            img_bytes = base64.b64decode(image_data.b64_json)
+            return Image.open(BytesIO(img_bytes))
+        if getattr(image_data, "url", None):
+            import httpx
+
+            with httpx.Client(timeout=60.0) as http_client:
+                img_response = http_client.get(image_data.url)
+                img_response.raise_for_status()
+                return Image.open(BytesIO(img_response.content))
+        raise TransformError("No image data or URL in API response")
+
+    try:
+        img = _image_from_response(_edit(model_to_use))
     except Exception as e:
         if model is None and model_to_use != FALLBACK_MODEL:
             try:
-                response = client.images.edit(
-                    model=FALLBACK_MODEL,
-                    image=image_file,
-                    prompt=prompt,
-                    n=1,
-                    size=OUTPUT_SIZE,
-                )
+                img = _image_from_response(_edit(FALLBACK_MODEL))
                 model_to_use = FALLBACK_MODEL
             except Exception as fallback_e:
                 raise TransformError(
@@ -138,24 +155,6 @@ def transform_image(
                 ) from fallback_e
         else:
             raise TransformError(f"Image edit failed: {e}") from e
-
-    if not response.data:
-        raise TransformError("No image data returned from API")
-
-    image_data = response.data[0]
-
-    if hasattr(image_data, "b64_json") and image_data.b64_json:
-        img_bytes = base64.b64decode(image_data.b64_json)
-        img = Image.open(BytesIO(img_bytes))
-    elif hasattr(image_data, "url") and image_data.url:
-        import httpx
-
-        with httpx.Client(timeout=60.0) as http_client:
-            img_response = http_client.get(image_data.url)
-            img_response.raise_for_status()
-            img = Image.open(BytesIO(img_response.content))
-    else:
-        raise TransformError("No image data or URL in API response")
 
     if img.mode != "RGB":
         img = img.convert("RGB")

@@ -238,7 +238,7 @@ def mashup(
     OpenAI multi-image edit (gpt-image-1.5, falling back to gpt-image-1) and
     transforms with clean + crystal prompts.
 
-    Does NOT read from existing Releases folders - those are finished work only.
+    Does NOT read from or overwrite existing Releases folders - those are finished work only.
     Use --image only as a rare override when fetch returns unusable results.
 
     Requires both SERPAPI_API_KEY and OPENAI_API_KEY environment variables.
@@ -326,6 +326,13 @@ def mashup(
 
         if manifest.copied_to_volume:
             console.print(f"\n[green]Copied to volume:[/green] {manifest.copied_to_volume}")
+        elif volume_path is not None:
+            existing = volume_path / mashup
+            if existing.exists():
+                console.print(
+                    f"\n[yellow]Skipped volume copy; release folder already exists "
+                    f"(finished work, not overwritten):[/yellow] {existing}"
+                )
 
         console.print(f"\n[dim]Manifest: {manifest.output_dir}/manifest.json[/dim]")
 

@@ -167,7 +167,11 @@ def test_create_openai_composite_falls_back_to_gpt_image_1(
     mock_client.images.generate.assert_not_called()
 
 
-def test_fetch_failure_lists_candidate_paths(tmp_path: Path) -> None:
+def test_fetch_failure_lists_candidate_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
     tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray"]
     with (
         patch("huntingszn_cover.mashup.fetch_album_covers", return_value=[]),
@@ -181,7 +185,11 @@ def test_fetch_failure_lists_candidate_paths(tmp_path: Path) -> None:
     assert "--image" in message
 
 
-def test_pick_without_picker_lists_fetched_candidates(tmp_path: Path) -> None:
+def test_pick_without_picker_lists_fetched_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
     tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray"]
     cure = write_png(tmp_path / "cure.png")
     pray = write_png(tmp_path / "pray.png", color=(0, 255, 0))
@@ -208,6 +216,7 @@ def test_pick_with_picker_uses_selected_covers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
     tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray"]
     picked: list[str] = []
 
@@ -252,6 +261,7 @@ def test_pick_transforms_selected_cover_not_auto_best(
 ) -> None:
     """--pick must reuse the chosen cover for per-track transforms, not re-select squarest."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
     tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray"]
     composite_sources: list[Path] = []
     transform_sources: list[Path] = []
@@ -296,6 +306,7 @@ def test_run_mashup_does_not_pillow_split_when_edit_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
     tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray"]
 
     def fake_fetch(artist, title, output_dir, *, target_count, client):
@@ -328,4 +339,118 @@ def test_mashup_cli_default_output_is_not_workspace_path() -> None:
     result = CliRunner().invoke(cli, ["mashup", "--help"])
     assert result.exit_code == 0
     assert "/workspace/" not in result.output
+
+
+def _run_mashup_with_local_covers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    volume_path: Path | None = None,
+) -> object:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
+    tracks = ["Olivia Rodrigo:The Cure", "Illenium:Pray"]
+
+    def fake_fetch(artist, title, output_dir, *, target_count, client):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        dest = output_dir / "cover_00.png"
+        write_png(dest)
+        return [_fetched(dest, 500, 500)]
+
+    def fake_composite(images, output_path, prompt, **kwargs):
+        write_png(output_path, (16, 16))
+        return output_path, PREFERRED_MODEL
+
+    def fake_transform(image_path, prompt, output_path, **kwargs):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        write_png(output_path, (16, 16))
+        return TransformResult(image_path, output_path, "clean", PREFERRED_MODEL)
+
+    with (
+        patch("huntingszn_cover.mashup.fetch_album_covers", side_effect=fake_fetch),
+        patch("huntingszn_cover.mashup.create_openai_composite", side_effect=fake_composite),
+        patch("huntingszn_cover.mashup.transform_image", side_effect=fake_transform),
+        patch(
+            "huntingszn_cover.mashup.get_prompt",
+            side_effect=lambda name: f"HUNTINGSZN EDIT {name}",
+        ),
+    ):
+        return run_mashup(
+            "The Cure x Pray",
+            tracks,
+            tmp_path,
+            volume_path=volume_path,
+        )
+
+
+def test_volume_copy_skips_existing_release_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volume = tmp_path / "Releases"
+    existing = volume / "The Cure x Pray"
+    existing.mkdir(parents=True)
+    sentinel = existing / "final.png"
+    sentinel.write_text("finished-artwork")
+
+    manifest = _run_mashup_with_local_covers(tmp_path, monkeypatch, volume_path=volume)
+
+    assert sentinel.read_text() == "finished-artwork"
+    assert list(existing.iterdir()) == [sentinel]
+    assert manifest.copied_to_volume is None
+    local_manifest = tmp_path / "the-cure-x-pray" / "manifest.json"
+    assert local_manifest.is_file()
+
+
+def test_volume_copy_when_release_folder_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    volume = tmp_path / "Releases"
+    volume.mkdir()
+
+    manifest = _run_mashup_with_local_covers(tmp_path, monkeypatch, volume_path=volume)
+
+    dest = volume / "The Cure x Pray"
+    assert manifest.copied_to_volume == str(dest)
+    assert (dest / "manifest.json").is_file()
+    copied_manifest = json.loads((dest / "manifest.json").read_text())
+    assert copied_manifest["copied_to_volume"] == str(dest)
+    assert dest.is_dir()
+
+
+def test_missing_openai_key_fails_before_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
+    with (
+        patch("huntingszn_cover.mashup.fetch_album_covers") as mock_fetch,
+        pytest.raises(MashupError, match="OPENAI_API_KEY"),
+    ):
+        run_mashup(
+            "The Cure x Pray",
+            ["Olivia Rodrigo:The Cure", "Illenium:Pray"],
+            tmp_path,
+        )
+    mock_fetch.assert_not_called()
+
+
+def test_bad_prompt_fails_before_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SERPAPI_API_KEY", "serp-test")
+    with (
+        patch(
+            "huntingszn_cover.mashup.get_prompt",
+            side_effect=ValueError("HUNTINGSZN FLIP"),
+        ),
+        patch("huntingszn_cover.mashup.fetch_album_covers") as mock_fetch,
+        pytest.raises(ValueError, match="FLIP"),
+    ):
+        run_mashup(
+            "The Cure x Pray",
+            ["Olivia Rodrigo:The Cure", "Illenium:Pray"],
+            tmp_path,
+        )
+    mock_fetch.assert_not_called()
 

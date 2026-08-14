@@ -35,6 +35,13 @@ class FetchError(Exception):
     """Raised when image fetching fails."""
 
 
+def _redact_secret(text: str, secret: str) -> str:
+    """Strip a secret from an error string so it cannot leak to logs."""
+    if not secret:
+        return text
+    return text.replace(secret, "***")
+
+
 def _get_serpapi_key() -> str:
     """Get SerpAPI key from environment.
 
@@ -87,23 +94,30 @@ def search_album_covers(
     client = client or httpx.Client(timeout=30.0)
 
     try:
-        response = client.get(SERPAPI_BASE_URL, params=params)
+        # POST keeps api_key out of the request URL (GET query strings show up in
+        # httpx HTTPStatusError messages and tracebacks).
+        response = client.post(SERPAPI_BASE_URL, data=params)
         response.raise_for_status()
-        data = response.json()
-
-        if "error" in data:
-            raise FetchError(f"SerpAPI error: {data['error']}")
-
-        return data.get("images_results", [])
+        try:
+            data = response.json()
+        except ValueError:
+            raise FetchError("Invalid JSON in SerpAPI response") from None
     except httpx.HTTPStatusError as e:
+        # from None: httpx interpolates the request URL into HTTPStatusError,
+        # which used to leak api_key even after the FetchError message was sanitized.
         raise FetchError(
             f"HTTP error during SerpAPI request: {e.response.status_code}"
-        ) from e
-    except httpx.HTTPError as e:
-        raise FetchError("HTTP error during SerpAPI request") from e
+        ) from None
+    except httpx.HTTPError:
+        raise FetchError("HTTP error during SerpAPI request") from None
     finally:
         if should_close:
             client.close()
+
+    if "error" in data:
+        raise FetchError(_redact_secret(f"SerpAPI error: {data['error']}", api_key))
+
+    return data.get("images_results", [])
 
 
 def _is_roughly_square(width: int, height: int, tolerance: float = 0.2) -> bool:

@@ -1,8 +1,10 @@
 """Tests for fetch module with mocked SerpAPI responses."""
 
+import traceback
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
@@ -105,20 +107,21 @@ class TestSearchAlbumCoversMocked:
         mock_response.raise_for_status.return_value = None
 
         mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
+        mock_client.post.return_value = mock_response
 
         with patch.dict("os.environ", {"SERPAPI_API_KEY": "test-key"}):
             results = search_album_covers("Artist", "Title", client=mock_client)
 
             assert len(results) == 2
             assert results[0]["original"] == "https://example.com/cover1.jpg"
-            mock_client.get.assert_called_once()
-            _args, kwargs = mock_client.get.call_args
+            mock_client.post.assert_called_once()
+            _args, kwargs = mock_client.post.call_args
             assert _args[0] == SERPAPI_BASE_URL
-            assert kwargs["params"]["engine"] == "google_images"
-            assert kwargs["params"]["q"] == "Artist Title album cover square"
-            assert kwargs["params"]["api_key"] == "test-key"
-            assert kwargs["params"]["tbm"] == "isch"
+            assert kwargs["data"]["engine"] == "google_images"
+            assert kwargs["data"]["q"] == "Artist Title album cover square"
+            assert kwargs["data"]["api_key"] == "test-key"
+            assert kwargs["data"]["tbm"] == "isch"
+            assert "params" not in kwargs
 
     def test_search_handles_api_error(self) -> None:
         """Should raise FetchError on API error response."""
@@ -129,7 +132,7 @@ class TestSearchAlbumCoversMocked:
         mock_response.raise_for_status.return_value = None
 
         mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
+        mock_client.post.return_value = mock_response
 
         with (
             patch.dict("os.environ", {"SERPAPI_API_KEY": "bad-key"}),
@@ -146,7 +149,7 @@ class TestSearchAlbumCoversMocked:
         mock_response.raise_for_status.return_value = None
 
         mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
+        mock_client.post.return_value = mock_response
 
         with patch.dict("os.environ", {"SERPAPI_API_KEY": "test-key"}):
             results = search_album_covers("Unknown", "Track", client=mock_client)
@@ -179,8 +182,68 @@ def test_search_http_error_does_not_leak_api_key() -> None:
     ):
         search_album_covers("Artist", "Title", client=client)
 
+    tb = "".join(traceback.format_exception(exc.type, exc.value, exc.tb))
     assert secret not in str(exc.value)
     assert "api_key=" not in str(exc.value)
+    assert secret not in tb
+    assert "api_key=" not in tb
+    assert exc.value.__cause__ is None
+
+
+def test_search_connect_error_does_not_leak_api_key() -> None:
+    secret = "super-secret-serpapi-key"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection failed", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    with (
+        patch.dict("os.environ", {"SERPAPI_API_KEY": secret}),
+        pytest.raises(FetchError, match="HTTP error during SerpAPI request") as exc,
+    ):
+        search_album_covers("Artist", "Title", client=client)
+
+    tb = "".join(traceback.format_exception(exc.type, exc.value, exc.tb))
+    assert secret not in str(exc.value)
+    assert secret not in tb
+    assert "api_key=" not in tb
+    assert exc.value.__cause__ is None
+
+
+def test_search_json_error_redacts_api_key() -> None:
+    secret = "super-secret-serpapi-key"
+
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"error": f"Invalid API key: {secret}"}
+    mock_response.raise_for_status.return_value = None
+
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch.dict("os.environ", {"SERPAPI_API_KEY": secret}),
+        pytest.raises(FetchError, match="SerpAPI error") as exc,
+    ):
+        search_album_covers("Artist", "Title", client=mock_client)
+
+    assert secret not in str(exc.value)
+    assert "***" in str(exc.value)
+
+
+def test_search_uses_post_so_api_key_is_not_in_url() -> None:
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"images_results": []}
+    mock_response.raise_for_status.return_value = None
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_response
+
+    with patch.dict("os.environ", {"SERPAPI_API_KEY": "test-key"}):
+        search_album_covers("Artist", "Title", client=mock_client)
+
+    mock_client.get.assert_not_called()
+    mock_client.post.assert_called_once()
+    assert mock_client.post.call_args.args[0] == SERPAPI_BASE_URL
+    assert "params" not in mock_client.post.call_args.kwargs
 
 
 def test_fetch_album_covers_uses_google_images_saves_square_pngs(tmp_path: Path) -> None:
@@ -221,10 +284,13 @@ def test_fetch_album_covers_uses_google_images_saves_square_pngs(tmp_path: Path)
         )
 
     assert len(serpapi_calls) == 1
-    params = serpapi_calls[0].url.params
-    assert params["engine"] == "google_images"
-    assert params["q"] == "Olivia Rodrigo The Cure album cover square"
-    assert "google_images" in params["engine"]
+    req = serpapi_calls[0]
+    assert req.method == "POST"
+    assert "api_key=" not in str(req.url)
+    body = parse_qs(req.content.decode())
+    assert body["engine"] == ["google_images"]
+    assert body["q"] == ["Olivia Rodrigo The Cure album cover square"]
+    assert "google_images" in body["engine"]
     assert len(fetched) == 2
     assert fetched[0].local_path.is_file()
     assert fetched[1].local_path.is_file()

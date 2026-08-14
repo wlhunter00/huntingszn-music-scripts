@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from huntingszn_cover.fetch import FetchedImage, fetch_album_covers
+from huntingszn_cover.fetch import FetchedImage, _get_serpapi_key, fetch_album_covers
 from huntingszn_cover.prompts import get_prompt
 from huntingszn_cover.transform import (
     FALLBACK_MODEL,
@@ -214,7 +214,7 @@ def run_mashup(
     """Run the full mashup pipeline: fetch, composite, transform.
 
     ALWAYS fetches fresh covers via SerpAPI unless override_images is provided.
-    Does NOT read from existing Releases folders - those are finished work only.
+    Does NOT read from or overwrite existing Releases folders - those are finished work only.
 
     Args:
         mashup_name: Name for the mashup (e.g., "The Cure x Pray").
@@ -233,6 +233,14 @@ def run_mashup(
     Raises:
         MashupError: If fetch returns no usable square covers and no override provided.
     """
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise MashupError("OPENAI_API_KEY required for composite creation")
+    if not override_images:
+        _get_serpapi_key()
+
+    prompt_clean = get_prompt("clean")
+    prompt_crystal = get_prompt("crystal")
+
     slug = slugify(mashup_name)
     mashup_dir = output_dir / slug
     mashup_dir.mkdir(parents=True, exist_ok=True)
@@ -322,9 +330,6 @@ def run_mashup(
     manifest.composite_path = str(composite_path)
     manifest.composite_method = method
 
-    prompt_clean = get_prompt("clean")
-    prompt_crystal = get_prompt("crystal")
-
     composite_results = []
     for prompt, ptype in [(prompt_clean, "clean"), (prompt_crystal, "crystal")]:
         out_path = mashup_dir / f"{slug}-composite-{ptype}.png"
@@ -346,10 +351,12 @@ def run_mashup(
                     track_results.append(result)
                 manifest.transformed[track] = [str(r.output_path) for r in track_results]
 
+    dest: Path | None = None
     if volume_path and volume_path.exists():
-        dest = volume_path / mashup_name
-        if mashup_dir.exists():
-            shutil.copytree(mashup_dir, dest, dirs_exist_ok=True)
+        candidate = volume_path / mashup_name
+        # Releases folders are finished work. Never overwrite them.
+        if not candidate.exists():
+            dest = candidate
             manifest.copied_to_volume = str(dest)
 
     manifest_path = mashup_dir / "manifest.json"
@@ -370,5 +377,8 @@ def run_mashup(
             f,
             indent=2,
         )
+
+    if dest is not None:
+        shutil.copytree(mashup_dir, dest)
 
     return manifest

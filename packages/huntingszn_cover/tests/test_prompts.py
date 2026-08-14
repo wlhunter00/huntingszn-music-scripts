@@ -67,6 +67,19 @@ class TestLoadPrompt:
         finally:
             del os.environ["HUNTINGSZN_PROMPT_CLEAN"]
 
+    def test_lookup_uses_cwd_not_hardcoded_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from huntingszn_cover.prompts import _lookup_paths
+
+        monkeypatch.chdir(tmp_path)
+        paths = [p.resolve() for p in _lookup_paths("clean")]
+        hardcoded = Path("/workspace/huntingszn-assets/cover-prompts/album-prompt-clean.txt")
+        cwd_fallback = tmp_path / "huntingszn-assets" / "cover-prompts" / "album-prompt-clean.txt"
+        assert cwd_fallback.resolve() in paths
+        if tmp_path.resolve() != Path("/workspace").resolve():
+            assert hardcoded not in paths
+
 
 class TestGetPrompt:
     """Tests for get_prompt with validation."""

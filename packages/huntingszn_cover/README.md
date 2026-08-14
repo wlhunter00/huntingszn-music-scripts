@@ -74,7 +74,7 @@ huntingszn-cover mashup \
 5. Generates `manifest.json` tracking all outputs
 6. Copies to `/Volumes/HuntingSzn/Thumbnails/Releases/<Mashup Name>/` if mounted
 
-**Important**: Does NOT read from existing Releases folders - those are finished work only. A new run for "The Cure x Pray" will Google those two covers fresh; it will not open the existing release folder.
+**Important**: Does NOT read from or overwrite existing Releases folders - those are finished work only. A new run for "The Cure x Pray" will Google those two covers fresh; it will not open or clobber the existing release folder. If the volume destination already exists, the local mashup still succeeds and the copy is skipped.
 
 **If OpenAI image edit fails** (after trying `gpt-image-1.5` then `gpt-image-1`), the command fails clearly. It does not silently replace the mashup with a Pillow 50/50 split.
 
@@ -134,7 +134,7 @@ Prompts are loaded at runtime from these locations (in order):
 
 1. Environment variables: `HUNTINGSZN_PROMPT_CLEAN`, `HUNTINGSZN_PROMPT_CRYSTAL`
 2. Package prompts: `huntingszn_cover/prompts/album-prompt-*.txt`
-3. Workspace: `/workspace/huntingszn-assets/cover-prompts/album-prompt-*.txt`
+3. Workspace: `./huntingszn-assets/cover-prompts/album-prompt-*.txt` (relative to cwd)
 4. Volume: `/Volumes/HuntingSzn/Thumbnails/Album Prompt - *.txt`
 
 The wordmark in prompt files should be `HUNTINGSZN EDIT` (not FLIP).
