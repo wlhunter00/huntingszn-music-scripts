@@ -4,13 +4,13 @@ import os
 from pathlib import Path
 
 from library_tools.duplicate import (
+    DuplicateCandidate,
     SongTags,
     _primary_reason,
     base_title,
     choose_keep,
     choose_keep_pair,
     consolidate_candidates,
-    DuplicateCandidate,
     extract_version_signature,
     format_song_label,
     normalize_token,
@@ -73,7 +73,10 @@ def test_tags_match_fuzzy_rejects_different_songs():
 def test_original_and_remix_are_not_duplicates(tmp_path: Path):
     original = tmp_path / "Good Things Fall Apart (with Jon Bellion).flac"
     remix = tmp_path / "Good Things Fall Apart (with Jon Bellion) [Tiësto Remix].flac"
-    original_tags = SongTags(artist="ILLENIUM, Jon Bellion", title="Good Things Fall Apart (with Jon Bellion)")
+    original_tags = SongTags(
+        artist="ILLENIUM, Jon Bellion",
+        title="Good Things Fall Apart (with Jon Bellion)",
+    )
     remix_tags = SongTags(
         artist="ILLENIUM, Jon Bellion, Tiësto",
         title="Good Things Fall Apart (with Jon Bellion) [Tiësto Remix]",

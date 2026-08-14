@@ -33,6 +33,7 @@ help:
 	@echo "  make rift-catalog      Scan Rift presets -> CSV"
 	@echo "  make test              Run mashup-pop-finder tests"
 	@echo "  make test-library      Run library_tools metadata tests"
+	@echo "  make test-cover        Run huntingszn-cover tests"
 
 sync:
 	uv sync --all-packages
@@ -98,6 +99,10 @@ test:
 test-library:
 	uv sync --package library-tools --extra dev
 	uv run --package library-tools pytest packages/library_tools/tests
+
+test-cover:
+	uv sync --package huntingszn-cover --extra dev
+	uv run --package huntingszn-cover pytest packages/huntingszn_cover/tests
 
 lint:
 	uv run ruff check packages config

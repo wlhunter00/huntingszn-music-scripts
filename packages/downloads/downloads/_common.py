@@ -24,7 +24,9 @@ def run_yt_dlp(
     audio_mode: str = "mp3",
     no_playlist: bool | None = None,
 ) -> bool:
-    """Run yt-dlp. audio_mode: ``mp3`` (320k transcode) or ``best`` (native best audio, minimal loss).
+    """Run yt-dlp.
+
+    audio_mode: ``mp3`` (320k transcode) or ``best`` (native best audio, minimal loss).
 
     ``no_playlist``: if ``True``, pass ``--no-playlist``; if ``False``, ``--yes-playlist``;
     if ``None`` (default), omit both (yt-dlp default).

@@ -15,7 +15,6 @@ from mashup_pop_finder import selectors
 from mashup_pop_finder.http import make_client
 from mashup_pop_finder.models import Candidate, SongMeta
 
-
 SONGS_PER_PAGE = 30
 
 
