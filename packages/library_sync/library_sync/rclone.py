@@ -1,15 +1,20 @@
 """B2 / rclone operations for library sync.
 
 B2 layout:
-- audio/          — library files, one-way UP from drive (only new/changed)
-- metadata/library.sqlite — one-way UP
-- templates/mashup/ — one-way UP when template path set
-- projects/       — one-way DOWN to {DRIVE}/Ready to Mix/
+- Bucket root mirrors drive folders (DJ Music, Ableton, Stem Splitting, etc.)
+- metadata/library.sqlite — one-way UP (track catalog for queries)
+- templates/mashup/ — one-way UP from Ableton/HuntingSzn Mashup Template Project
+- projects/<slug>/ — one-way DOWN to Ableton/Music Production Agent/<slug>/
+
+Publish excludes:
+- $RECYCLE.BIN, System Volume Information, .Spotlight-V100
+- .TemporaryItems, .Trashes, .fseventsd, .DS_Store, ._, .git
 
 Env vars:
 - B2_BUCKET       — bucket name (stub)
 - B2_REMOTE       — rclone remote name (e.g., "b2")
-- MASHUP_TEMPLATE_PATH — local path to mashup template
+- MASHUP_TEMPLATE_PATH — override template path
+  (default: Ableton/HuntingSzn Mashup Template Project)
 
 If B2_REMOTE is not set, --dry-run prints planned commands and exits 0.
 """
@@ -21,6 +26,18 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+PUBLISH_EXCLUDES = [
+    "$RECYCLE.BIN/**",
+    "System Volume Information/**",
+    ".Spotlight-V100/**",
+    ".TemporaryItems/**",
+    ".Trashes/**",
+    ".fseventsd/**",
+    ".DS_Store",
+    "._*",
+    ".git/**",
+]
+
 
 @dataclass
 class RcloneConfig:
@@ -31,12 +48,21 @@ class RcloneConfig:
     mashup_template_path: Path | None
 
     @classmethod
-    def from_env(cls) -> RcloneConfig:
-        """Load configuration from environment variables."""
+    def from_env(cls, drive_root: Path | None = None) -> RcloneConfig:
+        """Load configuration from environment variables.
+
+        Args:
+            drive_root: If provided, use as base for default template path
+        """
         remote = os.environ.get("B2_REMOTE")
         bucket = os.environ.get("B2_BUCKET")
         template_str = os.environ.get("MASHUP_TEMPLATE_PATH")
-        template_path = Path(template_str) if template_str else None
+        if template_str:
+            template_path = Path(template_str)
+        elif drive_root:
+            template_path = drive_root / "Ableton" / "HuntingSzn Mashup Template Project"
+        else:
+            template_path = None
         return cls(remote=remote, bucket=bucket, mashup_template_path=template_path)
 
     @property
@@ -54,55 +80,52 @@ def _run_rclone(args: list[str], *, dry_run: bool = False) -> subprocess.Complet
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-def publish_audio(
+def _get_exclude_args() -> list[str]:
+    """Get rclone exclude arguments for publish operations."""
+    args = []
+    for pattern in PUBLISH_EXCLUDES:
+        args.extend(["--exclude", pattern])
+    return args
+
+
+def publish_drive(
     drive_root: Path,
     config: RcloneConfig,
     *,
     dry_run: bool = False,
 ) -> list[str]:
-    """Publish new/changed audio files to B2.
+    """Mirror the entire drive to B2 bucket root.
 
+    Excludes system files and metadata directories.
     Returns list of commands that were (or would be) executed.
     """
     commands = []
+    excludes_str = " ".join(f"--exclude '{p}'" for p in PUBLISH_EXCLUDES)
 
     if not config.is_configured:
-        target = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/audio/"
-        source = str(drive_root)
-        includes = "--include '*.mp3' --include '*.wav' --include '*.flac'"
-        includes += " --include '*.aiff' --include '*.aif' --include '*.m4a'"
-        cmd = f"rclone copy {includes} {source} {target}"
+        target = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/"
+        cmd = f"rclone sync {excludes_str} --update {drive_root} {target}"
         print(f"[no B2 configured] planned command: {cmd}")
         commands.append(cmd)
         return commands
 
-    target = f"{config.remote}:{config.bucket}/audio/"
+    target = f"{config.remote}:{config.bucket}/"
 
-    for index_root in ["DJ Music", "Platnium Notes"]:
-        source = drive_root / index_root
-        if not source.exists():
-            continue
+    args = [
+        "sync",
+        str(drive_root),
+        target,
+        *_get_exclude_args(),
+        "--update",
+    ]
 
-        args = [
-            "copy",
-            str(source),
-            f"{target}{index_root}/",
-            "--include", "*.mp3",
-            "--include", "*.wav",
-            "--include", "*.flac",
-            "--include", "*.aiff",
-            "--include", "*.aif",
-            "--include", "*.m4a",
-            "--update",
-        ]
+    cmd = f"rclone {' '.join(args)}"
+    commands.append(cmd)
 
-        cmd = f"rclone {' '.join(args)}"
-        commands.append(cmd)
-
-        if not dry_run:
-            _run_rclone(args)
-        else:
-            print(f"[dry-run] {cmd}")
+    if not dry_run:
+        _run_rclone(args)
+    else:
+        print(f"[dry-run] {cmd}")
 
     return commands
 
@@ -174,23 +197,25 @@ def pull_projects(
     *,
     dry_run: bool = False,
 ) -> str | None:
-    """Pull projects from B2 to Ready to Mix folder.
+    """Pull projects from B2 to Ableton/Music Production Agent folder.
+
+    B2 projects/<slug>/ → {DRIVE}/Ableton/Music Production Agent/<slug>/
 
     Returns command that was (or would be) executed.
     """
-    ready_to_mix = drive_root / "Ready to Mix"
+    agent_projects = drive_root / "Ableton" / "Music Production Agent"
 
     if not config.is_configured:
         source = f"{config.remote or 'b2'}:{config.bucket or 'BUCKET'}/projects/"
-        cmd = f"rclone sync {source} {ready_to_mix}"
+        cmd = f"rclone sync {source} {agent_projects}"
         print(f"[no B2 configured] planned command: {cmd}")
         return cmd
 
     if not dry_run:
-        ready_to_mix.mkdir(exist_ok=True)
+        agent_projects.mkdir(parents=True, exist_ok=True)
 
     source = f"{config.remote}:{config.bucket}/projects/"
-    args = ["sync", source, str(ready_to_mix)]
+    args = ["sync", source, str(agent_projects)]
     cmd = f"rclone {' '.join(args)}"
 
     if not dry_run:

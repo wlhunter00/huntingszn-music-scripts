@@ -5,8 +5,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from library_sync.rclone import (
+    PUBLISH_EXCLUDES,
     RcloneConfig,
-    publish_audio,
+    publish_drive,
     publish_sqlite,
     publish_template,
     pull_projects,
@@ -45,9 +46,32 @@ class TestRcloneConfig:
             config = RcloneConfig.from_env()
             assert not config.is_configured
 
+    def test_default_template_path_from_drive_root(self, tmp_path):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        with patch.dict(os.environ, {}, clear=True):
+            for k in ["B2_REMOTE", "B2_BUCKET", "MASHUP_TEMPLATE_PATH"]:
+                os.environ.pop(k, None)
+            config = RcloneConfig.from_env(drive_root)
+            expected = drive_root / "Ableton" / "HuntingSzn Mashup Template Project"
+            assert config.mashup_template_path == expected
+
+
+class TestPublishExcludes:
+    def test_excludes_system_files(self):
+        assert "$RECYCLE.BIN/**" in PUBLISH_EXCLUDES
+        assert "System Volume Information/**" in PUBLISH_EXCLUDES
+        assert ".Spotlight-V100/**" in PUBLISH_EXCLUDES
+        assert ".TemporaryItems/**" in PUBLISH_EXCLUDES
+        assert ".Trashes/**" in PUBLISH_EXCLUDES
+        assert ".fseventsd/**" in PUBLISH_EXCLUDES
+        assert ".DS_Store" in PUBLISH_EXCLUDES
+        assert "._*" in PUBLISH_EXCLUDES
+        assert ".git/**" in PUBLISH_EXCLUDES
+
 
 class TestDryRun:
-    def test_publish_audio_dry_run_no_subprocess(self, tmp_path, capsys):
+    def test_publish_drive_dry_run_no_subprocess(self, tmp_path, capsys):
         drive_root = tmp_path / "drive"
         dj_music = drive_root / "DJ Music"
         dj_music.mkdir(parents=True)
@@ -55,7 +79,7 @@ class TestDryRun:
         config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
 
         with patch("library_sync.rclone.subprocess") as mock_subprocess:
-            commands = publish_audio(drive_root, config, dry_run=True)
+            commands = publish_drive(drive_root, config, dry_run=True)
             mock_subprocess.run.assert_not_called()
 
         captured = capsys.readouterr()
@@ -84,7 +108,7 @@ class TestDryRun:
             mock_subprocess.run.assert_not_called()
 
         assert cmd is not None
-        assert "Ready to Mix" in cmd or "projects" in cmd.lower()
+        assert "Music Production Agent" in cmd or "projects" in cmd.lower()
 
 
 class TestUnconfiguredB2:
@@ -95,7 +119,7 @@ class TestUnconfiguredB2:
 
         config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
 
-        publish_audio(drive_root, config, dry_run=True)
+        publish_drive(drive_root, config, dry_run=True)
         captured = capsys.readouterr()
 
         assert "no B2 configured" in captured.out.lower() or "planned" in captured.out.lower()

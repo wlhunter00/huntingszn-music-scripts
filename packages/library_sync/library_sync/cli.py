@@ -2,11 +2,14 @@
 
 Subcommands:
 - detect   — print drive path or "not mounted"
-- index    — scan + upsert sqlite
-- publish  — index (unless --skip-index) + rclone copy audio + sqlite
-- pull     — rclone sync projects/ → Ready to Mix/
+- index    — scan DJ Music + Platnium Notes, upsert to sqlite (catalog only)
+- publish  — index + rclone sync FULL drive to B2 bucket root
+- pull     — rclone sync projects/ → Ableton/Music Production Agent/
 - query    — search by camelot/bpm/text
 - status   — drive mounted?, sqlite path, track count, last updated, B2 env set?
+
+Note: Index catalogs only DJ Music + Platnium Notes for track queries.
+      Publish mirrors the ENTIRE drive to B2 (excluding system files).
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from library_sync.mount import find_drive
 from library_sync.query import format_tracks_table, query_tracks, tracks_to_json
 from library_sync.rclone import (
     RcloneConfig,
-    publish_audio,
+    publish_drive,
     publish_sqlite,
     publish_template,
     pull_projects,
@@ -133,10 +136,10 @@ def cmd_publish(args: argparse.Namespace) -> int:
         print("Error: drive not mounted", file=sys.stderr)
         return 2
 
-    config = RcloneConfig.from_env()
+    config = RcloneConfig.from_env(drive_root)
 
     if not args.skip_index:
-        print("=== Indexing ===")
+        print("=== Indexing (DJ Music + Platnium Notes only) ===")
         with LibraryDB(sqlite_path) as db:
             stats = index_files(
                 db,
@@ -147,13 +150,13 @@ def cmd_publish(args: argparse.Namespace) -> int:
         print(f"Indexed: {stats['added']} new, {stats['updated']} updated")
         print()
 
-    print("=== Publishing to B2 ===")
+    print("=== Publishing full drive to B2 ===")
     if not config.is_configured:
         print("B2 not configured (B2_REMOTE / B2_BUCKET not set)")
         print("Showing planned commands:")
         print()
 
-    publish_audio(drive_root, config, dry_run=args.dry_run)
+    publish_drive(drive_root, config, dry_run=args.dry_run)
     publish_sqlite(sqlite_path, config, dry_run=args.dry_run)
     publish_template(config, dry_run=args.dry_run)
 
@@ -168,9 +171,9 @@ def cmd_pull(args: argparse.Namespace) -> int:
         print("Error: drive not mounted", file=sys.stderr)
         return 2
 
-    config = RcloneConfig.from_env()
+    config = RcloneConfig.from_env(drive_root)
 
-    print("=== Pulling projects from B2 ===")
+    print("=== Pulling projects from B2 → Ableton/Music Production Agent ===")
     if not config.is_configured:
         print("B2 not configured (B2_REMOTE / B2_BUCKET not set)")
         print("Showing planned command:")
@@ -211,7 +214,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     """Show status of drive, database, and B2 config."""
     drive_root = find_drive()
     sqlite_path = _resolve_db_path(args.db)
-    config = RcloneConfig.from_env()
+    config = RcloneConfig.from_env(drive_root)
 
     print("=== Library Sync Status ===")
     print()
@@ -270,7 +273,9 @@ def main() -> None:
     sub_publish.add_argument("--root", type=Path, help="Override drive root path")
     sub_publish.set_defaults(func=cmd_publish)
 
-    sub_pull = subparsers.add_parser("pull", help="Pull projects from B2 to Ready to Mix")
+    sub_pull = subparsers.add_parser(
+        "pull", help="Pull projects from B2 to Ableton/Music Production Agent"
+    )
     sub_pull.add_argument("--dry-run", action="store_true", help="Show planned command only")
     sub_pull.add_argument("--root", type=Path, help="Override drive root path")
     sub_pull.set_defaults(func=cmd_pull)

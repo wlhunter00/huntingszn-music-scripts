@@ -116,10 +116,10 @@ Optional: `--profile-url`. Opens Chrome via Selenium.
 Index portable HDD library, sync to B2, query by Camelot key and BPM:
 
 ```bash
-# Check if drive is mounted
+# Check if drive is mounted (supports "Will Hunter Music" or "HuntingSzn" volumes)
 uv run --package library-sync library-sync detect
 
-# Index library to SQLite
+# Index library to SQLite (DJ Music + Platnium Notes only)
 uv run --package library-sync library-sync index --dry-run
 uv run --package library-sync library-sync index
 
@@ -127,21 +127,30 @@ uv run --package library-sync library-sync index
 uv run --package library-sync library-sync query --camelot 8A --bpm 140
 uv run --package library-sync library-sync query --q "halo" --json
 
-# Publish to B2 (requires B2_REMOTE + B2_BUCKET in .env)
+# Publish FULL drive to B2 (requires B2_REMOTE + B2_BUCKET in .env)
 uv run --package library-sync library-sync publish --dry-run
 
-# Pull projects from B2 to Ready to Mix
+# Pull projects from B2 to Ableton/Music Production Agent
 uv run --package library-sync library-sync pull --dry-run
 
 # Show status
 uv run --package library-sync library-sync status
 ```
 
+**Full-drive mirror vs catalog-only:**
+- **Index** catalogs only `DJ Music/` and `Platnium Notes/` — tracks searchable via `query`
+- **Publish** mirrors the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.)
+- Excludes system files: `$RECYCLE.BIN`, `.Spotlight-V100`, `.Trashes`, `.DS_Store`, `._*`, `.git`
+
 **Harmonic mixing rules:**
 - Camelot: matches ±1 on wheel plus relative major/minor (e.g., 8A matches 7A, 8A, 9A, 8B)
 - BPM: matches ±6 of target, plus ±6 of half-time (0.5×) and double-time (2×)
 
-**Indexed roots:** `DJ Music/` and `Platnium Notes/` only. Skips stem-output, Producing Sounds, Ableton, etc.
+**B2 layout:**
+- Bucket root mirrors drive folders (DJ Music, Ableton, Stem Splitting, Set Recording, etc.)
+- `metadata/library.sqlite` — track catalog for queries
+- `templates/mashup/` — from `Ableton/HuntingSzn Mashup Template Project`
+- `projects/<slug>/` — pulled to `Ableton/Music Production Agent/<slug>/`
 
 ### Tests & lint
 
