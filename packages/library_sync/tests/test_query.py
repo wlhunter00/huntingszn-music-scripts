@@ -98,10 +98,90 @@ class TestQueryTracks:
     def test_combined_camelot_and_bpm(self, db_with_tracks):
         results = query_tracks(db_with_tracks, camelot="8A", bpm=140)
         assert len(results) > 0
+        titles = {t.title for t in results}
+        assert "Song1" in titles  # 8A @ 140
+        assert "Song2" in titles  # 8B relative @ 140
+        assert "Song3" in titles  # 7A ±1 @ 135
+        assert "Song4" in titles  # 9A ±1 @ 145
+        assert "Half Time" in titles  # 8A @ 70 (0.5×)
+        assert "Double Time" in titles  # 8A @ 280 (2×)
+        assert "Halo" not in titles  # 5A @ 128
+        assert "No BPM" not in titles
+        assert "No Key" not in titles
         for t in results:
             assert t.camelot_key in {"8A", "8B", "7A", "9A"}
             if t.bpm:
                 assert bpm_matches(140, t.bpm)
+
+    def test_matches_camelot_key_column_not_key(self, db_with_tracks):
+        """Production rows have camelot_key populated and key almost empty.
+
+        A decoy in `key` must not match; only camelot_key ±1 / relative does.
+        """
+        db_with_tracks.upsert_track(
+            Track(
+                id="key-only",
+                relative_path="DJ Music/key-only.mp3",
+                filename="key-only.mp3",
+                artist="Decoy",
+                title="Key Only",
+                bpm=140.0,
+                key="8A",
+                camelot_key=None,
+                file_size=1000,
+                mtime=12345.0,
+                audio_object_key="DJ Music/key-only.mp3",
+                updated_at=utc_now_iso(),
+                source_root="DJ Music",
+            )
+        )
+        db_with_tracks.upsert_track(
+            Track(
+                id="camelot-only",
+                relative_path="DJ Music/camelot-only.mp3",
+                filename="camelot-only.mp3",
+                artist="Real",
+                title="Camelot Only",
+                bpm=140.0,
+                key=None,
+                camelot_key="8A",
+                file_size=1000,
+                mtime=12345.0,
+                audio_object_key="DJ Music/camelot-only.mp3",
+                updated_at=utc_now_iso(),
+                source_root="DJ Music",
+            )
+        )
+        db_with_tracks.upsert_track(
+            Track(
+                id="wrong-camelot",
+                relative_path="DJ Music/wrong-camelot.mp3",
+                filename="wrong-camelot.mp3",
+                artist="Wrong",
+                title="Musical Key Decoy",
+                bpm=140.0,
+                key="A minor",
+                camelot_key="5A",
+                file_size=1000,
+                mtime=12345.0,
+                audio_object_key="DJ Music/wrong-camelot.mp3",
+                updated_at=utc_now_iso(),
+                source_root="DJ Music",
+            )
+        )
+
+        sqls: list[str] = []
+        db_with_tracks.connect().set_trace_callback(sqls.append)
+        results = query_tracks(db_with_tracks, camelot="8A")
+        titles = {t.title for t in results}
+        assert "Camelot Only" in titles
+        assert "Key Only" not in titles
+        assert "Musical Key Decoy" not in titles
+
+        select_sql = "\n".join(s for s in sqls if s.lstrip().upper().startswith("SELECT"))
+        assert "camelot_key IN" in select_sql
+        assert " key IN" not in select_sql
+        assert "key =" not in select_sql.replace("camelot_key", "")
 
     def test_text_search(self, db_with_tracks):
         results = query_tracks(db_with_tracks, text_search="halo")

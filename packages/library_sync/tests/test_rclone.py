@@ -125,10 +125,14 @@ class TestDryRun:
             mock_subprocess.run.assert_not_called()
 
         assert cmd is not None
-        assert "Music Production Agent" in cmd or "projects" in cmd.lower()
-        assert " copy " in f" {cmd} " or cmd.startswith("rclone copy")
-        assert "--update" in cmd
-        assert "sync" not in cmd
+        tokens = shlex.split(cmd)
+        assert tokens[0] == "rclone"
+        assert tokens[1] == "copy"
+        assert "--update" in tokens
+        assert "sync" not in tokens
+        assert tokens[-2].endswith("/projects/")
+        assert tokens[-1] == str(drive_root / "Ableton" / "Music Production Agent")
+        assert "Ready to Mix" not in cmd
 
 
 class TestPublishMode:
@@ -203,6 +207,50 @@ class TestUnconfiguredB2:
         captured = capsys.readouterr()
 
         assert "no B2 configured" in captured.out.lower() or "planned" in captured.out.lower()
+
+
+class TestPullDestination:
+    def test_pull_is_copy_update_into_music_production_agent(self, tmp_path):
+        drive_root = tmp_path / "Will Hunter Music"
+        drive_root.mkdir()
+        config = RcloneConfig(remote="b2", bucket="library", mashup_template_path=None)
+        captured: list[list[str]] = []
+
+        class _Result:
+            returncode = 0
+
+        def fake_run(cmd, check=False):
+            captured.append(cmd)
+            return _Result()
+
+        with patch("library_sync.rclone.subprocess.run", side_effect=fake_run):
+            cmd = pull_projects(drive_root, config, dry_run=False)
+
+        assert captured
+        args = captured[0]
+        assert args[0] == "rclone"
+        assert args[1] == "copy"
+        assert "--update" in args
+        assert "sync" not in args
+        assert args[-2] == "b2:library/projects/"
+        dest = drive_root / "Ableton" / "Music Production Agent"
+        assert args[-1] == str(dest)
+        assert dest.is_dir()
+        assert "Ready to Mix" not in args[-1]
+        assert cmd is not None
+        assert "Ready to Mix" not in cmd
+
+    def test_pull_preserves_slug_subdir_mapping(self, tmp_path):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
+        cmd = pull_projects(drive_root, config, dry_run=True)
+        tokens = shlex.split(cmd)
+        # rclone copy remote:bucket/projects/ dest/ copies projects/<slug>/
+        # into Ableton/Music Production Agent/<slug>/.
+        assert tokens[-2].endswith("/projects/")
+        assert tokens[-1] == str(drive_root / "Ableton" / "Music Production Agent")
+        assert not tokens[-1].endswith("Ready to Mix")
 
 
 class TestPublishTemplate:

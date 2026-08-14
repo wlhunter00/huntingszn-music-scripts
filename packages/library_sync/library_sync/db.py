@@ -382,6 +382,7 @@ class LibraryDB:
         params: list[object] = [status]
 
         if camelot_keys:
+            # Match camelot_key only. Production `key` is almost empty and is not queried.
             placeholders = ",".join("?" for _ in camelot_keys)
             conditions.append(f"camelot_key IN ({placeholders})")
             params.extend(camelot_keys)

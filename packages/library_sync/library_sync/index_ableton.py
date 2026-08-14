@@ -64,6 +64,8 @@ def scan_ableton_projects(
         dirnames[:] = [d for d in dirnames if d.lower() != "backup"]
 
         for filename in filenames:
+            if filename.startswith("._"):
+                continue
             if not filename.lower().endswith(".als"):
                 continue
 

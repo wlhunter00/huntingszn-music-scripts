@@ -35,6 +35,8 @@ def _to_posix_relative(path: Path, root: Path) -> str:
 
 def _stem_kind(filename: str) -> str | None:
     """Return stem kind for a wav filename, or None if it is not a stem."""
+    if filename.startswith("._"):
+        return None
     lower = filename.lower()
     if not lower.endswith(".wav"):
         return None

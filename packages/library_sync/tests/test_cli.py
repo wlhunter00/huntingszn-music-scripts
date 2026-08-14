@@ -9,6 +9,7 @@ from library_sync.cli import (
     _resolve_db_path,
     cmd_detect,
     cmd_index,
+    cmd_pull,
     cmd_query,
     cmd_query_projects,
     cmd_query_stems,
@@ -80,6 +81,59 @@ def test_detect_unmounted_exits_2(monkeypatch):
 def test_index_unmounted_exits_2(monkeypatch):
     monkeypatch.setattr("library_sync.cli.find_drive", lambda explicit=None: None)
     assert cmd_index(Namespace(root=None, dry_run=False)) == 2
+
+
+def test_query_camelot_ignores_key_column(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("library_sync.cli.find_drive", lambda explicit=None: None)
+    db_path = tmp_path / "library.sqlite"
+    with LibraryDB(db_path) as db:
+        db.upsert_track(
+            Track(
+                id="decoy",
+                relative_path="DJ Music/decoy.mp3",
+                filename="decoy.mp3",
+                artist="Decoy",
+                title="Key Column Decoy",
+                bpm=140.0,
+                key="8A",
+                camelot_key=None,
+                file_size=1,
+                mtime=1.0,
+                updated_at=utc_now_iso(),
+                source_root="DJ Music",
+            )
+        )
+        db.upsert_track(
+            Track(
+                id="real",
+                relative_path="DJ Music/real.mp3",
+                filename="real.mp3",
+                artist="Real",
+                title="Camelot Hit",
+                bpm=140.0,
+                key=None,
+                camelot_key="8A",
+                file_size=1,
+                mtime=1.0,
+                updated_at=utc_now_iso(),
+                source_root="DJ Music",
+            )
+        )
+
+    rc = cmd_query(
+        Namespace(
+            db=db_path, camelot="8A", bpm=140.0, q=None, role=None, limit=200, json=True
+        )
+    )
+    assert rc == 0
+    payload = capsys.readouterr().out
+    assert "Camelot Hit" in payload
+    assert "Key Column Decoy" not in payload
+
+
+def test_pull_unmounted_exits_2(monkeypatch):
+    monkeypatch.setattr("library_sync.cli.find_drive", lambda explicit=None: None)
+    assert cmd_pull(Namespace(root=None, dry_run=True)) == 2
 
 
 def test_query_with_db_flag_without_drive(tmp_path, monkeypatch, capsys):

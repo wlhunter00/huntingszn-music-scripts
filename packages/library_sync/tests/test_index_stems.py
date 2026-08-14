@@ -83,6 +83,25 @@ class TestPrefixedStemNames:
         assert _stem_kind("As It Was_no_vocals.wav") == "no_vocals"
         assert _stem_kind("As It Was_vocals.wav") == "vocals"
         assert _stem_kind("As It Was_drums_2.wav") is None
+        assert _stem_kind("._vocals.wav") is None
+        assert _stem_kind("._As It Was_vocals.wav") is None
+
+    def test_skips_appledouble_stem_files(self, tmp_path: Path) -> None:
+        drive = tmp_path / "drive"
+        real = drive / "Stem Splitting" / "stem-output" / "htdemucs_ft" / "Real Song"
+        decoy = drive / "Stem Splitting" / "stem-output" / "htdemucs_ft" / "AppleDouble Only"
+        real.mkdir(parents=True)
+        decoy.mkdir(parents=True)
+        (real / "vocals.wav").write_bytes(b"v")
+        (real / "._vocals.wav").write_bytes(b"appledouble")
+        (decoy / "._vocals.wav").write_bytes(b"appledouble")
+
+        db_path = tmp_path / "library.sqlite"
+        with LibraryDB(db_path) as db:
+            index_stems(db, drive)
+            stems = db.query_stems()
+            assert {s.song_name for s in stems} == {"Real Song"}
+            assert stems[0].has_vocals == 1
 
 
 class TestIndexStems:
