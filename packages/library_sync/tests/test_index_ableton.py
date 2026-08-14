@@ -214,3 +214,46 @@ class TestQueryAbleton:
             projects = db.query_ableton(kind="project")
             assert len(projects) == 1
             assert projects[0].kind == "project"
+
+    def test_missing_ableton_dir_does_not_mark_missing(self, tmp_path: Path) -> None:
+        drive = tmp_path / "drive"
+        sessions = drive / "Ableton" / "Sessions"
+        sessions.mkdir(parents=True)
+        (sessions / "Keep.als").write_bytes(b"als")
+
+        db_path = tmp_path / "library.sqlite"
+        with LibraryDB(db_path) as db:
+            index_ableton(db, drive)
+            assert db.count_ableton(status="present") == 1
+
+            import shutil
+
+            shutil.rmtree(drive / "Ableton")
+            stats = index_ableton(db, drive)
+            assert stats["missing"] == 0
+            assert db.count_ableton(status="present") == 1
+
+    def test_restores_missing_project_with_same_size_mtime(self, tmp_path: Path) -> None:
+        import os
+
+        drive = tmp_path / "drive"
+        sessions = drive / "Ableton" / "Sessions"
+        sessions.mkdir(parents=True)
+        als = sessions / "Keep.als"
+        payload = b"als-bytes"
+        als.write_bytes(payload)
+        orig = als.stat()
+
+        db_path = tmp_path / "library.sqlite"
+        with LibraryDB(db_path) as db:
+            index_ableton(db, drive)
+            als.unlink()
+            index_ableton(db, drive)
+            assert db.count_ableton(status="missing") == 1
+
+            als.write_bytes(payload)
+            os.utime(als, (orig.st_atime, orig.st_mtime))
+            stats = index_ableton(db, drive)
+            assert stats["updated"] == 1
+            assert stats["skipped"] == 0
+            assert db.query_ableton()[0].status == "present"

@@ -166,41 +166,46 @@ def read_tags(path: Path) -> TrackTags:
     except Exception:
         return _apply_filename_fallback(path, tags)
 
-    id3 = None
-    if isinstance(audio, MP3) and audio.tags:
-        id3 = audio.tags
-    elif isinstance(getattr(audio, "tags", None), ID3):
-        id3 = audio.tags
+    try:
+        id3 = None
+        if isinstance(audio, MP3) and audio.tags:
+            id3 = audio.tags
+        elif isinstance(getattr(audio, "tags", None), ID3):
+            id3 = audio.tags
 
-    if id3 is not None:
-        _apply_id3(tags, id3)
+        if id3 is not None:
+            _apply_id3(tags, id3)
 
-    elif hasattr(audio, "tags") and audio.tags:
-        audio_tags = audio.tags
+        elif hasattr(audio, "tags") and audio.tags:
+            audio_tags = audio.tags
 
-        def get_tag(keys: list[str]) -> str | None:
-            for k in keys:
-                try:
-                    val = audio_tags.get(k)
-                    if val:
-                        return str(val[0]) if isinstance(val, list) else str(val)
-                except (ValueError, KeyError, TypeError):
-                    continue
-            return None
+            def get_tag(keys: list[str]) -> str | None:
+                for k in keys:
+                    try:
+                        val = audio_tags.get(k)
+                        if val:
+                            return str(val[0]) if isinstance(val, list) else str(val)
+                    except (ValueError, KeyError, TypeError):
+                        continue
+                return None
 
-        tags.artist = get_tag(["artist", "ARTIST", "\xa9ART", "TPE1"])
-        tags.title = get_tag(["title", "TITLE", "\xa9nam", "TIT2"])
-        tags.album = get_tag(["album", "ALBUM", "\xa9alb", "TALB"])
-        tags.genre = get_tag(["genre", "GENRE", "\xa9gen", "TCON"])
+            tags.artist = get_tag(["artist", "ARTIST", "\xa9ART", "TPE1"])
+            tags.title = get_tag(["title", "TITLE", "\xa9nam", "TIT2"])
+            tags.album = get_tag(["album", "ALBUM", "\xa9alb", "TALB"])
+            tags.genre = get_tag(["genre", "GENRE", "\xa9gen", "TCON"])
 
-        bpm_str = get_tag(["bpm", "BPM", "TBPM", "tmpo"])
-        tags.bpm = _parse_bpm(bpm_str)
+            bpm_str = get_tag(["bpm", "BPM", "TBPM", "tmpo"])
+            tags.bpm = _parse_bpm(bpm_str)
 
-        key_str = get_tag(["key", "KEY", "TKEY", "initialkey", "INITIALKEY"])
-        comment = get_tag(["comment", "COMMENT"])
-        tags.key, tags.camelot_key = _parse_key_and_camelot(key_str, comment)
+            key_str = get_tag(["key", "KEY", "TKEY", "initialkey", "INITIALKEY"])
+            comment = get_tag(["comment", "COMMENT"])
+            tags.key, tags.camelot_key = _parse_key_and_camelot(key_str, comment)
 
-    if hasattr(audio, "info") and audio.info:
-        tags.duration_sec = audio.info.length
+        if hasattr(audio, "info") and audio.info:
+            tags.duration_sec = audio.info.length
+    except Exception:
+        # Malformed tags/info (ValueError on FLAC pictures, etc.) must not
+        # abort the indexer; keep whatever we parsed and fall back to filename.
+        pass
 
     return _apply_filename_fallback(path, tags)

@@ -120,3 +120,36 @@ class TestWavAiffId3:
         assert tags.bpm == 128.0
         assert tags.camelot_key == "8A"
         assert tags.duration_sec == 12.0
+
+
+class TestMalformedTagAccess:
+    def test_tags_property_valueerror_does_not_crash(self, tmp_path: Path) -> None:
+        class BoomAudio:
+            @property
+            def tags(self):
+                raise ValueError("malformed FLAC tags")
+
+            @property
+            def info(self):
+                raise ValueError("bad stream info")
+
+        with patch("library_sync.tags.MutagenFile", return_value=BoomAudio()):
+            tags = read_tags(tmp_path / "Artist - Broken.flac")
+
+        assert tags.artist == "Artist"
+        assert tags.title == "Broken"
+
+    def test_info_length_valueerror_keeps_tags(self, tmp_path: Path) -> None:
+        class Audio:
+            tags = {"artist": ["Keep"], "title": ["Going"]}
+
+            @property
+            def info(self):
+                raise ValueError("bad stream info")
+
+        with patch("library_sync.tags.MutagenFile", return_value=Audio()):
+            with patch("library_sync.tags.MP3", new=type("FakeMP3", (), {})):
+                tags = read_tags(tmp_path / "Keep - Going.flac")
+
+        assert tags.artist == "Keep"
+        assert tags.title == "Going"

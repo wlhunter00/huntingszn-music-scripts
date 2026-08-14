@@ -11,7 +11,13 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 
-from library_sync.db import LibraryDB, Stem, compute_track_id, utc_now_iso
+from library_sync.db import (
+    LibraryDB,
+    Stem,
+    compute_track_id,
+    is_present_and_unchanged,
+    utc_now_iso,
+)
 
 # Check longer tokens first so no_vocals is not classified as vocals.
 STEM_KINDS = ("no_vocals", "vocals", "drums", "bass", "other")
@@ -149,12 +155,11 @@ def index_stems(
                 except OSError:
                     pass
 
-            existing_size, existing_mtime = db.get_stem_for_update_check(relative_path)
-            if (
-                existing_size is not None
-                and existing_size == total_size
-                and existing_mtime is not None
-                and existing_mtime == latest_mtime
+            existing_size, existing_mtime, existing_status = db.get_stem_for_update_check(
+                relative_path
+            )
+            if is_present_and_unchanged(
+                existing_size, existing_mtime, existing_status, total_size, latest_mtime
             ):
                 stats["skipped"] += 1
                 if progress_callback:

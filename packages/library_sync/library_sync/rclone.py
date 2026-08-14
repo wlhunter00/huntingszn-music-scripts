@@ -31,6 +31,7 @@ from pathlib import Path
 
 PUBLISH_EXCLUDES = [
     "$RECYCLE.BIN/**",
+    "$Recycle.Bin/**",
     "System Volume Information/**",
     ".Spotlight-V100/**",
     ".TemporaryItems/**",
@@ -136,7 +137,7 @@ def _run_rclone(args: list[str], *, dry_run: bool = False) -> subprocess.Complet
 
 def _get_exclude_args() -> list[str]:
     """Get rclone exclude arguments for publish operations."""
-    args = []
+    args = ["--ignore-case"]
     for pattern in PUBLISH_EXCLUDES:
         args.extend(["--exclude", pattern])
     return args
@@ -229,6 +230,13 @@ def publish_template(
         "copy",
         str(config.mashup_template_path),
         _bucket_target(config, "/templates/mashup/"),
+        "--ignore-case",
+        "--exclude",
+        "**/Backup/**",
+        "--exclude",
+        ".DS_Store",
+        "--exclude",
+        "._*",
     ]
     return _print_or_run(args, config, dry_run=dry_run)
 

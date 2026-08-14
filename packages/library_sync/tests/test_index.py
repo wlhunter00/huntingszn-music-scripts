@@ -34,6 +34,12 @@ class TestSkipPatterns:
         assert _should_skip_dir("Ableton")
         assert _should_skip_dir("Instruments")
         assert _should_skip_dir("serum presets")
+        assert _should_skip_dir("serum")
+
+    def test_skip_dirs_case_insensitive(self):
+        assert _should_skip_dir("ABLETON")
+        assert _should_skip_dir("Stem-Output")
+        assert _should_skip_dir("Serum Presets")
 
     def test_index_dirs_not_skipped(self):
         assert not _should_skip_dir("DJ Music")
@@ -261,3 +267,76 @@ class TestIndexFiles:
             index_files(db, drive_root, [dj_music], dry_run=True)
 
         assert not db_path.exists()
+
+
+class TestCatalogIsolation:
+    def test_ableton_and_stems_are_not_library_tracks(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive = tmp_path / "drive"
+        dj_music = drive / "DJ Music"
+        platinum = drive / "Platnium Notes"
+        ableton = drive / "Ableton" / "Sessions"
+        stems = drive / "Stem Splitting" / "stem-output" / "htdemucs_ft" / "As It Was"
+        nested_ableton = dj_music / "Ableton"
+        nested_ableton.mkdir(parents=True)
+        platinum.mkdir(parents=True)
+        ableton.mkdir(parents=True)
+        stems.mkdir(parents=True)
+
+        (dj_music / "keep.mp3").write_bytes(b"dj")
+        (platinum / "note.wav").write_bytes(b"pn")
+        (nested_ableton / "from-ableton-dir.mp3").write_bytes(b"skip")
+        (ableton / "Project.als").write_bytes(b"als")
+        (ableton / "bounce.wav").write_bytes(b"ableton-audio")
+        (stems / "vocals.wav").write_bytes(b"stem")
+
+        from library_sync.index_ableton import index_ableton
+        from library_sync.index_stems import index_stems
+
+        with LibraryDB(db_path) as db:
+            index_files(db, drive, [dj_music, platinum])
+            index_stems(db, drive)
+            index_ableton(db, drive)
+
+            track_paths = {t.relative_path for t in db.query_tracks()}
+            assert track_paths == {"DJ Music/keep.mp3", "Platnium Notes/note.wav"}
+            assert all(not p.startswith("Ableton/") for p in track_paths)
+            assert all("stem-output" not in p for p in track_paths)
+            assert all(not p.endswith(".als") for p in track_paths)
+
+            stems_found = db.query_stems()
+            assert len(stems_found) == 1
+            assert stems_found[0].song_name == "As It Was"
+            assert stems_found[0].relative_path.startswith("Stem Splitting/")
+
+            projects = db.query_ableton()
+            assert len(projects) == 1
+            assert projects[0].relative_path.endswith(".als")
+
+    def test_restores_missing_track_with_same_size_mtime(self, tmp_path):
+        db_path = tmp_path / "test.sqlite"
+        drive = tmp_path / "drive"
+        dj_music = drive / "DJ Music"
+        dj_music.mkdir(parents=True)
+        song = dj_music / "song.mp3"
+        payload = b"same-bytes"
+        song.write_bytes(payload)
+        orig_stat = song.stat()
+
+        with LibraryDB(db_path) as db:
+            index_files(db, drive, [dj_music])
+            assert db.count_tracks(status="present") == 1
+
+            song.unlink()
+            stats_missing = index_files(db, drive, [dj_music])
+            assert stats_missing["missing"] == 1
+            assert db.get_track_by_path("DJ Music/song.mp3").status == "missing"
+
+            song.write_bytes(payload)
+            os.utime(song, (orig_stat.st_atime, orig_stat.st_mtime))
+            stats_restore = index_files(db, drive, [dj_music])
+            assert stats_restore["updated"] == 1
+            assert stats_restore["skipped"] == 0
+            restored = db.get_track_by_path("DJ Music/song.mp3")
+            assert restored is not None
+            assert restored.status == "present"

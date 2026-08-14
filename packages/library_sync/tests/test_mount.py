@@ -4,9 +4,11 @@ import os
 from unittest.mock import patch
 
 from library_sync.mount import (
+    _MACOS_VOLUME_PATHS,
     VOLUME_NAME,
     VOLUME_NAME_ALT,
     VOLUME_NAMES,
+    _wmic_drive_letter_for_music_volume,
     drive_is_mounted,
     find_drive,
 )
@@ -85,6 +87,27 @@ def test_volume_name_alt():
 
 def test_volume_names_tuple():
     assert VOLUME_NAMES == ("Will Hunter Music", "HuntingSzn")
+
+
+def test_macos_volume_paths_include_alias():
+    assert {str(path) for path in _MACOS_VOLUME_PATHS} == {
+        "/Volumes/Will Hunter Music",
+        "/Volumes/HuntingSzn",
+    }
+
+
+class TestWmicVolumeParse:
+    def test_will_hunter_music(self):
+        assert _wmic_drive_letter_for_music_volume("D:         Will Hunter Music") == "D:"
+
+    def test_huntingszn_alias(self):
+        assert _wmic_drive_letter_for_music_volume("E:          HuntingSzn") == "E:"
+
+    def test_other_volume(self):
+        assert _wmic_drive_letter_for_music_volume("C:         Windows") is None
+
+    def test_header_line(self):
+        assert _wmic_drive_letter_for_music_volume("Name  VolumeName") is None
 
 
 class TestMacOSVolumeDetection:

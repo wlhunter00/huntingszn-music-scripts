@@ -8,7 +8,13 @@ from __future__ import annotations
 import os
 from pathlib import Path, PurePosixPath
 
-from library_sync.db import AbletonProject, LibraryDB, compute_track_id, utc_now_iso
+from library_sync.db import (
+    AbletonProject,
+    LibraryDB,
+    compute_track_id,
+    is_present_and_unchanged,
+    utc_now_iso,
+)
 
 
 def _to_posix_relative(path: Path, root: Path) -> str:
@@ -116,12 +122,11 @@ def index_ableton(
             except OSError:
                 continue
 
-            existing_size, existing_mtime = db.get_ableton_for_update_check(relative_path)
-            if (
-                existing_size is not None
-                and existing_size == file_size
-                and existing_mtime is not None
-                and existing_mtime == mtime
+            existing_size, existing_mtime, existing_status = db.get_ableton_for_update_check(
+                relative_path
+            )
+            if is_present_and_unchanged(
+                existing_size, existing_mtime, existing_status, file_size, mtime
             ):
                 stats["skipped"] += 1
                 if progress_callback:

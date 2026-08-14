@@ -1,7 +1,13 @@
 """Tests for SQLite database operations."""
 
 
-from library_sync.db import LibraryDB, Track, compute_track_id, utc_now_iso
+from library_sync.db import (
+    LibraryDB,
+    Track,
+    compute_track_id,
+    is_present_and_unchanged,
+    utc_now_iso,
+)
 
 
 def test_compute_track_id():
@@ -13,6 +19,13 @@ def test_compute_track_id():
     assert id1 == id2
     assert id1 != id3
     assert id1 != id4
+
+
+def test_is_present_and_unchanged():
+    assert is_present_and_unchanged(100, 1.0, "present", 100, 1.0)
+    assert not is_present_and_unchanged(100, 1.0, "missing", 100, 1.0)
+    assert not is_present_and_unchanged(None, None, None, 100, 1.0)
+    assert not is_present_and_unchanged(100, 1.0, "present", 101, 1.0)
 
 
 def test_utc_now_iso():
@@ -59,13 +72,15 @@ class TestLibraryDB:
             )
             db.upsert_track(track)
 
-            size, mtime = db.get_track_for_update_check("DJ Music/test.mp3")
+            size, mtime, status = db.get_track_for_update_check("DJ Music/test.mp3")
             assert size == 1000
             assert mtime == 12345.0
+            assert status == "present"
 
-            size, mtime = db.get_track_for_update_check("nonexistent.mp3")
+            size, mtime, status = db.get_track_for_update_check("nonexistent.mp3")
             assert size is None
             assert mtime is None
+            assert status is None
 
     def test_mark_missing(self, tmp_path):
         db_path = tmp_path / "test.sqlite"

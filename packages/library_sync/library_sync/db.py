@@ -144,6 +144,25 @@ def compute_track_id(relative_path: str, file_size: int) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+def is_present_and_unchanged(
+    existing_size: int | None,
+    existing_mtime: float | None,
+    existing_status: str | None,
+    file_size: int,
+    mtime: float,
+) -> bool:
+    """True when a present row matches size and mtime (safe to skip re-read).
+
+    Missing rows must not skip: restoring a file with the same size/mtime
+    (rclone, rsync -a, USB remount) has to mark it present again.
+    """
+    return (
+        existing_status == "present"
+        and existing_size == file_size
+        and existing_mtime == mtime
+    )
+
+
 def utc_now_iso() -> str:
     """Return current UTC time in ISO format."""
     return datetime.now(UTC).isoformat()
@@ -233,20 +252,20 @@ class LibraryDB:
 
     def get_track_for_update_check(
         self, relative_path: str
-    ) -> tuple[int | None, float | None]:
-        """Get file_size and mtime for incremental update check.
+    ) -> tuple[int | None, float | None, str | None]:
+        """Get file_size, mtime, and status for incremental update check.
 
-        Returns (file_size, mtime) or (None, None) if not found.
+        Returns (file_size, mtime, status) or (None, None, None) if not found.
         """
         conn = self.connect()
         cursor = conn.execute(
-            "SELECT file_size, mtime FROM tracks WHERE relative_path = ?",
+            "SELECT file_size, mtime, status FROM tracks WHERE relative_path = ?",
             (relative_path,),
         )
         row = cursor.fetchone()
         if row is None:
-            return None, None
-        return row["file_size"], row["mtime"]
+            return None, None, None
+        return row["file_size"], row["mtime"], row["status"]
 
     def upsert_track(self, track: Track) -> None:
         """Insert or update a track record. Caller commits (transaction or close)."""
@@ -453,17 +472,17 @@ class LibraryDB:
 
     def get_stem_for_update_check(
         self, relative_path: str
-    ) -> tuple[int | None, float | None]:
-        """Get file_size and mtime for incremental stem update check."""
+    ) -> tuple[int | None, float | None, str | None]:
+        """Get file_size, mtime, and status for incremental stem update check."""
         conn = self.connect()
         cursor = conn.execute(
-            "SELECT file_size, mtime FROM stems WHERE relative_path = ?",
+            "SELECT file_size, mtime, status FROM stems WHERE relative_path = ?",
             (relative_path,),
         )
         row = cursor.fetchone()
         if row is None:
-            return None, None
-        return row["file_size"], row["mtime"]
+            return None, None, None
+        return row["file_size"], row["mtime"], row["status"]
 
     def upsert_stem(self, stem: Stem) -> None:
         """Insert or update a stem record. Caller commits."""
@@ -581,17 +600,17 @@ class LibraryDB:
 
     def get_ableton_for_update_check(
         self, relative_path: str
-    ) -> tuple[int | None, float | None]:
-        """Get file_size and mtime for incremental Ableton update check."""
+    ) -> tuple[int | None, float | None, str | None]:
+        """Get file_size, mtime, and status for incremental Ableton update check."""
         conn = self.connect()
         cursor = conn.execute(
-            "SELECT file_size, mtime FROM ableton_projects WHERE relative_path = ?",
+            "SELECT file_size, mtime, status FROM ableton_projects WHERE relative_path = ?",
             (relative_path,),
         )
         row = cursor.fetchone()
         if row is None:
-            return None, None
-        return row["file_size"], row["mtime"]
+            return None, None, None
+        return row["file_size"], row["mtime"], row["status"]
 
     def upsert_ableton(self, project: AbletonProject) -> None:
         """Insert or update an Ableton project record. Caller commits."""

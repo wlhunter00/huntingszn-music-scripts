@@ -48,6 +48,7 @@ class TestQueryTracks:
             ("8A", 70, "Artist6", "Half Time"),
             ("8A", 280, "Artist7", "Double Time"),
             ("8A", None, "Artist8", "No BPM"),
+            (None, 140, "Artist9", "No Key"),
         ]
 
         for i, (camelot, bpm, artist, title) in enumerate(tracks):
@@ -78,6 +79,11 @@ class TestQueryTracks:
         assert "7A" in camelot_keys
         assert "9A" in camelot_keys
         assert "5A" not in camelot_keys
+        titles = {t.title for t in results}
+        assert "No Key" not in titles
+
+    def test_invalid_camelot_returns_empty(self, db_with_tracks):
+        assert query_tracks(db_with_tracks, camelot="not-a-key") == []
 
     def test_bpm_with_half_double(self, db_with_tracks):
         results = query_tracks(db_with_tracks, bpm=140)

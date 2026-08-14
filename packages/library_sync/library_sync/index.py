@@ -5,7 +5,7 @@ Catalog roots (only these are indexed):
 - {DRIVE}/Platnium Notes/
 
 Skipped:
-- Producing Sounds, Ableton, Instruments, serum presets
+- Producing Sounds, Ableton, Instruments, serum / serum presets
 - Stem Splitting/stem-output (do not catalog as library tracks)
 - macOS AppleDouble files (._*) and .DS_Store
 """
@@ -16,12 +16,16 @@ import os
 import re
 from pathlib import Path, PurePosixPath
 
-from library_sync.db import LibraryDB, Track, compute_track_id, utc_now_iso
-from library_sync.tags import read_tags
+from library_sync.db import (
+    LibraryDB,
+    Track,
+    compute_track_id,
+    is_present_and_unchanged,
+    utc_now_iso,
+)
+from library_sync.tags import TrackTags, parse_filename_artist_title, read_tags
 
 AUDIO_EXTENSIONS = frozenset({".mp3", ".wav", ".aiff", ".aif", ".flac", ".m4a"})
-
-SKIP_PATTERNS = frozenset({"._", ".DS_Store"})
 
 SKIP_DIRS = frozenset(
     {
@@ -30,8 +34,10 @@ SKIP_DIRS = frozenset(
         "Ableton",
         "Instruments",
         "serum presets",
+        "serum",
     }
 )
+_SKIP_DIRS_LOWER = frozenset(name.lower() for name in SKIP_DIRS)
 
 _NO_VOCAL_ROLE = re.compile(
     r"\b(no[\s_\-]?vocals?|instrumental|inst)\b", re.IGNORECASE
@@ -50,8 +56,8 @@ def _should_skip_file(name: str) -> bool:
 
 
 def _should_skip_dir(name: str) -> bool:
-    """Check if directory should be skipped."""
-    return name in SKIP_DIRS
+    """Check if directory should be skipped (case-insensitive)."""
+    return name.lower() in _SKIP_DIRS_LOWER
 
 
 def _is_audio_file(path: Path) -> bool:
@@ -189,19 +195,24 @@ def index_files(
                 except OSError:
                     continue
 
-                existing_size, existing_mtime = db.get_track_for_update_check(relative_path)
-                if (
-                    existing_size is not None
-                    and existing_size == file_size
-                    and existing_mtime is not None
-                    and existing_mtime == mtime
+                existing_size, existing_mtime, existing_status = db.get_track_for_update_check(
+                    relative_path
+                )
+                if is_present_and_unchanged(
+                    existing_size, existing_mtime, existing_status, file_size, mtime
                 ):
                     stats["skipped"] += 1
                     if progress_callback:
                         progress_callback("skip", relative_path, None)
                     continue
 
-                tags = read_tags(filepath)
+                try:
+                    tags = read_tags(filepath)
+                except Exception:
+                    tags = TrackTags()
+                    artist, title = parse_filename_artist_title(filepath.name)
+                    tags.artist = artist
+                    tags.title = title
 
                 track = Track(
                     id=compute_track_id(relative_path, file_size),

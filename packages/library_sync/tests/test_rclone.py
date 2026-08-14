@@ -64,6 +64,7 @@ class TestRcloneConfig:
 class TestPublishExcludes:
     def test_excludes_system_files(self):
         assert "$RECYCLE.BIN/**" in PUBLISH_EXCLUDES
+        assert "$Recycle.Bin/**" in PUBLISH_EXCLUDES
         assert "System Volume Information/**" in PUBLISH_EXCLUDES
         assert ".Spotlight-V100/**" in PUBLISH_EXCLUDES
         assert ".TemporaryItems/**" in PUBLISH_EXCLUDES
@@ -152,6 +153,8 @@ class TestPublishMode:
         assert "/projects/**" in tokens
         assert "/metadata/**" in tokens
         assert "/templates/**" in tokens
+        assert "--ignore-case" in tokens
+        assert "$Recycle.Bin/**" in tokens
 
     def test_planned_command_quotes_spaces(self, tmp_path):
         drive_root = tmp_path / "Will Hunter Music"
@@ -232,6 +235,8 @@ class TestPublishTemplate:
 
         assert result is not None
         assert "templates/mashup" in result
+        assert "**/Backup/**" in result
+        assert "--ignore-case" in result
 
 
 class TestCliLimit:

@@ -20,6 +20,18 @@ VOLUME_NAMES = (VOLUME_NAME, VOLUME_NAME_ALT)
 _MACOS_VOLUME_PATHS = [Path("/Volumes") / name for name in VOLUME_NAMES]
 
 
+def _wmic_drive_letter_for_music_volume(line: str) -> str | None:
+    """Return drive letter (e.g. ``D:``) if a WMIC logicaldisk line is a music volume."""
+    parts = line.strip().split()
+    if len(parts) < 2:
+        return None
+    drive_letter = parts[0]
+    volume_name = " ".join(parts[1:])
+    if volume_name in VOLUME_NAMES:
+        return drive_letter
+    return None
+
+
 def _find_windows_volume() -> Path | None:
     """Find a Windows drive with the expected volume label."""
     try:
@@ -32,12 +44,9 @@ def _find_windows_volume() -> Path | None:
         if result.returncode != 0:
             return None
         for line in result.stdout.strip().splitlines()[1:]:
-            parts = line.strip().split()
-            if len(parts) >= 2:
-                drive_letter = parts[0]
-                volume_name = " ".join(parts[1:])
-                if volume_name in VOLUME_NAMES:
-                    return Path(drive_letter + os.sep)
+            drive_letter = _wmic_drive_letter_for_music_volume(line)
+            if drive_letter:
+                return Path(drive_letter + os.sep)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     return None

@@ -207,3 +207,49 @@ class TestQueryStems:
             results = db.query_stems(model="htdemucs_ft")
             assert len(results) == 1
             assert results[0].model == "htdemucs_ft"
+
+    def test_missing_stem_output_does_not_mark_missing(self, tmp_path: Path) -> None:
+        drive = tmp_path / "drive"
+        song_dir = drive / "Stem Splitting" / "stem-output" / "htdemucs" / "Keep"
+        song_dir.mkdir(parents=True)
+        (song_dir / "vocals.wav").write_bytes(b"v")
+
+        db_path = tmp_path / "library.sqlite"
+        with LibraryDB(db_path) as db:
+            index_stems(db, drive)
+            assert db.count_stems(status="present") == 1
+
+            import shutil
+
+            shutil.rmtree(drive / "Stem Splitting")
+            stats = index_stems(db, drive)
+            assert stats["missing"] == 0
+            assert db.count_stems(status="present") == 1
+
+    def test_restores_missing_stem_with_same_size_mtime(self, tmp_path: Path) -> None:
+        import os
+
+        drive = tmp_path / "drive"
+        song_dir = drive / "Stem Splitting" / "stem-output" / "htdemucs" / "Keep"
+        song_dir.mkdir(parents=True)
+        vocals = song_dir / "vocals.wav"
+        payload = b"v" * 40
+        vocals.write_bytes(payload)
+        orig = vocals.stat()
+
+        db_path = tmp_path / "library.sqlite"
+        with LibraryDB(db_path) as db:
+            index_stems(db, drive)
+            import shutil
+
+            shutil.rmtree(song_dir)
+            index_stems(db, drive)
+            assert db.count_stems(status="missing") == 1
+
+            song_dir.mkdir(parents=True)
+            vocals.write_bytes(payload)
+            os.utime(vocals, (orig.st_atime, orig.st_mtime))
+            stats = index_stems(db, drive)
+            assert stats["updated"] == 1
+            assert stats["skipped"] == 0
+            assert db.query_stems()[0].status == "present"

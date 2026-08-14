@@ -174,6 +174,9 @@ uv run --package mashup-pop-finder pytest packages/mashup_pop_finder/tests
 uv sync --package library-tools --extra dev
 uv run --package library-tools pytest packages/library_tools/tests
 
+uv sync --package library-sync --extra dev
+uv run --package library-sync pytest packages/library_sync/tests
+
 uv run ruff check packages config
 ```
 
