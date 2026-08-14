@@ -248,7 +248,7 @@ def mashup(
             --tracks "Olivia Rodrigo:The Cure" \\
             --tracks "Illenium:Pray"
     """
-    from huntingszn_cover.fetch import FetchError
+    from huntingszn_cover.fetch import FetchedImage, FetchError
     from huntingszn_cover.mashup import MashupError, run_mashup
     from huntingszn_cover.transform import TransformError
 
@@ -259,6 +259,28 @@ def mashup(
             volume_path = default_volume
 
     override_images = list(image) if image else None
+
+    def _cli_picker(track: str, images: list[FetchedImage]) -> FetchedImage | None:
+        if not images:
+            return None
+        if len(images) == 1:
+            console.print(
+                f"Only one cover for [cyan]{track}[/cyan], using {images[0].local_path.name}"
+            )
+            return images[0]
+
+        console.print(f"\n[bold]Select cover for {track}:[/bold]")
+        for i, img in enumerate(images):
+            console.print(f"  [{i}] {img.local_path} ({img.width}x{img.height})")
+
+        if not sys.stdin.isatty():
+            raise MashupError(
+                "Cannot use --pick without an interactive terminal. "
+                "Re-run with --image using two of the candidate paths listed above."
+            )
+
+        idx = click.prompt("Index", type=click.IntRange(0, len(images) - 1))
+        return images[idx]
 
     try:
         console.print(f"[bold]Creating mashup: {mashup}[/bold]")
@@ -280,6 +302,7 @@ def mashup(
             target_covers=count,
             volume_path=volume_path,
             override_images=override_images,
+            picker=_cli_picker if pick and not override_images else None,
         )
 
         console.print("\n[bold green]Mashup complete![/bold green]")

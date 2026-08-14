@@ -32,10 +32,11 @@ class TestValidatePromptContent:
         with pytest.raises(ValueError, match="FLIP"):
             validate_prompt_content(prompt)
 
-    def test_no_wordmark_passes(self) -> None:
-        """Prompt without any wordmark should pass (just not FLIP)."""
+    def test_no_wordmark_raises(self) -> None:
+        """Prompt without HUNTINGSZN EDIT wordmark should fail validation."""
         prompt = "Transform this image with a teal aesthetic."
-        validate_prompt_content(prompt)
+        with pytest.raises(ValueError, match="HUNTINGSZN EDIT"):
+            validate_prompt_content(prompt)
 
 
 class TestLoadPrompt:

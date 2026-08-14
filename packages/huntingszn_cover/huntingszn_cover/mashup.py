@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from io import BytesIO
@@ -18,9 +19,12 @@ from huntingszn_cover.prompts import get_prompt
 from huntingszn_cover.transform import (
     OUTPUT_SIZE,
     PREFERRED_MODEL,
+    prepare_openai_image,
     transform_image,
 )
 from huntingszn_cover.utils import parse_track, slugify, track_slug
+
+CoverPicker = Callable[[str, list[FetchedImage]], FetchedImage | None]
 
 
 @dataclass
@@ -119,24 +123,14 @@ def create_openai_composite(
     model_to_use = model or PREFERRED_MODEL
     client = OpenAI()
 
-    def prepare_image(path: Path) -> bytes:
-        img = Image.open(path)
-        if img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
-        if img.width > 1024 or img.height > 1024:
-            ratio = min(1024 / img.width, 1024 / img.height)
-            new_size = (int(img.width * ratio), int(img.height * ratio))
-            img = img.resize(new_size, Image.Resampling.LANCZOS)
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-
     try:
-        image_bytes_list = [prepare_image(p) for p in images[:2]]
+        image_files = [
+            prepare_openai_image(path, filename=f"image_{i}.png") for i, path in enumerate(images[:2])
+        ]
 
         response = client.images.edit(
             model=model_to_use,
-            image=image_bytes_list,
+            image=image_files,
             prompt=prompt,
             n=1,
             size=OUTPUT_SIZE,
@@ -171,6 +165,13 @@ def create_openai_composite(
         return output_path, "pillow-split"
 
 
+def _format_candidate_paths(all_candidates: dict[str, list[str]]) -> str:
+    return "\n".join(
+        f"  {track}: {paths if paths else '(no images fetched)'}"
+        for track, paths in all_candidates.items()
+    )
+
+
 def run_mashup(
     mashup_name: str,
     tracks: list[str],
@@ -180,6 +181,7 @@ def run_mashup(
     target_covers: int = 5,
     volume_path: Path | None = None,
     override_images: list[Path] | None = None,
+    picker: CoverPicker | None = None,
 ) -> MashupManifest:
     """Run the full mashup pipeline: fetch, composite, transform.
 
@@ -195,6 +197,7 @@ def run_mashup(
         volume_path: Optional path to copy results (e.g., /Volumes/HuntingSzn/Thumbnails/Releases).
         override_images: Optional list of local image paths to use instead of fetching.
                         Rare override only - use when fetch returns unusable results.
+        picker: Optional callback used when auto=False (--pick) to choose a cover per track.
 
     Returns:
         MashupManifest documenting all created files.
@@ -215,6 +218,7 @@ def run_mashup(
     )
 
     best_covers: list[Path] = []
+    track_images: dict[str, list[FetchedImage]] = {}
 
     if override_images:
         best_covers = override_images
@@ -222,7 +226,6 @@ def run_mashup(
     else:
         import httpx
 
-        track_images: dict[str, list[FetchedImage]] = {}
         failed_tracks: list[str] = []
         all_candidates: dict[str, list[str]] = {}
 
@@ -239,23 +242,31 @@ def run_mashup(
                 manifest.originals[track] = [str(f.local_path) for f in fetched]
                 all_candidates[track] = [str(f.local_path) for f in fetched]
 
-                if auto:
-                    best = _select_best_cover(fetched)
-                    if best:
-                        best_covers.append(best.local_path)
-                    else:
-                        failed_tracks.append(track)
-
-        if auto and len(best_covers) < 2:
-            candidate_info = "\n".join(
-                f"  {track}: {paths if paths else '(no images fetched)'}"
-                for track, paths in all_candidates.items()
+        if not auto and picker is None:
+            raise MashupError(
+                "Manual cover selection (--pick) requires an interactive terminal "
+                "or --image override.\n"
+                f"Candidate images fetched:\n{_format_candidate_paths(all_candidates)}\n\n"
+                "Re-run with --image using two of the paths above."
             )
+
+        for track in tracks:
+            fetched = track_images.get(track, [])
+            if auto:
+                best = _select_best_cover(fetched)
+            else:
+                best = picker(track, fetched) if picker is not None else None
+            if best:
+                best_covers.append(best.local_path)
+            else:
+                failed_tracks.append(track)
+
+        if len(best_covers) < 2:
             raise MashupError(
                 f"Fetch did not return usable square covers for all tracks.\n"
                 f"Need at least 2 covers for composite, got {len(best_covers)}.\n"
                 f"Failed tracks: {failed_tracks}\n"
-                f"Candidate images fetched:\n{candidate_info}\n\n"
+                f"Candidate images fetched:\n{_format_candidate_paths(all_candidates)}\n\n"
                 f"Options:\n"
                 f"  1. Re-run with different track names\n"
                 f"  2. Use --image to provide local images as override"

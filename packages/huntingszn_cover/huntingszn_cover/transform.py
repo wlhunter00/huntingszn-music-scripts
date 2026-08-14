@@ -13,6 +13,11 @@ from PIL import Image
 PREFERRED_MODEL = "gpt-image-1.5"
 FALLBACK_MODEL = "gpt-image-1"
 OUTPUT_SIZE = "1024x1024"
+PNG_CONTENT_TYPE = "image/png"
+
+# OpenAI FileTypes: (filename, bytes, content_type). Raw bytes are sent as
+# application/octet-stream with filename="upload", which images.edit rejects.
+OpenAIPngFile = tuple[str, bytes, str]
 
 
 @dataclass
@@ -44,11 +49,19 @@ def _get_openai_key() -> str:
     return key
 
 
-def _prepare_image_for_api(image_path: Path) -> tuple[bytes, str]:
-    """Prepare image for OpenAI API: convert to PNG, resize if needed.
+def openai_png_file(image_bytes: bytes, filename: str = "image.png") -> OpenAIPngFile:
+    """Build an OpenAI/httpx file tuple with an explicit PNG content type.
+
+    Passing raw bytes makes the SDK send ``application/octet-stream``.
+    """
+    return (filename, image_bytes, PNG_CONTENT_TYPE)
+
+
+def prepare_openai_image(image_path: Path, *, filename: str = "image.png") -> OpenAIPngFile:
+    """Prepare image for OpenAI images.edit: convert to PNG, resize if needed.
 
     Returns:
-        Tuple of (image bytes, filename).
+        ``(filename, png_bytes, "image/png")`` suitable for ``client.images.edit``.
     """
     img = Image.open(image_path)
 
@@ -63,14 +76,7 @@ def _prepare_image_for_api(image_path: Path) -> tuple[bytes, str]:
 
     buffer = BytesIO()
     img.save(buffer, format="PNG")
-    return buffer.getvalue(), "image.png"
-
-
-def _image_to_base64_data_url(image_path: Path) -> str:
-    """Convert image to base64 data URL for API."""
-    img_bytes, _ = _prepare_image_for_api(image_path)
-    b64 = base64.standard_b64encode(img_bytes).decode("utf-8")
-    return f"data:image/png;base64,{b64}"
+    return openai_png_file(buffer.getvalue(), filename)
 
 
 def transform_image(
@@ -105,12 +111,12 @@ def transform_image(
 
     model_to_use = model or PREFERRED_MODEL
 
-    img_bytes, _filename = _prepare_image_for_api(image_path)
+    image_file = prepare_openai_image(image_path)
 
     try:
         response = client.images.edit(
             model=model_to_use,
-            image=img_bytes,
+            image=image_file,
             prompt=prompt,
             n=1,
             size=OUTPUT_SIZE,
@@ -120,7 +126,7 @@ def transform_image(
             try:
                 response = client.images.edit(
                     model=FALLBACK_MODEL,
-                    image=img_bytes,
+                    image=image_file,
                     prompt=prompt,
                     n=1,
                     size=OUTPUT_SIZE,

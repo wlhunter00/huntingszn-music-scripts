@@ -76,16 +76,20 @@ def load_prompt(prompt_type: PromptType) -> str:
 
 
 def validate_prompt_content(prompt: str) -> None:
-    """Validate that prompt contains expected EDIT wordmark, not FLIP.
+    """Validate that prompt contains HUNTINGSZN EDIT wordmark, not FLIP.
 
     Raises:
-        ValueError: If prompt contains FLIP instead of EDIT wordmark.
+        ValueError: If prompt contains FLIP instead of EDIT, or is missing EDIT.
     """
     prompt_upper = prompt.upper()
     if "HUNTINGSZN FLIP" in prompt_upper:
         raise ValueError(
             "Prompt contains 'HUNTINGSZN FLIP' but should contain 'HUNTINGSZN EDIT'. "
             "Please update the prompt file."
+        )
+    if "HUNTINGSZN EDIT" not in prompt_upper:
+        raise ValueError(
+            "Prompt must contain the 'HUNTINGSZN EDIT' wordmark. Please update the prompt file."
         )
 
 

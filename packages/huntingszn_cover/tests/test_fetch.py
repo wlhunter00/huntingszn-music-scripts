@@ -106,6 +106,11 @@ class TestSearchAlbumCoversMocked:
 
             assert len(results) == 2
             assert results[0]["original"] == "https://example.com/cover1.jpg"
+            mock_client.get.assert_called_once()
+            _args, kwargs = mock_client.get.call_args
+            assert kwargs["params"]["engine"] == "google_images"
+            assert kwargs["params"]["q"] == "Artist Title album cover square"
+            assert kwargs["params"]["api_key"] == "test-key"
 
     def test_search_handles_api_error(self) -> None:
         """Should raise FetchError on API error response."""
