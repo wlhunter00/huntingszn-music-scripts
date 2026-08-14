@@ -82,13 +82,34 @@ def _parse_key_and_camelot(
     return musical_key, camelot_key
 
 
+def _stringify_tag_value(val: object) -> str | None:
+    """Coerce a mutagen tag value to text.
+
+    MP4 freeform atoms (iTunes initialkey, etc.) are bytes / MP4FreeForm.
+    ``str(b'8A')`` is ``"b'8A'"``, which does not parse as Camelot.
+    """
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        if not val:
+            return None
+        val = val[0]
+    if isinstance(val, memoryview):
+        val = val.tobytes()
+    if isinstance(val, (bytes, bytearray)):
+        text = val.decode("utf-8", errors="replace").strip()
+        return text or None
+    text = str(val).strip()
+    return text or None
+
+
 def _get_id3_text(tags: ID3, key: str) -> str | None:
     """Get text value from ID3 tags."""
     try:
         frame = tags.get(key)
         if frame:
             text = frame.text[0] if hasattr(frame, "text") and frame.text else None
-            return str(text) if text else None
+            return _stringify_tag_value(text)
     except (ValueError, KeyError, TypeError):
         pass
     return None
@@ -101,7 +122,7 @@ def _get_comment(tags: ID3) -> str | None:
             if key.startswith("COMM"):
                 frame = tags[key]
                 if hasattr(frame, "text") and frame.text:
-                    return str(frame.text[0])
+                    return _stringify_tag_value(frame.text[0])
     except (ValueError, KeyError, TypeError):
         pass
     return None
@@ -183,8 +204,9 @@ def read_tags(path: Path) -> TrackTags:
                 for k in keys:
                     try:
                         val = audio_tags.get(k)
-                        if val:
-                            return str(val[0]) if isinstance(val, list) else str(val)
+                        text = _stringify_tag_value(val)
+                        if text:
+                            return text
                     except (ValueError, KeyError, TypeError):
                         continue
                 return None
@@ -194,11 +216,23 @@ def read_tags(path: Path) -> TrackTags:
             tags.album = get_tag(["album", "ALBUM", "\xa9alb", "TALB"])
             tags.genre = get_tag(["genre", "GENRE", "\xa9gen", "TCON"])
 
-            bpm_str = get_tag(["bpm", "BPM", "TBPM", "tmpo"])
+            bpm_str = get_tag(
+                ["bpm", "BPM", "TBPM", "tmpo", "----:com.apple.iTunes:bpm"]
+            )
             tags.bpm = _parse_bpm(bpm_str)
 
-            key_str = get_tag(["key", "KEY", "TKEY", "initialkey", "INITIALKEY"])
-            comment = get_tag(["comment", "COMMENT"])
+            key_str = get_tag(
+                [
+                    "key",
+                    "KEY",
+                    "TKEY",
+                    "initialkey",
+                    "INITIALKEY",
+                    "----:com.apple.iTunes:initialkey",
+                    "----:com.apple.iTunes:INITIALKEY",
+                ]
+            )
+            comment = get_tag(["comment", "COMMENT", "\xa9cmt"])
             tags.key, tags.camelot_key = _parse_key_and_camelot(key_str, comment)
 
         if hasattr(audio, "info") and audio.info:

@@ -82,6 +82,9 @@ class TestPublishExcludes:
         assert "cookies.txt" in PUBLISH_EXCLUDES
         assert "*.pem" in PUBLISH_EXCLUDES
         assert "/Scripts/data/library.sqlite" in PUBLISH_EXCLUDES
+        assert "/Scripts/data/library.sqlite-wal" in PUBLISH_EXCLUDES
+        assert "/Scripts/data/library.sqlite-shm" in PUBLISH_EXCLUDES
+        assert "/Scripts/data/library.sqlite-journal" in PUBLISH_EXCLUDES
         assert "/projects/**" in PUBLISH_EXCLUDES
         assert "/metadata/**" in PUBLISH_EXCLUDES
         assert "/templates/**" in PUBLISH_EXCLUDES
@@ -141,10 +144,16 @@ class TestPublishMode:
         drive_root.mkdir()
         config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
         commands = publish_drive(drive_root, config)
-        assert any("rclone copy" in c for c in commands)
-        assert not any("rclone sync" in c for c in commands)
-        assert all("--update" not in c for c in commands)
-        assert any("--progress" in c for c in commands)
+        tokens = shlex.split(commands[0])
+        assert tokens[1] == "copy"
+        assert "sync" not in tokens
+        assert "--update" not in tokens
+        assert "--progress" in tokens
+        assert "--ignore-case" in tokens
+        assert "$RECYCLE.BIN/**" in tokens
+        assert "$Recycle.Bin/**" in tokens
+        assert "._*" in tokens
+        assert "/Scripts/data/library.sqlite-journal" in tokens
 
     def test_allow_delete_uses_sync(self, tmp_path):
         drive_root = tmp_path / "drive"

@@ -123,6 +123,19 @@ class TestScanDirectory:
         assert "._song.mp3" not in filenames
         assert ".DS_Store" not in filenames
 
+    def test_skips_appledouble_directories(self, tmp_path):
+        dj_music = tmp_path / "DJ Music"
+        real = dj_music / "Spotify"
+        decoy = dj_music / "._Spotify"
+        real.mkdir(parents=True)
+        decoy.mkdir(parents=True)
+        (real / "keep.mp3").write_bytes(b"keep")
+        (decoy / "skip.mp3").write_bytes(b"appledouble-dir")
+
+        files = scan_directory(dj_music, tmp_path)
+        paths = [f[1] for f in files]
+        assert paths == ["DJ Music/Spotify/keep.mp3"]
+
 
 class TestIndexFiles:
     def test_incremental_skip_unchanged(self, tmp_path):

@@ -61,7 +61,9 @@ def scan_ableton_projects(
         return files
 
     for dirpath, dirnames, filenames in os.walk(ableton_root):
-        dirnames[:] = [d for d in dirnames if d.lower() != "backup"]
+        dirnames[:] = [
+            d for d in dirnames if d.lower() != "backup" and not d.startswith("._")
+        ]
 
         for filename in filenames:
             if filename.startswith("._"):

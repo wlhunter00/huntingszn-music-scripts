@@ -85,12 +85,12 @@ def scan_stem_folders(
         return folders
 
     for model_dir in stem_output_root.iterdir():
-        if not model_dir.is_dir():
+        if not model_dir.is_dir() or model_dir.name.startswith("._"):
             continue
         model_name = model_dir.name
 
         for song_dir in model_dir.iterdir():
-            if not song_dir.is_dir():
+            if not song_dir.is_dir() or song_dir.name.startswith("._"):
                 continue
 
             if not stem_files_in_folder(song_dir):

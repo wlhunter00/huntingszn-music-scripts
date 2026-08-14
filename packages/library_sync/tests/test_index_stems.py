@@ -103,6 +103,24 @@ class TestPrefixedStemNames:
             assert {s.song_name for s in stems} == {"Real Song"}
             assert stems[0].has_vocals == 1
 
+    def test_skips_appledouble_stem_directories(self, tmp_path: Path) -> None:
+        drive = tmp_path / "drive"
+        real_model = drive / "Stem Splitting" / "stem-output" / "htdemucs_ft"
+        decoy_model = drive / "Stem Splitting" / "stem-output" / "._htdemucs_ft"
+        real_song = real_model / "Real Song"
+        decoy_song = real_model / "._Real Song"
+        decoy_model_song = decoy_model / "Fake Song"
+        real_song.mkdir(parents=True)
+        decoy_song.mkdir(parents=True)
+        decoy_model_song.mkdir(parents=True)
+        (real_song / "vocals.wav").write_bytes(b"v")
+        (decoy_song / "vocals.wav").write_bytes(b"appledouble")
+        (decoy_model_song / "vocals.wav").write_bytes(b"appledouble")
+
+        folders = scan_stem_folders(drive / "Stem Splitting" / "stem-output", drive)
+        assert [f[2] for f in folders] == ["Real Song"]
+        assert [f[3] for f in folders] == ["htdemucs_ft"]
+
 
 class TestIndexStems:
     def test_indexes_stem_folders(self, tmp_path: Path) -> None:

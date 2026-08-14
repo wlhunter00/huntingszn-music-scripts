@@ -60,6 +60,7 @@ PUBLISH_EXCLUDES = [
     "/Scripts/data/library.sqlite",
     "/Scripts/data/library.sqlite-wal",
     "/Scripts/data/library.sqlite-shm",
+    "/Scripts/data/library.sqlite-journal",
     # B2-only prefixes. rclone does not delete excluded dest paths on sync,
     # so --allow-delete will not wipe projects/, metadata/, or templates/.
     "/projects/**",

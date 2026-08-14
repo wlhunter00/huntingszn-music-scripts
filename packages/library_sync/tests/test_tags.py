@@ -153,3 +153,58 @@ class TestMalformedTagAccess:
 
         assert tags.artist == "Keep"
         assert tags.title == "Going"
+
+
+class TestMp4AndBytesTags:
+    def test_bytes_freeform_initialkey_parses_camelot(self, tmp_path: Path) -> None:
+        """MP4 iTunes initialkey is bytes; str(b'8A') must not leak into Camelot."""
+        fake_audio = MagicMock()
+        fake_audio.tags = {
+            "\xa9ART": ["M4A Artist"],
+            "\xa9nam": ["M4A Title"],
+            "tmpo": [140],
+            "----:com.apple.iTunes:initialkey": [b"8A"],
+        }
+        fake_audio.info = MagicMock()
+        fake_audio.info.length = 30.0
+
+        with patch("library_sync.tags.MutagenFile", return_value=fake_audio):
+            with patch("library_sync.tags.MP3", new=type("FakeMP3", (), {})):
+                tags = read_tags(tmp_path / "song.m4a")
+
+        assert tags.artist == "M4A Artist"
+        assert tags.title == "M4A Title"
+        assert tags.bpm == 140.0
+        assert tags.camelot_key == "8A"
+        assert tags.key is None
+
+    def test_bytes_comment_open_key(self, tmp_path: Path) -> None:
+        fake_audio = MagicMock()
+        fake_audio.tags = {
+            "\xa9ART": [b"Bytes Artist"],
+            "\xa9nam": [b"Bytes Title"],
+            "\xa9cmt": [b"energy 1m mix"],
+        }
+        fake_audio.info = None
+
+        with patch("library_sync.tags.MutagenFile", return_value=fake_audio):
+            with patch("library_sync.tags.MP3", new=type("FakeMP3", (), {})):
+                tags = read_tags(tmp_path / "song.m4a")
+
+        assert tags.artist == "Bytes Artist"
+        assert tags.title == "Bytes Title"
+        assert tags.camelot_key == "8A"
+
+    def test_str_of_bytes_would_not_parse_as_camelot(self, tmp_path: Path) -> None:
+        from library_sync.camelot import musical_to_camelot
+
+        assert musical_to_camelot(str(b"8A")) is None
+        fake_audio = MagicMock()
+        fake_audio.tags = {"----:com.apple.iTunes:INITIALKEY": [bytearray(b"9A")]}
+        fake_audio.info = None
+
+        with patch("library_sync.tags.MutagenFile", return_value=fake_audio):
+            with patch("library_sync.tags.MP3", new=type("FakeMP3", (), {})):
+                tags = read_tags(tmp_path / "song.m4a")
+
+        assert tags.camelot_key == "9A"

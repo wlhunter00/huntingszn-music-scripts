@@ -66,6 +66,21 @@ class TestScanAbletonProjects:
         files = scan_ableton_projects(drive / "Ableton", drive)
         assert [f[1] for f in files] == ["Ableton/Sessions/Keep.als"]
 
+    def test_skips_appledouble_directories(self, tmp_path: Path) -> None:
+        drive = tmp_path / "drive"
+        sessions = drive / "Ableton" / "Sessions"
+        decoy = drive / "Ableton" / "._Sessions"
+        nested = sessions / "._Nested"
+        sessions.mkdir(parents=True)
+        decoy.mkdir(parents=True)
+        nested.mkdir(parents=True)
+        (sessions / "Keep.als").write_bytes(b"als")
+        (decoy / "Skip.als").write_bytes(b"appledouble")
+        (nested / "Nested.als").write_bytes(b"appledouble")
+
+        files = scan_ableton_projects(drive / "Ableton", drive)
+        assert [f[1] for f in files] == ["Ableton/Sessions/Keep.als"]
+
     def test_skips_backup_folders(self, tmp_path: Path) -> None:
         """Test that Backup folders are skipped."""
         drive = tmp_path / "drive"

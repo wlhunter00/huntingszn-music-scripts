@@ -121,7 +121,9 @@ def scan_directory(
     files: list[tuple[Path, str]] = []
 
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+        dirnames[:] = [
+            d for d in dirnames if not _should_skip_dir(d) and not d.startswith("._")
+        ]
 
         for filename in filenames:
             if _should_skip_file(filename):
