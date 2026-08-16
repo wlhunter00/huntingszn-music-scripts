@@ -46,20 +46,47 @@ from library_sync.rclone import (
 from library_sync.watch import DEFAULT_DEBOUNCE_S, DEFAULT_POLL_S, cmd_watch
 
 
+def _stdio_fd_broken(fd: int) -> bool:
+    """True when the OS std handle is closed/invalid (pythonw, CREATE_NO_WINDOW)."""
+    try:
+        os.fstat(fd)
+    except OSError:
+        return True
+    return False
+
+
+def _replace_none_stream(name: str, fd: int, mode: str) -> object:
+    """Give ``sys.std*`` a NUL stream, and repair the OS fd for child processes.
+
+    Replacing ``sys.stdout`` alone is not enough: ``subprocess.run`` inherits
+    OS handles, not ``sys.stdout``. rclone ``--progress`` then talks to a
+    closed console under Task Scheduler.
+    """
+    stream = getattr(sys, name)
+    if stream is None:
+        stream = open(os.devnull, mode, encoding="utf-8", errors="replace")
+        setattr(sys, name, stream)
+        if _stdio_fd_broken(fd):
+            try:
+                os.dup2(stream.fileno(), fd)
+            except OSError:
+                pass
+    return stream
+
+
 def configure_stdio_utf8() -> None:
     """Keep CLI prints alive on Windows cp1252 consoles and under pythonw.
 
     ``pythonw.exe`` (Task Scheduler install-watch) sets ``sys.stdout`` /
     ``sys.stderr`` to ``None``. Bare ``print`` then raises and the watch
-    pipeline never starts.
+    pipeline never starts. Child processes (uv, rclone) also need valid
+    OS std handles, so NUL is dup'd onto fds 0/1/2 when those are broken.
     """
     os.environ.setdefault("PYTHONUTF8", "1")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-    for name in ("stdout", "stderr"):
-        stream = getattr(sys, name)
-        if stream is None:
-            stream = open(os.devnull, "w", encoding="utf-8", errors="replace")
-            setattr(sys, name, stream)
+    _replace_none_stream("stdin", 0, "r")
+    for name, fd in (("stdout", 1), ("stderr", 2)):
+        stream = _replace_none_stream(name, fd, "w")
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue

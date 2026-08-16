@@ -131,6 +131,10 @@ def _run_rclone(args: list[str], *, dry_run: bool = False) -> subprocess.Complet
         result = subprocess.run(cmd, check=False)
     except FileNotFoundError as exc:
         raise RcloneError(cmd, 127, "rclone not found on PATH") from exc
+    except OSError as exc:
+        # pythonw / CREATE_NO_WINDOW can raise WinError 6 (invalid handle)
+        # when inheriting closed stdio, even if rclone.exe exists.
+        raise RcloneError(cmd, 127, str(exc) or "os error starting rclone") from exc
     if result.returncode != 0:
         raise RcloneError(cmd, result.returncode, "see rclone output above")
     return result
@@ -175,6 +179,7 @@ def publish_drive(
     dry_run: bool = False,
     allow_delete: bool = False,
     update: bool = False,
+    progress: bool = True,
 ) -> list[str]:
     """Copy (default) or sync the drive to B2 bucket root.
 
@@ -183,14 +188,14 @@ def publish_drive(
     drive, except excluded B2-only prefixes (projects/, metadata/, templates/).
     update adds rclone ``--update`` (skip dest files that are newer) and is
     ignored when allow_delete is set.
+    progress adds rclone ``--progress`` (skip under pythonw / no console).
 
     Returns list of commands that were (or would be) executed.
     """
     action = "sync" if allow_delete else "copy"
-    args = [
-        action,
-        "--progress",
-    ]
+    args = [action]
+    if progress:
+        args.append("--progress")
     if update and not allow_delete:
         args.append("--update")
     args.extend(
@@ -256,6 +261,7 @@ def pull_projects(
     config: RcloneConfig,
     *,
     dry_run: bool = False,
+    progress: bool = True,
 ) -> str | None:
     """Copy projects from B2 to Ableton/Music Production Agent.
 
@@ -270,11 +276,14 @@ def pull_projects(
     if config.is_configured and not dry_run:
         agent_projects.mkdir(parents=True, exist_ok=True)
 
-    args = [
-        "copy",
-        "--progress",
-        "--update",
-        _bucket_target(config, "/projects/"),
-        str(agent_projects),
-    ]
+    args = ["copy"]
+    if progress:
+        args.append("--progress")
+    args.extend(
+        [
+            "--update",
+            _bucket_target(config, "/projects/"),
+            str(agent_projects),
+        ]
+    )
     return _print_or_run(args, config, dry_run=dry_run)

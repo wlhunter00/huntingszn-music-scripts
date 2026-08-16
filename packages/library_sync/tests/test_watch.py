@@ -280,15 +280,18 @@ def test_watch_pipeline_never_passes_allow_delete(tmp_path, monkeypatch):
         dry_run=False,
         allow_delete=False,
         update=False,
+        progress=True,
     ):
         captured["allow_delete"] = allow_delete
         captured["update"] = update
+        captured["progress"] = progress
         result = publish_drive(
             drive_root,
             config,
             dry_run=dry_run,
             allow_delete=allow_delete,
             update=update,
+            progress=progress,
         )
         commands.extend(result)
         return result
@@ -304,11 +307,13 @@ def test_watch_pipeline_never_passes_allow_delete(tmp_path, monkeypatch):
     assert rc == 0
     assert captured["allow_delete"] is False
     assert captured["update"] is True
+    assert captured["progress"] is False
     assert commands
     tokens = shlex.split(commands[0])
     assert tokens[0] == "rclone"
     assert tokens[1] == "copy"
     assert "--update" in tokens
+    assert "--progress" not in tokens
     assert "sync" not in tokens
     assert "--allow-delete" not in tokens
     assert all("--allow-delete" not in cmd for cmd in commands)
@@ -382,6 +387,37 @@ def test_load_drive_dotenv_follows_scripts_symlink(tmp_path, monkeypatch):
     assert os.environ["B2_REMOTE"] == "b2"
 
 
+def test_load_drive_dotenv_loads_when_resolve_fails(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    scripts = drive / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / ".env").write_text("B2_REMOTE=b2\nB2_BUCKET=huntingszn-music\n", encoding="utf-8")
+    monkeypatch.delenv("B2_REMOTE", raising=False)
+    monkeypatch.delenv("B2_BUCKET", raising=False)
+
+    def boom(self):
+        raise OSError("GetFinalPathNameByHandle")
+
+    monkeypatch.setattr(Path, "resolve", boom)
+    assert load_drive_dotenv(drive) is True
+    assert os.environ["B2_REMOTE"] == "b2"
+    assert os.environ["B2_BUCKET"] == "huntingszn-music"
+
+
+def test_load_drive_dotenv_loads_when_resolve_raises_runtimeerror(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    scripts = drive / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / ".env").write_text("B2_REMOTE=b2\nB2_BUCKET=huntingszn-music\n", encoding="utf-8")
+    monkeypatch.delenv("B2_REMOTE", raising=False)
+    monkeypatch.delenv("B2_BUCKET", raising=False)
+    monkeypatch.setattr(
+        Path, "resolve", lambda self: (_ for _ in ()).throw(RuntimeError("loop"))
+    )
+    assert load_drive_dotenv(drive) is True
+    assert os.environ["B2_REMOTE"] == "b2"
+
+
 def test_append_watch_log_survives_pythonw_none_stdout(tmp_path, monkeypatch):
     drive = tmp_path / "HuntingSzn"
     drive.mkdir()
@@ -416,10 +452,15 @@ def test_watch_pipeline_sets_rclone_log_file(tmp_path, monkeypatch):
     monkeypatch.setenv("B2_REMOTE", "b2")
     monkeypatch.setenv("B2_BUCKET", "huntingszn-music")
     monkeypatch.setattr("library_sync.install_watch.local_data_dir", lambda: pc)
+    stale = pc / "rclone.log"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("INFO : old file copied\n" * 50, encoding="utf-8")
 
     def fake_pull(*_a, **_k):
         seen["log"] = os.environ.get("RCLONE_LOG_FILE")
         seen["level"] = os.environ.get("RCLONE_LOG_LEVEL")
+        seen["size"] = Path(seen["log"]).stat().st_size if seen["log"] else -1
+        seen["progress"] = _k.get("progress")
         return "ok"
 
     monkeypatch.setattr("library_sync.watch.pull_projects", fake_pull)
@@ -432,7 +473,9 @@ def test_watch_pipeline_sets_rclone_log_file(tmp_path, monkeypatch):
     monkeypatch.setattr("library_sync.watch.publish_template", lambda *a, **k: None)
     assert run_watch_pipeline(drive) == 0
     assert seen["log"] == str(pc / "rclone.log")
-    assert seen["level"] == "INFO"
+    assert seen["level"] == "ERROR"
+    assert seen["size"] == 0
+    assert seen["progress"] is False
     assert os.environ.get("RCLONE_LOG_FILE") != seen["log"]
 
 
@@ -445,9 +488,22 @@ def test_watch_pipeline_missing_template_does_not_fail_publish(tmp_path, monkeyp
     monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
     captured: list[str] = []
 
-    def wrap(drive_root, config, *, dry_run=False, allow_delete=False, update=False):
+    def wrap(
+        drive_root,
+        config,
+        *,
+        dry_run=False,
+        allow_delete=False,
+        update=False,
+        progress=True,
+    ):
         result = publish_drive(
-            drive_root, config, dry_run=True, allow_delete=allow_delete, update=update
+            drive_root,
+            config,
+            dry_run=True,
+            allow_delete=allow_delete,
+            update=update,
+            progress=progress,
         )
         captured.extend(result)
         return result
@@ -459,6 +515,7 @@ def test_watch_pipeline_missing_template_does_not_fail_publish(tmp_path, monkeyp
     assert rc == 0
     tokens = shlex.split(captured[0])
     assert tokens[1] == "copy"
+    assert "--progress" not in tokens
     assert "sync" not in tokens
 
 
@@ -640,8 +697,27 @@ def test_configure_stdio_utf8_replaces_none_streams(monkeypatch):
     configure_stdio_utf8()
     assert sys.stdout is not None
     assert sys.stderr is not None
+    assert sys.stdout.fileno() >= 0
+    assert sys.stderr.fileno() >= 0
     sys.stdout.write("ok")
     sys.stdout.flush()
+
+
+def test_watch_pipeline_rclone_oserror_is_logged(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    drive.mkdir()
+    monkeypatch.setenv("B2_REMOTE", "b2")
+    monkeypatch.setenv("B2_BUCKET", "huntingszn-music")
+    monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
+    logs: list[str] = []
+    with patch(
+        "library_sync.rclone.subprocess.run",
+        side_effect=OSError(6, "The handle is invalid"),
+    ):
+        rc = run_watch_pipeline(drive, log=logs.append)
+    assert rc == 1
+    assert any("failure: pull" in line for line in logs)
+    assert any("handle is invalid" in line for line in logs)
 
 
 def test_stub_is_valid_python():

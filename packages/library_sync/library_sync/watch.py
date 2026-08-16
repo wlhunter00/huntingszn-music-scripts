@@ -177,14 +177,20 @@ def load_drive_dotenv(drive_root: Path) -> bool:
     """
     env_path = drive_root / "Scripts" / ".env"
     try:
-        env_path = env_path.resolve()
-    except OSError:
-        return False
+        resolved = env_path.resolve()
+        if resolved.is_file():
+            env_path = resolved
+    except (OSError, RuntimeError):
+        # USB/junction GetFinalPathNameByHandle can fail while the .env is still readable.
+        pass
     if not env_path.is_file():
         return False
     from dotenv import dotenv_values
 
-    values = dotenv_values(env_path, encoding="utf-8-sig")
+    try:
+        values = dotenv_values(env_path, encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return False
     for key, value in values.items():
         if not key or value is None:
             continue
@@ -203,7 +209,12 @@ def index_drive(drive_root: Path, *, dry_run: bool = False) -> None:
 
 
 def _watch_rclone_env() -> dict[str, str]:
-    """rclone env for watch: fail fast, and keep a PC-local log under pythonw."""
+    """rclone env for watch: fail fast, and keep a PC-local log under pythonw.
+
+    ERROR (not INFO): a full DJ-library copy at INFO logs every file into
+    ``%LOCALAPPDATA%`` with no rotation. Truncate at the start of each run so
+    a previous failure cannot grow the file without bound.
+    """
     env = dict(_WATCH_RCLONE_ENV)
     from library_sync.install_watch import local_data_dir
 
@@ -212,8 +223,13 @@ def _watch_rclone_env() -> dict[str, str]:
         log_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
         return env
-    env["RCLONE_LOG_FILE"] = str(log_dir / "rclone.log")
-    env["RCLONE_LOG_LEVEL"] = "INFO"
+    log_path = log_dir / "rclone.log"
+    try:
+        log_path.write_bytes(b"")
+    except OSError:
+        pass
+    env["RCLONE_LOG_FILE"] = str(log_path)
+    env["RCLONE_LOG_LEVEL"] = "ERROR"
     return env
 
 
@@ -249,7 +265,7 @@ def run_watch_pipeline(
 
         write_log("start: pull (B2 projects -> Ableton/Music Production Agent)")
         try:
-            pull_projects(drive_root, config, dry_run=dry_run)
+            pull_projects(drive_root, config, dry_run=dry_run, progress=False)
         except RcloneError as exc:
             write_log(f"failure: pull: {exc}{rclone_log_hint}")
             return 1
@@ -273,6 +289,7 @@ def run_watch_pipeline(
                 dry_run=dry_run,
                 allow_delete=False,
                 update=True,
+                progress=False,
             )
             publish_sqlite(sqlite_path, config, dry_run=dry_run)
             publish_template(config, dry_run=dry_run)
