@@ -35,8 +35,11 @@ from library_sync.rclone import (
 
 DEFAULT_DEBOUNCE_S = 8.0
 DEFAULT_POLL_S = 5.0
+# Pipeline-level cap after rclone/B2 failures. rclone itself is also limited
+# via _WATCH_RCLONE_ENV (do not hammer B2 with a full-drive copy every debounce).
+DEFAULT_MAX_BACKOFF_S = 15 * 60
 
-# Fail faster when rclone/B2 is missing or unreachable; do not retry forever.
+# Fail faster when rclone/B2 is missing or unreachable.
 _WATCH_RCLONE_ENV = {
     "RCLONE_RETRIES": "1",
     "RCLONE_LOW_LEVEL_RETRIES": "1",
@@ -138,6 +141,22 @@ def _sqlite_path(drive_root: Path) -> Path:
     return drive_root / "Scripts" / "data" / "library.sqlite"
 
 
+def load_drive_dotenv(drive_root: Path) -> bool:
+    """Load ``{DRIVE}/Scripts/.env`` so B2 vars exist without a Task Scheduler cwd.
+
+    ``python-dotenv``'s default ``load_dotenv()`` walks from ``cli.py``, not cwd.
+    The stub does pass ``cwd={DRIVE}/Scripts`` into watch, but a uv cache layout
+    or a process started from ``%LOCALAPPDATA%\\library-sync`` can miss the file.
+    """
+    env_path = drive_root / "Scripts" / ".env"
+    if not env_path.is_file():
+        return False
+    from dotenv import load_dotenv
+
+    load_dotenv(env_path, override=True)
+    return True
+
+
 def index_drive(drive_root: Path, *, dry_run: bool = False) -> None:
     """Incremental index of tracks, stems, and Ableton projects."""
     sqlite_path = _sqlite_path(drive_root)
@@ -163,6 +182,8 @@ def run_watch_pipeline(
         append_watch_log(drive_root, message)
         if log is not None:
             log(message)
+
+    load_drive_dotenv(drive_root)
     config = RcloneConfig.from_env(drive_root)
     sqlite_path = _sqlite_path(drive_root)
 
@@ -225,9 +246,12 @@ class WatchController:
 
     - First tick with the drive mounted (login / already plugged in) schedules
       a run after debounce, not only a rising edge.
-    - Rising edge (unmounted -> mounted) schedules a run.
+    - Rising edge (unmounted -> mounted) schedules a run and resets failure
+      backoff (unplug/replug should not wait out a 15-minute cap).
     - One in-flight run at a time; extra triggers queue a single follow-up.
-    - A failed pipeline queues one retry after debounce (login/network races).
+    - A failed pipeline retries with exponential backoff (first retry after
+      debounce, then 2x, 4x, … capped) so a persistent rclone error cannot
+      republish the whole drive every few seconds.
     """
 
     def __init__(
@@ -235,17 +259,21 @@ class WatchController:
         *,
         run_pipeline: Callable[[Path], int],
         debounce_s: float = DEFAULT_DEBOUNCE_S,
+        max_backoff_s: float = DEFAULT_MAX_BACKOFF_S,
         monotonic: Callable[[], float] = time.monotonic,
         log: Callable[[Path | None, str], None] = append_watch_log,
     ) -> None:
         self._run_pipeline = run_pipeline
         self._debounce_s = debounce_s
+        self._max_backoff_s = max_backoff_s
         self._monotonic = monotonic
         self._log = log
         self._started = False
         self._last_mounted = False
         self._pending_at: float | None = None
+        self._wait_s = debounce_s
         self._queued = False
+        self._fail_count = 0
         self.in_flight = False
 
     def _schedule(self) -> None:
@@ -253,12 +281,16 @@ class WatchController:
             self._queued = True
             return
         self._pending_at = self._monotonic()
+        self._wait_s = self._debounce_s
 
     def observe(self, mounted: bool) -> None:
         """Record mount state and schedule on startup-mounted or rising edge."""
         first = not self._started
         self._started = True
-        if mounted and (first or not self._last_mounted):
+        rising = mounted and (first or not self._last_mounted)
+        if rising:
+            if not first:
+                self._fail_count = 0
             self._schedule()
         self._last_mounted = mounted
 
@@ -270,24 +302,40 @@ class WatchController:
         if self.in_flight:
             return "in_flight"
 
+        if not mounted:
+            had_work = self._queued or self._pending_at is not None
+            self._queued = False
+            self._pending_at = None
+            if had_work:
+                self._log(None, "skip: drive not mounted")
+                return "skip_unmounted"
+            return "idle"
+
         if self._queued and self._pending_at is None:
             self._queued = False
             self._pending_at = self._monotonic()
-            self._log(drive_root, "queued: running again after debounce")
+            if self._fail_count:
+                self._wait_s = min(
+                    self._debounce_s * (2 ** (self._fail_count - 1)),
+                    self._max_backoff_s,
+                )
+                self._log(
+                    drive_root,
+                    f"queued: retry after {self._wait_s:g}s backoff "
+                    f"(failure {self._fail_count})",
+                )
+            else:
+                self._wait_s = self._debounce_s
+                self._log(drive_root, "queued: running again after debounce")
 
         if self._pending_at is None:
             return "idle"
 
         elapsed = self._monotonic() - self._pending_at
-        if elapsed < self._debounce_s:
+        if elapsed < self._wait_s:
             return "wait_debounce"
 
-        if drive_root is None:
-            self._pending_at = None
-            self._queued = False
-            self._log(None, "skip: drive not mounted")
-            return "skip_unmounted"
-
+        assert drive_root is not None
         self._pending_at = None
         self.in_flight = True
         failed = False
@@ -297,6 +345,8 @@ class WatchController:
             if rc != 0:
                 failed = True
                 self._log(drive_root, f"finish: pipeline failed (exit {rc})")
+            else:
+                self._fail_count = 0
             return "run" if rc == 0 else "run_failed"
         except Exception as exc:
             failed = True
@@ -305,6 +355,7 @@ class WatchController:
         finally:
             self.in_flight = False
             if failed:
+                self._fail_count += 1
                 self._queued = True
 
 

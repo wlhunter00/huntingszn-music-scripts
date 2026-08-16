@@ -130,6 +130,18 @@ def test_windows_volume_falls_back_to_ctypes_when_wmic_missing(tmp_path, monkeyp
     assert _find_windows_volume() == fake
 
 
+def test_ctypes_volume_scan_sets_argtypes_and_uses_logical_drive_mask():
+    import inspect
+
+    from library_sync.mount import _find_windows_volume_ctypes
+
+    src = inspect.getsource(_find_windows_volume_ctypes)
+    assert "GetLogicalDrives" in src
+    assert "GetVolumeInformationW.argtypes" in src
+    assert "_iter_logical_drive_letters" in src
+    assert "ascii_uppercase" not in src or "GetLogicalDrives" in src
+
+
 class TestMacOSVolumeDetection:
     def test_detects_primary_volume(self, tmp_path):
         """Test that primary volume name is detected on macOS."""

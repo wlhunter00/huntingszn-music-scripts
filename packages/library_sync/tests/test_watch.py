@@ -17,18 +17,24 @@ from library_sync.cli import cmd_pull, cmd_watch, configure_stdio_utf8
 from library_sync.cli import main as cli_main
 from library_sync.install_watch import (
     LAUNCHD_LABEL,
+    WINDOWS_TASK_NAME,
+    _install_path_env,
     _xml_escape,
     render_launchd_plist,
     render_stub,
     render_systemd_unit,
     render_windows_cmd,
     render_windows_task_xml,
+    resolve_uv,
+    uninstall_watch,
 )
 from library_sync.mount import VOLUME_NAME, VOLUME_NAME_ALT
 from library_sync.rclone import publish_drive
 from library_sync.watch import (
+    DEFAULT_MAX_BACKOFF_S,
     ProcessLock,
     WatchController,
+    load_drive_dotenv,
     run_watch_pipeline,
     watch_loop,
     watch_once,
@@ -110,6 +116,72 @@ def test_failed_pipeline_retries_after_debounce(tmp_path):
     clock.advance(2)
     assert ctl.tick(drive) == "run_failed"
     assert runs == [1, 1]
+
+
+def test_failed_pipeline_exponential_backoff_not_every_debounce(tmp_path):
+    runs: list[int] = []
+    logs: list[str] = []
+    clock = FakeClock()
+    ctl = WatchController(
+        run_pipeline=lambda drive: runs.append(1) or 1,
+        debounce_s=2,
+        max_backoff_s=10,
+        monotonic=clock,
+        log=lambda _drive, msg: logs.append(msg),
+    )
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    ctl.tick(drive)
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    assert ctl.tick(drive) == "wait_debounce"
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    # Second retry waits 4s (2 * 2^(2-1)), not another 2s debounce.
+    assert ctl.tick(drive) == "wait_debounce"
+    clock.advance(2)
+    assert ctl.tick(drive) == "wait_debounce"
+    assert runs == [1, 1]
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    assert runs == [1, 1, 1]
+    # Third retry waits 8s; fourth is capped at 10s.
+    ctl.tick(drive)
+    clock.advance(8)
+    assert ctl.tick(drive) == "run_failed"
+    ctl.tick(drive)
+    clock.advance(9)
+    assert ctl.tick(drive) == "wait_debounce"
+    clock.advance(1)
+    assert ctl.tick(drive) == "run_failed"
+    assert any("backoff" in line for line in logs)
+    assert DEFAULT_MAX_BACKOFF_S >= 10
+
+
+def test_remount_resets_failure_backoff(tmp_path):
+    runs: list[int] = []
+    clock = FakeClock()
+    ctl = WatchController(
+        run_pipeline=lambda drive: runs.append(1) or 1,
+        debounce_s=2,
+        max_backoff_s=60,
+        monotonic=clock,
+        log=lambda *_: None,
+    )
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    ctl.tick(drive)
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    ctl.tick(drive)
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    # Unplug / replug: do not sit out 4s+ backoff.
+    assert ctl.tick(None) == "skip_unmounted"
+    assert ctl.tick(drive) == "wait_debounce"
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    assert runs == [1, 1, 1]
 
 
 def test_in_flight_run_queues_follow_up_instead_of_overlapping(tmp_path):
@@ -238,6 +310,55 @@ def test_watch_pipeline_never_passes_allow_delete(tmp_path, monkeypatch):
     assert "sync" not in tokens
     assert "--allow-delete" not in tokens
     assert all("--allow-delete" not in cmd for cmd in commands)
+
+
+def test_watch_pipeline_loads_env_from_drive_scripts(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    scripts = drive / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / ".env").write_text("B2_REMOTE=b2\nB2_BUCKET=huntingszn-music\n", encoding="utf-8")
+    monkeypatch.delenv("B2_REMOTE", raising=False)
+    monkeypatch.delenv("B2_BUCKET", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("library_sync.watch.pull_projects", lambda *a, **k: "ok")
+    monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "library_sync.watch.publish_drive",
+        lambda *a, **k: ["rclone copy --update src dst"],
+    )
+    monkeypatch.setattr("library_sync.watch.publish_sqlite", lambda *a, **k: None)
+    monkeypatch.setattr("library_sync.watch.publish_template", lambda *a, **k: None)
+    rc = run_watch_pipeline(drive, dry_run=False)
+    assert rc == 0
+    assert os.environ["B2_REMOTE"] == "b2"
+    assert os.environ["B2_BUCKET"] == "huntingszn-music"
+    assert load_drive_dotenv(drive) is True
+
+
+def test_watch_pipeline_missing_template_does_not_fail_publish(tmp_path, monkeypatch):
+    drive = tmp_path / "Will Hunter Music"
+    drive.mkdir()
+    monkeypatch.setenv("B2_REMOTE", "b2")
+    monkeypatch.setenv("B2_BUCKET", "huntingszn-music")
+    monkeypatch.setattr("library_sync.watch.pull_projects", lambda *a, **k: "ok")
+    monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
+    captured: list[str] = []
+
+    def wrap(drive_root, config, *, dry_run=False, allow_delete=False, update=False):
+        result = publish_drive(
+            drive_root, config, dry_run=True, allow_delete=allow_delete, update=update
+        )
+        captured.extend(result)
+        return result
+
+    monkeypatch.setattr("library_sync.watch.publish_drive", wrap)
+    monkeypatch.setattr("library_sync.watch.publish_sqlite", lambda *a, **k: None)
+    # Real publish_template: path missing -> None, must not raise.
+    rc = run_watch_pipeline(drive, dry_run=True)
+    assert rc == 0
+    tokens = shlex.split(captured[0])
+    assert tokens[1] == "copy"
+    assert "sync" not in tokens
 
 
 def test_watch_pipeline_missing_rclone_logs_and_returns(tmp_path, monkeypatch):
@@ -381,6 +502,7 @@ def test_windows_task_xml_ignores_overlapping_and_has_no_drive_letter(tmp_path):
     assert "PYTHONUTF8=1" in wrapper
     assert "H:" not in wrapper
     assert r"C:\Users\Will\.local\bin" in wrapper
+    assert "%PATH%" in wrapper
 
 
 def test_systemd_unit_restarts_and_sets_utf8(tmp_path):
@@ -484,6 +606,10 @@ def test_stub_windows_root_is_drive_root_not_cwd():
     assert "PATH_PREFIX" in stub
     assert "CREATE_NO_WINDOW" in stub
     assert 'cmd = [UV, "run", "--package", "library-sync", "library-sync", "watch"]' in stub
+    assert "cwd=str(scripts)" in stub
+    assert 'endswith((".cmd", ".bat"))' in stub
+    assert "0x08000000" in stub
+    assert "0x01000000" not in stub
 
 
 def test_stub_bakes_install_path_and_never_once():
@@ -494,6 +620,70 @@ def test_stub_bakes_install_path_and_never_once():
     assert ns["PATH_PREFIX"] == "/opt/homebrew/bin:/usr/bin"
     assert ns["UV"] == "/opt/homebrew/bin/uv"
     assert "--once" not in stub
+    assert "cwd=str(scripts)" in stub
+
+
+def test_install_path_env_puts_rclone_dir_ahead_of_uv(tmp_path, monkeypatch):
+    rclone_dir = tmp_path / "rclone-bin"
+    uv_dir = tmp_path / "uv-bin"
+    rclone_dir.mkdir()
+    uv_dir.mkdir()
+    rclone = rclone_dir / "rclone"
+    uv = uv_dir / "uv"
+    rclone.write_text("", encoding="utf-8")
+    uv.write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "library_sync.install_watch.shutil.which",
+        lambda name: str(rclone) if name == "rclone" else None,
+    )
+    monkeypatch.setenv("PATH", "/usr/bin")
+    path = _install_path_env(uv)
+    parts = path.split(os.pathsep)
+    assert str(rclone_dir.resolve()) == parts[0]
+    assert str(uv_dir) in parts
+
+
+def test_install_path_env_windows_includes_common_rclone_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr("library_sync.install_watch.sys.platform", "win32")
+    local = tmp_path / "Local"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setattr("library_sync.install_watch.shutil.which", lambda name: None)
+    monkeypatch.setenv("PATH", "C:\\Windows\\system32")
+    path = _install_path_env(tmp_path / "uv.exe")
+    assert "WinGet" in path
+    assert "rclone" in path
+
+
+def test_resolve_uv_prefers_exe_over_cmd_shim(tmp_path, monkeypatch):
+    exe = tmp_path / "uv.exe"
+    cmd = tmp_path / "uv.cmd"
+    exe.write_text("x", encoding="utf-8")
+    cmd.write_text("x", encoding="utf-8")
+    monkeypatch.setattr("library_sync.install_watch.shutil.which", lambda name: str(cmd))
+    assert resolve_uv() == exe.resolve()
+
+
+def test_uninstall_windows_ends_then_force_deletes_task(tmp_path, monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr("library_sync.install_watch.sys.platform", "win32")
+    monkeypatch.setattr("library_sync.install_watch.local_data_dir", lambda: tmp_path)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str]):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("library_sync.install_watch._run", fake_run)
+    (tmp_path / "watch-task.xml").write_text("<Task/>", encoding="utf-8")
+    (tmp_path / "watch-stub.py").write_text("# stub\n", encoding="utf-8")
+    (tmp_path / "watch-stub.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    rc = uninstall_watch()
+    assert rc == 0
+    assert ["schtasks", "/End", "/TN", WINDOWS_TASK_NAME] in calls
+    assert ["schtasks", "/Delete", "/TN", WINDOWS_TASK_NAME, "/F"] in calls
+    assert not (tmp_path / "watch-stub.py").exists()
+    assert not (tmp_path / "watch-task.xml").exists()
 
 
 def test_watch_help_says_never_deletes_from_b2(capsys):

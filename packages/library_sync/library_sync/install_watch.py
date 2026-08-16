@@ -52,8 +52,16 @@ def windows_task_xml_path() -> Path:
 
 
 def resolve_uv() -> Path | None:
+    """Absolute uv binary. Prefer ``uv.exe`` over a ``.cmd`` / ``.bat`` shim."""
     found = shutil.which("uv")
-    return Path(found).resolve() if found else None
+    if not found:
+        return None
+    path = Path(found)
+    if path.suffix.lower() in {".cmd", ".bat"}:
+        exe = path.with_suffix(".exe")
+        if exe.is_file():
+            path = exe
+    return path.resolve()
 
 
 def render_stub(uv: Path, path_env: str = "") -> str:
@@ -172,6 +180,8 @@ def main() -> int:
             time.sleep(POLL_S)
             continue
         cmd = [UV, "run", "--package", "library-sync", "library-sync", "watch"]
+        if sys.platform == "win32" and UV.lower().endswith((".cmd", ".bat")):
+            cmd = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *cmd]
         extra = dict()
         if sys.platform == "win32":
             extra["creationflags"] = CREATE_NO_WINDOW
@@ -192,7 +202,7 @@ def render_windows_cmd(uv: Path, stub: Path, path_env: str = "") -> str:
     ]
     if path_env:
         safe = path_env.replace('"', "")
-        lines.append(f'set "PATH={safe}"\r\n')
+        lines.append(f'set "PATH={safe};%PATH%"\r\n')
     lines.append(f'"{uv}" run --python 3.12 "{stub}"\r\n')
     return "".join(lines)
 
@@ -332,12 +342,28 @@ def _xml_escape(value: str) -> str:
     )
 
 
+def _windows_rclone_dirs() -> list[str]:
+    """Dirs where rclone often lives even when Task Scheduler PATH is stripped."""
+    local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    return [
+        str(Path.home() / ".local" / "bin"),
+        str(Path(local) / "Microsoft" / "WinGet" / "Links"),
+        str(Path(local) / "Programs" / "rclone"),
+        str(Path(r"C:\Program Files\rclone")),
+    ]
+
+
 def _install_path_env(uv: Path) -> str:
     """PATH for GUI/login agents, which otherwise miss Homebrew / uv / rclone."""
     current = os.environ.get("PATH", "")
-    extras = [str(uv.parent), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+    extras: list[str] = [str(uv.parent)]
+    rclone = shutil.which("rclone")
+    if rclone:
+        extras.insert(0, str(Path(rclone).resolve().parent))
     if sys.platform == "win32":
-        extras = [str(uv.parent)]
+        extras.extend(_windows_rclone_dirs())
+    else:
+        extras.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"])
     parts: list[str] = []
     seen: set[str] = set()
     for part in extras + current.split(os.pathsep):
@@ -376,6 +402,12 @@ def install_watch(*, dry_run: bool = False) -> int:
     print(f"  stub: {stub}")
     print("  volumes: " + ", ".join(VOLUME_NAMES))
     print("  pipeline: pull -> incremental index -> publish (copy --update, never deletes B2)")
+    if shutil.which("rclone") is None:
+        print(
+            "  warning: rclone not on PATH at install time; the login task "
+            "searches common rclone dirs, but re-run install-watch after installing rclone",
+            file=sys.stderr,
+        )
     print()
 
     if dry_run:
