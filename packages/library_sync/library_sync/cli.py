@@ -47,10 +47,19 @@ from library_sync.watch import DEFAULT_DEBOUNCE_S, DEFAULT_POLL_S, cmd_watch
 
 
 def configure_stdio_utf8() -> None:
-    """Keep CLI prints alive on Windows cp1252 consoles (no crash on arrows)."""
+    """Keep CLI prints alive on Windows cp1252 consoles and under pythonw.
+
+    ``pythonw.exe`` (Task Scheduler install-watch) sets ``sys.stdout`` /
+    ``sys.stderr`` to ``None``. Bare ``print`` then raises and the watch
+    pipeline never starts.
+    """
     os.environ.setdefault("PYTHONUTF8", "1")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-    for stream in (sys.stdout, sys.stderr):
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name)
+        if stream is None:
+            stream = open(os.devnull, "w", encoding="utf-8", errors="replace")
+            setattr(sys, name, stream)
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue

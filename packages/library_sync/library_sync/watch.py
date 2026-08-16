@@ -118,19 +118,40 @@ def watch_log_path(drive_root: Path) -> Path:
     return drive_root / "Scripts" / "data" / "watch.log"
 
 
-def append_watch_log(drive_root: Path | None, message: str) -> None:
-    """Append a timestamped line to watch.log when the drive is writable."""
-    print(message, flush=True)
-    if drive_root is None:
-        return
-    path = watch_log_path(drive_root)
+def pc_watch_log_path() -> Path:
+    """Per-PC fallback log. pythonw has no console; a yanked drive cannot be written."""
+    from library_sync.install_watch import local_data_dir
+
+    return local_data_dir() / "watch.log"
+
+
+def _append_log_file(path: Path, line: str) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with path.open("a", encoding="utf-8") as fh:
-            fh.write(f"{stamp} {message}\n")
+            fh.write(line)
+        return True
     except OSError:
-        return
+        return False
+
+
+def append_watch_log(drive_root: Path | None, message: str) -> None:
+    """Append a timestamped line to watch.log; fall back to the PC if the drive cannot be written.
+
+    Task Scheduler runs the stub via ``pythonw`` (stdout is ``None``). ``print`` must
+    not raise, or the pipeline never starts and the drive log is never created.
+    """
+    try:
+        print(message, flush=True)
+    except (OSError, AttributeError, RuntimeError, ValueError):
+        pass
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{stamp} {message}\n"
+    wrote_drive = False
+    if drive_root is not None:
+        wrote_drive = _append_log_file(watch_log_path(drive_root), line)
+    if not wrote_drive:
+        _append_log_file(pc_watch_log_path(), line)
 
 
 def _index_roots(drive_root: Path) -> list[Path]:
@@ -147,13 +168,27 @@ def load_drive_dotenv(drive_root: Path) -> bool:
     ``python-dotenv``'s default ``load_dotenv()`` walks from ``cli.py``, not cwd.
     The stub does pass ``cwd={DRIVE}/Scripts`` into watch, but a uv cache layout
     or a process started from ``%LOCALAPPDATA%\\library-sync`` can miss the file.
+
+    Resolves directory junctions/symlinks on ``Scripts``. Uses ``utf-8-sig`` so a
+    Notepad UTF-8 BOM cannot turn ``B2_REMOTE`` into ``\\ufeffB2_REMOTE``. Writes
+    values into ``os.environ`` so empty Task Scheduler / user-env placeholders
+    cannot block the drive file (``load_dotenv(override=True)`` is not enough on
+    every python-dotenv version when the existing value is ``""``).
     """
     env_path = drive_root / "Scripts" / ".env"
+    try:
+        env_path = env_path.resolve()
+    except OSError:
+        return False
     if not env_path.is_file():
         return False
-    from dotenv import load_dotenv
+    from dotenv import dotenv_values
 
-    load_dotenv(env_path, override=True)
+    values = dotenv_values(env_path, encoding="utf-8-sig")
+    for key, value in values.items():
+        if not key or value is None:
+            continue
+        os.environ[key] = value
     return True
 
 
@@ -165,6 +200,21 @@ def index_drive(drive_root: Path, *, dry_run: bool = False) -> None:
         index_files(db, drive_root, index_roots, dry_run=dry_run)
         index_stems(db, drive_root, dry_run=dry_run)
         index_ableton(db, drive_root, dry_run=dry_run)
+
+
+def _watch_rclone_env() -> dict[str, str]:
+    """rclone env for watch: fail fast, and keep a PC-local log under pythonw."""
+    env = dict(_WATCH_RCLONE_ENV)
+    from library_sync.install_watch import local_data_dir
+
+    log_dir = local_data_dir()
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return env
+    env["RCLONE_LOG_FILE"] = str(log_dir / "rclone.log")
+    env["RCLONE_LOG_LEVEL"] = "INFO"
+    return env
 
 
 def run_watch_pipeline(
@@ -187,8 +237,11 @@ def run_watch_pipeline(
     config = RcloneConfig.from_env(drive_root)
     sqlite_path = _sqlite_path(drive_root)
 
-    saved_env = {key: os.environ.get(key) for key in _WATCH_RCLONE_ENV}
-    os.environ.update(_WATCH_RCLONE_ENV)
+    rclone_env = _watch_rclone_env()
+    saved_env = {key: os.environ.get(key) for key in rclone_env}
+    os.environ.update(rclone_env)
+    rclone_log = rclone_env.get("RCLONE_LOG_FILE")
+    rclone_log_hint = f" (rclone log: {rclone_log})" if rclone_log else ""
     try:
         if not config.is_configured and not dry_run:
             write_log("failure: B2 not configured (B2_REMOTE / B2_BUCKET); skipping run")
@@ -198,7 +251,7 @@ def run_watch_pipeline(
         try:
             pull_projects(drive_root, config, dry_run=dry_run)
         except RcloneError as exc:
-            write_log(f"failure: pull: {exc}")
+            write_log(f"failure: pull: {exc}{rclone_log_hint}")
             return 1
 
         write_log("start: incremental index")
@@ -224,7 +277,7 @@ def run_watch_pipeline(
             publish_sqlite(sqlite_path, config, dry_run=dry_run)
             publish_template(config, dry_run=dry_run)
         except RcloneError as exc:
-            write_log(f"failure: publish: {exc}")
+            write_log(f"failure: publish: {exc}{rclone_log_hint}")
             return 1
 
         if any("--allow-delete" in cmd or cmd.split()[1:2] == ["sync"] for cmd in commands):

@@ -13,6 +13,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from library_sync.cli import cmd_pull, cmd_watch, configure_stdio_utf8
 from library_sync.cli import main as cli_main
 from library_sync.install_watch import (
@@ -34,6 +35,7 @@ from library_sync.watch import (
     DEFAULT_MAX_BACKOFF_S,
     ProcessLock,
     WatchController,
+    append_watch_log,
     load_drive_dotenv,
     run_watch_pipeline,
     watch_loop,
@@ -335,6 +337,105 @@ def test_watch_pipeline_loads_env_from_drive_scripts(tmp_path, monkeypatch):
     assert load_drive_dotenv(drive) is True
 
 
+def test_load_drive_dotenv_utf8_bom(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    scripts = drive / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / ".env").write_bytes(
+        b"\xef\xbb\xbfB2_REMOTE=b2\nB2_BUCKET=huntingszn-music\n"
+    )
+    monkeypatch.delenv("B2_REMOTE", raising=False)
+    monkeypatch.delenv("B2_BUCKET", raising=False)
+    assert load_drive_dotenv(drive) is True
+    assert os.environ["B2_REMOTE"] == "b2"
+    assert os.environ["B2_BUCKET"] == "huntingszn-music"
+    assert "\ufeffB2_REMOTE" not in os.environ
+
+
+def test_load_drive_dotenv_overrides_empty_env(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    scripts = drive / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / ".env").write_text("B2_REMOTE=b2\nB2_BUCKET=huntingszn-music\n", encoding="utf-8")
+    monkeypatch.setenv("B2_REMOTE", "")
+    monkeypatch.setenv("B2_BUCKET", "")
+    assert load_drive_dotenv(drive) is True
+    assert os.environ["B2_REMOTE"] == "b2"
+    assert os.environ["B2_BUCKET"] == "huntingszn-music"
+
+
+def test_load_drive_dotenv_follows_scripts_symlink(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    real_scripts = tmp_path / "real-scripts"
+    drive.mkdir()
+    real_scripts.mkdir()
+    (real_scripts / ".env").write_text(
+        "B2_REMOTE=b2\nB2_BUCKET=huntingszn-music\n", encoding="utf-8"
+    )
+    try:
+        (drive / "Scripts").symlink_to(real_scripts, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not supported")
+    monkeypatch.delenv("B2_REMOTE", raising=False)
+    monkeypatch.delenv("B2_BUCKET", raising=False)
+    assert load_drive_dotenv(drive) is True
+    assert os.environ["B2_REMOTE"] == "b2"
+
+
+def test_append_watch_log_survives_pythonw_none_stdout(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    drive.mkdir()
+    monkeypatch.setattr(sys, "stdout", None)
+    append_watch_log(drive, "start: pipeline")
+    text = (drive / "Scripts" / "data" / "watch.log").read_text(encoding="utf-8")
+    assert "start: pipeline" in text
+
+
+def test_append_watch_log_falls_back_to_pc_when_drive_unwritable(tmp_path, monkeypatch):
+    monkeypatch.setattr("library_sync.install_watch.local_data_dir", lambda: tmp_path / "pc")
+    drive = tmp_path / "not-a-dir"
+    drive.write_text("x", encoding="utf-8")
+    append_watch_log(drive, "failure: publish")
+    local = tmp_path / "pc" / "watch.log"
+    assert local.is_file()
+    assert "failure: publish" in local.read_text(encoding="utf-8")
+
+
+def test_append_watch_log_unmounted_writes_pc_log(tmp_path, monkeypatch):
+    monkeypatch.setattr("library_sync.install_watch.local_data_dir", lambda: tmp_path / "pc")
+    append_watch_log(None, "skip: drive not mounted")
+    text = (tmp_path / "pc" / "watch.log").read_text(encoding="utf-8")
+    assert "skip: drive not mounted" in text
+
+
+def test_watch_pipeline_sets_rclone_log_file(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    drive.mkdir()
+    pc = tmp_path / "pc"
+    seen: dict[str, str | None] = {}
+    monkeypatch.setenv("B2_REMOTE", "b2")
+    monkeypatch.setenv("B2_BUCKET", "huntingszn-music")
+    monkeypatch.setattr("library_sync.install_watch.local_data_dir", lambda: pc)
+
+    def fake_pull(*_a, **_k):
+        seen["log"] = os.environ.get("RCLONE_LOG_FILE")
+        seen["level"] = os.environ.get("RCLONE_LOG_LEVEL")
+        return "ok"
+
+    monkeypatch.setattr("library_sync.watch.pull_projects", fake_pull)
+    monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "library_sync.watch.publish_drive",
+        lambda *a, **k: ["rclone copy --update src dst"],
+    )
+    monkeypatch.setattr("library_sync.watch.publish_sqlite", lambda *a, **k: None)
+    monkeypatch.setattr("library_sync.watch.publish_template", lambda *a, **k: None)
+    assert run_watch_pipeline(drive) == 0
+    assert seen["log"] == str(pc / "rclone.log")
+    assert seen["level"] == "INFO"
+    assert os.environ.get("RCLONE_LOG_FILE") != seen["log"]
+
+
 def test_watch_pipeline_missing_template_does_not_fail_publish(tmp_path, monkeypatch):
     drive = tmp_path / "Will Hunter Music"
     drive.mkdir()
@@ -531,6 +632,16 @@ def test_configure_stdio_utf8_sets_env(monkeypatch):
     configure_stdio_utf8()
     assert os.environ["PYTHONUTF8"] == "1"
     assert os.environ["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_configure_stdio_utf8_replaces_none_streams(monkeypatch):
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    configure_stdio_utf8()
+    assert sys.stdout is not None
+    assert sys.stderr is not None
+    sys.stdout.write("ok")
+    sys.stdout.flush()
 
 
 def test_stub_is_valid_python():
