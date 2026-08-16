@@ -114,6 +114,92 @@ def _find_windows_scripts_parent() -> Path | None:
     return None
 
 
+def _has_music_layout(path: Path) -> bool:
+    """True if ``path`` looks like the portable music drive, not merely exists."""
+    try:
+        return (
+            (path / "DJ Music").is_dir()
+            or (path / "Platnium Notes").is_dir()
+            or (path / "Scripts" / "pyproject.toml").is_file()
+        )
+    except OSError:
+        return False
+
+
+def _is_bare_drive_root(path: Path) -> bool:
+    """True for ``H:`` / ``H:\\`` / ``H:/``, not ``H:\\DJ Music``."""
+    if not path.drive:
+        return False
+    return str(path).rstrip("\\/") == path.drive
+
+
+def _windows_letter_is_music_volume(letter: str) -> bool | None:
+    """True/False if this letter's volume label is known; None if APIs are unavailable.
+
+    False includes "letter not in GetLogicalDrives bitmask" so callers can skip
+    ``Path.exists()`` on empty readers / stale letters.
+    """
+    letter = letter[:1].upper()
+    if not letter.isalpha():
+        return None
+    try:
+        import ctypes
+    except ImportError:
+        return None
+    try:
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+    try:
+        kernel32.GetLogicalDrives.restype = ctypes.c_uint32
+        mask = int(kernel32.GetLogicalDrives())
+    except OSError:
+        return None
+    bit = ord(letter) - ord("A")
+    if not mask & (1 << bit):
+        return False
+    kernel32.GetVolumeInformationW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    ]
+    kernel32.GetVolumeInformationW.restype = ctypes.c_int
+    buf = ctypes.create_unicode_buffer(1024)
+    root_s = letter + ":\\"
+    try:
+        ok = kernel32.GetVolumeInformationW(root_s, buf, 1024, None, None, None, None, 0)
+    except OSError:
+        return False
+    return bool(ok) and buf.value in VOLUME_NAMES
+
+
+def _windows_env_override_ok(path: Path) -> bool:
+    """Whether MUSIC_DRIVE_ROOT should be used on Windows.
+
+    ``Path.exists()`` is not enough. Windows remounts HuntingSzn as ``E:``
+    *because* ``H:`` is already taken; a pinned ``MUSIC_DRIVE_ROOT=H:`` would
+    then publish the wrong volume (or idle on a non-music drive). Bare letters
+    must match the music volume label. Do not ``exists()`` / ``is_dir()`` a
+    rejected bare letter (empty card readers can hang).
+    """
+    if path.drive:
+        result = _windows_letter_is_music_volume(path.drive[0])
+        if result is True:
+            return True
+        if result is False:
+            if _is_bare_drive_root(path):
+                return False
+            return _has_music_layout(path)
+    if _is_bare_drive_root(path):
+        return False
+    return _has_music_layout(path)
+
+
 def find_drive(explicit: Path | None = None) -> Path | None:
     """Find the music drive.
 
@@ -122,22 +208,31 @@ def find_drive(explicit: Path | None = None) -> Path | None:
 
     Returns:
         Path to the drive root, or None if not found/mounted. A stale
-        MUSIC_DRIVE_ROOT that is not mounted falls through to volume-name scan.
+        MUSIC_DRIVE_ROOT that is not mounted, or a Windows letter that exists
+        but is not HuntingSzn / Will Hunter Music, falls through to volume-name
+        scan. ``--root`` / ``explicit`` still wins without a volume check.
     """
     if explicit is not None:
         return explicit if explicit.exists() else None
 
-    # Honor MUSIC_DRIVE_ROOT when that path is actually mounted. A stale value
-    # (H: after the stick remounted as E:) must not hide volume-name discovery.
+    # Honor MUSIC_DRIVE_ROOT when it still points at the music drive. A stale
+    # letter (H: missing) or a wrong live letter (H: taken, stick is E:) must
+    # not hide volume-name discovery — that is why the stick remounted as E:.
     env_override = os.environ.get("MUSIC_DRIVE_ROOT")
     if env_override:
         p = Path(env_override)
-        if p.drive and str(p) in {p.drive, p.drive + os.sep}:
+        if _is_bare_drive_root(p):
             p = Path(p.drive + os.sep)
-        if p.exists():
+        if sys.platform == "win32":
+            if _windows_env_override_ok(p):
+                return p
+        elif sys.platform == "darwin":
+            if p.exists() and (p.name in VOLUME_NAMES or _has_music_layout(p)):
+                return p
+        elif p.exists():
             return p
-        # Stale letter/path (H: after HuntingSzn came back as E:). The login stub
-        # falls through to volume-name scan; watch must too or it idles forever.
+        # Stale or wrong override. The login stub falls through to volume-name
+        # scan; watch must too or it publishes the wrong drive / idles forever.
 
     if sys.platform == "darwin":
         for vol_path in _MACOS_VOLUME_PATHS:

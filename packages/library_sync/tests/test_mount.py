@@ -20,6 +20,7 @@ class TestFindDrive:
     def test_env_override(self, tmp_path):
         fake_drive = tmp_path / "fake_drive"
         fake_drive.mkdir()
+        (fake_drive / "DJ Music").mkdir()
 
         with patch.dict(os.environ, {"MUSIC_DRIVE_ROOT": str(fake_drive)}):
             result = find_drive()
@@ -43,10 +44,41 @@ class TestFindDrive:
         monkeypatch.setattr("library_sync.mount._find_windows_scripts_parent", lambda: None)
         assert find_drive() == found
 
+    def test_existing_wrong_windows_env_falls_through_to_volume(self, tmp_path, monkeypatch):
+        """H: taken by another volume is why HuntingSzn remounts as E: — must not pin H:."""
+        wrong = tmp_path / "OtherUSB"
+        wrong.mkdir()
+        found = tmp_path / "HuntingSzn"
+        found.mkdir()
+        monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(wrong))
+        monkeypatch.setattr("library_sync.mount.sys.platform", "win32")
+        monkeypatch.setattr("library_sync.mount._find_windows_volume", lambda: found)
+        monkeypatch.setattr("library_sync.mount._find_windows_scripts_parent", lambda: None)
+        assert find_drive() == found
+
+    def test_windows_env_folder_copy_with_layout_is_used(self, tmp_path, monkeypatch):
+        copy = tmp_path / "library-copy"
+        (copy / "DJ Music").mkdir(parents=True)
+        monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(copy))
+        monkeypatch.setattr("library_sync.mount.sys.platform", "win32")
+        monkeypatch.setattr("library_sync.mount._find_windows_volume", lambda: None)
+        monkeypatch.setattr("library_sync.mount._find_windows_scripts_parent", lambda: None)
+        assert find_drive() == copy
+
     def test_stale_env_falls_through_to_macos_volume(self, tmp_path, monkeypatch):
         monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(tmp_path / "not-mounted"))
         vol = tmp_path / "HuntingSzn"
         vol.mkdir()
+        monkeypatch.setattr("library_sync.mount.sys.platform", "darwin")
+        monkeypatch.setattr("library_sync.mount._MACOS_VOLUME_PATHS", [vol])
+        assert find_drive() == vol
+
+    def test_existing_wrong_macos_env_falls_through_to_volume(self, tmp_path, monkeypatch):
+        wrong = tmp_path / "MyBackup"
+        wrong.mkdir()
+        vol = tmp_path / "HuntingSzn"
+        vol.mkdir()
+        monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(wrong))
         monkeypatch.setattr("library_sync.mount.sys.platform", "darwin")
         monkeypatch.setattr("library_sync.mount._MACOS_VOLUME_PATHS", [vol])
         assert find_drive() == vol
@@ -66,7 +98,7 @@ class TestFindDrive:
             result = find_drive(explicit=tmp_path / "nonexistent")
             assert result is None
 
-    def test_explicit_path_wins_over_env(self, tmp_path):
+    def test_explicit_path_wins_over_env_even_without_music_layout(self, tmp_path):
         env_drive = tmp_path / "env_drive"
         explicit = tmp_path / "explicit"
         env_drive.mkdir()
@@ -89,6 +121,7 @@ class TestDriveIsMounted:
     def test_mounted(self, tmp_path):
         fake_drive = tmp_path / "mounted"
         fake_drive.mkdir()
+        (fake_drive / "DJ Music").mkdir()
 
         with patch.dict(os.environ, {"MUSIC_DRIVE_ROOT": str(fake_drive)}):
             assert drive_is_mounted() is True
@@ -135,6 +168,41 @@ def test_iter_logical_drive_letters_uses_bitmask():
     assert list(_iter_logical_drive_letters(0)) == []
     assert list(_iter_logical_drive_letters(0b0100)) == ["C"]
     assert list(_iter_logical_drive_letters(0b1100)) == ["C", "D"]
+
+
+class _FakeWinPath:
+    def __init__(self, text: str = "H:\\", drive: str = "H:") -> None:
+        self.drive = drive
+        self._text = text
+
+    def __str__(self) -> str:
+        return self._text
+
+    def __truediv__(self, other):
+        raise AssertionError("must not probe layout on a rejected bare letter")
+
+
+def test_is_bare_drive_root_accepts_letter_with_either_slash():
+    from library_sync.mount import _is_bare_drive_root
+
+    assert _is_bare_drive_root(_FakeWinPath("H:", "H:")) is True
+    assert _is_bare_drive_root(_FakeWinPath("H:\\", "H:")) is True
+    assert _is_bare_drive_root(_FakeWinPath("H:/", "H:")) is True
+    assert _is_bare_drive_root(_FakeWinPath("H:\\DJ Music", "H:")) is False
+
+
+def test_windows_env_override_ok_rejects_occupied_bare_letter_without_stat(monkeypatch):
+    from library_sync.mount import _windows_env_override_ok
+
+    monkeypatch.setattr("library_sync.mount._windows_letter_is_music_volume", lambda letter: False)
+    assert _windows_env_override_ok(_FakeWinPath()) is False
+
+
+def test_windows_env_override_ok_accepts_music_volume_letter(monkeypatch):
+    from library_sync.mount import _windows_env_override_ok
+
+    monkeypatch.setattr("library_sync.mount._windows_letter_is_music_volume", lambda letter: True)
+    assert _windows_env_override_ok(_FakeWinPath()) is True
 
 
 def test_windows_volume_falls_back_to_ctypes_when_wmic_missing(tmp_path, monkeypatch):

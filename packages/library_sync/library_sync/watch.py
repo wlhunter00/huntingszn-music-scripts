@@ -314,6 +314,13 @@ def run_watch_pipeline(
                 os.environ[key] = value
 
 
+def _root_key(path: Path) -> str:
+    """Identity for remount detection. ``H:`` / ``H:\\`` are the same volume."""
+    if path.drive:
+        return path.drive[0].upper()
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
 class WatchController:
     """Debounce mount bursts and refuse overlapping pipeline runs.
 
@@ -321,6 +328,8 @@ class WatchController:
       a run after debounce, not only a rising edge.
     - Rising edge (unmounted -> mounted) schedules a run and resets failure
       backoff (unplug/replug should not wait out a 15-minute cap).
+    - A Windows letter change (H: -> E:) is treated as a remount even if the
+      poll missed the unmounted gap; otherwise watch idles on the old run.
     - One in-flight run at a time; extra triggers queue a single follow-up.
     - A failed pipeline retries with exponential backoff (first retry after
       debounce, then 2x, 4x, … capped) so a persistent rclone error cannot
@@ -343,6 +352,7 @@ class WatchController:
         self._log = log
         self._started = False
         self._last_mounted = False
+        self._last_key: str | None = None
         self._pending_at: float | None = None
         self._wait_s = debounce_s
         self._queued = False
@@ -356,21 +366,32 @@ class WatchController:
         self._pending_at = self._monotonic()
         self._wait_s = self._debounce_s
 
-    def observe(self, mounted: bool) -> None:
-        """Record mount state and schedule on startup-mounted or rising edge."""
+    def observe(self, mounted: bool, drive_key: str | None = None) -> None:
+        """Record mount state and schedule on startup-mounted, rising edge, or letter change."""
         first = not self._started
         self._started = True
-        rising = mounted and (first or not self._last_mounted)
+        changed = (
+            mounted
+            and drive_key is not None
+            and self._last_key is not None
+            and drive_key != self._last_key
+        )
+        rising = mounted and (first or not self._last_mounted or changed)
         if rising:
             if not first:
                 self._fail_count = 0
             self._schedule()
         self._last_mounted = mounted
+        if mounted and drive_key is not None:
+            self._last_key = drive_key
+        elif not mounted:
+            self._last_key = None
 
     def tick(self, drive_root: Path | None) -> str:
         """Advance debounce/queue. Returns the action taken this tick."""
         mounted = drive_root is not None
-        self.observe(mounted)
+        key = _root_key(drive_root) if drive_root is not None else None
+        self.observe(mounted, key)
 
         if self.in_flight:
             return "in_flight"

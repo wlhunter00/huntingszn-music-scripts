@@ -186,6 +186,50 @@ def test_remount_resets_failure_backoff(tmp_path):
     assert runs == [1, 1, 1]
 
 
+def test_drive_letter_change_without_unmount_tick_retriggers(tmp_path):
+    """Poll can miss the unmounted gap when H: is taken and HuntingSzn returns as E:."""
+    runs: list[str] = []
+    clock = FakeClock()
+    ctl = WatchController(
+        run_pipeline=lambda drive: runs.append(str(drive)) or 0,
+        debounce_s=2,
+        monotonic=clock,
+        log=lambda *_: None,
+    )
+    old = tmp_path / "H"
+    new = tmp_path / "E"
+    old.mkdir()
+    new.mkdir()
+    ctl.tick(old)
+    clock.advance(2)
+    assert ctl.tick(old) == "run"
+    assert runs == [str(old)]
+    assert ctl.tick(new) == "wait_debounce"
+    clock.advance(2)
+    assert ctl.tick(new) == "run"
+    assert runs == [str(old), str(new)]
+
+
+def test_same_drive_path_does_not_retrigger(tmp_path):
+    runs: list[str] = []
+    clock = FakeClock()
+    ctl = WatchController(
+        run_pipeline=lambda drive: runs.append(str(drive)) or 0,
+        debounce_s=2,
+        monotonic=clock,
+        log=lambda *_: None,
+    )
+    drive = tmp_path / "HuntingSzn"
+    drive.mkdir()
+    ctl.tick(drive)
+    clock.advance(2)
+    assert ctl.tick(drive) == "run"
+    clock.advance(2)
+    assert ctl.tick(drive) == "idle"
+    assert ctl.tick(Path(drive)) == "idle"
+    assert runs == [str(drive)]
+
+
 def test_in_flight_run_queues_follow_up_instead_of_overlapping(tmp_path):
     runs: list[str] = []
     clock = FakeClock()
@@ -384,6 +428,60 @@ def test_watch_finds_volume_after_dotenv_stale_letter(tmp_path, monkeypatch):
     monkeypatch.setattr("library_sync.mount._find_windows_volume", lambda: drive)
     monkeypatch.setattr("library_sync.mount._find_windows_scripts_parent", lambda: None)
     assert find_drive() == drive
+
+
+def test_watch_finds_volume_when_pinned_letter_exists_as_other_drive(tmp_path, monkeypatch):
+    """cli load_dotenv pins H: from .env; H: occupied is why the stick is E:."""
+    wrong = tmp_path / "OtherUSB"
+    wrong.mkdir()
+    drive = tmp_path / "HuntingSzn"
+    (drive / "DJ Music").mkdir(parents=True)
+    monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(wrong))
+    monkeypatch.setattr("library_sync.mount.sys.platform", "win32")
+    monkeypatch.setattr("library_sync.mount._find_windows_volume", lambda: drive)
+    monkeypatch.setattr("library_sync.mount._find_windows_scripts_parent", lambda: None)
+    assert find_drive() == drive
+    assert find_drive() != wrong
+
+    runs: list[str] = []
+    clock = FakeClock()
+    ticks = {"n": 0}
+
+    def sleep(_s: float) -> None:
+        clock.advance(8)
+
+    def should_stop() -> bool:
+        ticks["n"] += 1
+        return ticks["n"] > 4 or bool(runs)
+
+    lock = tmp_path / "watch.lock"
+    rc = watch_loop(
+        debounce_s=8,
+        poll_s=8,
+        find=find_drive,
+        run_pipeline=lambda d: runs.append(str(d)) or 0,
+        sleep=sleep,
+        should_stop=should_stop,
+        lock_path=lock,
+        monotonic=clock,
+    )
+    assert rc == 0
+    assert runs == [str(drive)]
+
+
+def test_watch_once_explicit_root_skips_env_and_volume_scan(tmp_path, monkeypatch):
+    explicit = tmp_path / "custom-root"
+    explicit.mkdir()
+    monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(tmp_path / "other"))
+    monkeypatch.setattr(
+        "library_sync.mount._find_windows_volume",
+        lambda: (_ for _ in ()).throw(AssertionError("volume scan must not run")),
+    )
+    with patch("library_sync.watch.run_watch_pipeline", return_value=0) as pipeline:
+        rc = watch_once(debounce_s=0, root=explicit, lock_path=tmp_path / "watch.lock")
+    assert rc == 0
+    pipeline.assert_called_once()
+    assert pipeline.call_args[0][0] == explicit
 
 
 def test_load_drive_dotenv_overrides_empty_env(tmp_path, monkeypatch):
