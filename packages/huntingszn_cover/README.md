@@ -69,8 +69,8 @@ huntingszn-cover mashup \
 **Default behavior** (web fetch is required, not optional):
 1. **ALWAYS** fetches fresh album covers via SerpAPI Google Images (~5 per track)
 2. Auto-selects the best square cover per track (default, use `--pick` to manually select)
-3. Creates a composite via OpenAI multi-image edit (`gpt-image-1.5`, fallback `gpt-image-1`)
-4. Transforms composite + each original with clean and crystal prompts
+3. Creates two composites via OpenAI multi-image edit (`gpt-image-1.5`, fallback `gpt-image-1`), swapping image order so each track is the primary cover once
+4. Transforms both composites + each original with clean and crystal prompts
 5. Generates `manifest.json` tracking all outputs
 6. Copies to `/Volumes/HuntingSzn/Thumbnails/Releases/<Mashup Name>/` if mounted
 
@@ -114,9 +114,9 @@ Fetched images are saved under `originals/<track-slug>/` with sequential naming 
 ### Our Output Naming
 
 Transformed outputs follow this pattern:
-- `<slug>-composite.png` - Raw composite
-- `<slug>-composite-clean.png` - Composite with clean prompt
-- `<slug>-composite-crystal.png` - Composite with crystal prompt
+- `<slug>-composite-primary-<track-slug>.png` - Raw composite with that track as the main cover
+- `<slug>-composite-primary-<track-slug>-clean.png` - Composite with clean prompt
+- `<slug>-composite-primary-<track-slug>-crystal.png` - Composite with crystal prompt
 - `<track-slug>-clean.png` - Individual track, clean
 - `<track-slug>-crystal.png` - Individual track, crystal
 
@@ -132,12 +132,12 @@ Our tool uses the structured naming above instead.
 
 Prompts are loaded at runtime from these locations (in order):
 
-1. Environment variables: `HUNTINGSZN_PROMPT_CLEAN`, `HUNTINGSZN_PROMPT_CRYSTAL`
+1. Environment variables: `HUNTINGSZN_PROMPT_CLEAN`, `HUNTINGSZN_PROMPT_CRYSTAL`, `HUNTINGSZN_PROMPT_COMPOSITE`
 2. Package prompts: `huntingszn_cover/prompts/album-prompt-*.txt`
 3. Workspace: `./huntingszn-assets/cover-prompts/album-prompt-*.txt` (relative to cwd)
 4. Volume: `/Volumes/HuntingSzn/Thumbnails/Album Prompt - *.txt`
 
-The wordmark in prompt files should be `HUNTINGSZN EDIT` (not FLIP).
+The wordmark in clean/crystal prompt files should be `HUNTINGSZN EDIT` (not FLIP). The mashup composite prompt is a locked images.edit instruction and does not use that wordmark.
 
 **Important**: Prompt files already forbid adding extra logos. Brand assets live at `/Volumes/HuntingSzn/Thumbnails/Logos/` - do not bake additional logos into transforms.
 
@@ -146,9 +146,12 @@ The wordmark in prompt files should be `HUNTINGSZN EDIT` (not FLIP).
 ```
 ./covers/<slug>/
 ├── manifest.json
-├── <slug>-composite.png
-├── <slug>-composite-clean.png
-├── <slug>-composite-crystal.png
+├── <slug>-composite-primary-<track1-slug>.png
+├── <slug>-composite-primary-<track1-slug>-clean.png
+├── <slug>-composite-primary-<track1-slug>-crystal.png
+├── <slug>-composite-primary-<track2-slug>.png
+├── <slug>-composite-primary-<track2-slug>-clean.png
+├── <slug>-composite-primary-<track2-slug>-crystal.png
 ├── originals/
 │   ├── <track1-slug>/
 │   │   ├── cover_00.png

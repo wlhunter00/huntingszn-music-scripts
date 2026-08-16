@@ -54,6 +54,16 @@ class TestLoadPrompt:
         assert "HUNTINGSZN EDIT" in prompt
         assert "teal" in prompt.lower() or "crystal" in prompt.lower()
 
+    def test_load_composite_prompt(self) -> None:
+        """Should load the locked mashup composite prompt from package."""
+        prompt = load_prompt("composite")
+        assert prompt == (
+            "The first image is the main album cover. Combine the second image into it as secondary. "
+            "One cohesive cover, both recognizable. Do not split the canvas."
+        )
+        assert "blend" not in prompt.lower()
+        assert "mashup_name" not in prompt
+
     def test_env_var_override(self, tmp_path: Path) -> None:
         """Environment variable should override package prompts."""
         custom_prompt = "Custom prompt for testing - HUNTINGSZN EDIT"
@@ -93,6 +103,34 @@ class TestGetPrompt:
         """get_prompt should validate crystal prompt."""
         prompt = get_prompt("crystal")
         assert "HUNTINGSZN EDIT" in prompt
+
+    def test_get_prompt_composite_returns_locked_text(self) -> None:
+        """get_prompt('composite') returns the locked text and skips wordmark validation."""
+        prompt = get_prompt("composite")
+        assert prompt == (
+            "The first image is the main album cover. Combine the second image into it as secondary. "
+            "One cohesive cover, both recognizable. Do not split the canvas."
+        )
+        assert "HUNTINGSZN EDIT" not in prompt
+        assert "blend" not in prompt.lower()
+
+    def test_packaged_composite_prompt_file_is_locked_text(self) -> None:
+        from huntingszn_cover.prompts import _package_prompts_dir
+
+        text = (_package_prompts_dir() / "album-prompt-composite.txt").read_text(
+            encoding="utf-8"
+        ).strip()
+        assert text == get_prompt("composite")
+
+    def test_assets_composite_prompt_copy_matches_locked_text(self) -> None:
+        assets = (
+            Path(__file__).resolve().parents[3]
+            / "huntingszn-assets"
+            / "cover-prompts"
+            / "album-prompt-composite.txt"
+        )
+        assert assets.is_file()
+        assert assets.read_text(encoding="utf-8").strip() == get_prompt("composite")
 
     def test_validation_can_be_disabled(self, tmp_path: Path) -> None:
         """Should be able to skip validation."""
