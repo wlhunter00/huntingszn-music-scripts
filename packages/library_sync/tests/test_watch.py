@@ -29,7 +29,7 @@ from library_sync.install_watch import (
     resolve_uv,
     uninstall_watch,
 )
-from library_sync.mount import VOLUME_NAME, VOLUME_NAME_ALT
+from library_sync.mount import VOLUME_NAME, VOLUME_NAME_ALT, find_drive
 from library_sync.rclone import publish_drive
 from library_sync.watch import (
     DEFAULT_MAX_BACKOFF_S,
@@ -355,6 +355,35 @@ def test_load_drive_dotenv_utf8_bom(tmp_path, monkeypatch):
     assert os.environ["B2_REMOTE"] == "b2"
     assert os.environ["B2_BUCKET"] == "huntingszn-music"
     assert "\ufeffB2_REMOTE" not in os.environ
+
+
+def test_load_drive_dotenv_does_not_pin_music_drive_root(tmp_path, monkeypatch):
+    drive = tmp_path / "HuntingSzn"
+    scripts = drive / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / ".env").write_text(
+        "MUSIC_DRIVE_ROOT=H:\\\nB2_REMOTE=b2\nB2_BUCKET=huntingszn-music\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("MUSIC_DRIVE_ROOT", raising=False)
+    monkeypatch.delenv("B2_REMOTE", raising=False)
+    monkeypatch.delenv("B2_BUCKET", raising=False)
+    assert load_drive_dotenv(drive) is True
+    assert os.environ["B2_REMOTE"] == "b2"
+    assert os.environ["B2_BUCKET"] == "huntingszn-music"
+    assert "MUSIC_DRIVE_ROOT" not in os.environ
+
+
+def test_watch_finds_volume_after_dotenv_stale_letter(tmp_path, monkeypatch):
+    """User env / cli load_dotenv may pin H:; remount as another letter must still run."""
+    stale = tmp_path / "not-mounted"
+    monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(stale))
+    drive = tmp_path / "HuntingSzn"
+    drive.mkdir()
+    monkeypatch.setattr("library_sync.mount.sys.platform", "win32")
+    monkeypatch.setattr("library_sync.mount._find_windows_volume", lambda: drive)
+    monkeypatch.setattr("library_sync.mount._find_windows_scripts_parent", lambda: None)
+    assert find_drive() == drive
 
 
 def test_load_drive_dotenv_overrides_empty_env(tmp_path, monkeypatch):

@@ -173,7 +173,8 @@ def load_drive_dotenv(drive_root: Path) -> bool:
     Notepad UTF-8 BOM cannot turn ``B2_REMOTE`` into ``\\ufeffB2_REMOTE``. Writes
     values into ``os.environ`` so empty Task Scheduler / user-env placeholders
     cannot block the drive file (``load_dotenv(override=True)`` is not enough on
-    every python-dotenv version when the existing value is ``""``).
+    every python-dotenv version when the existing value is ``""``). Skips
+    ``MUSIC_DRIVE_ROOT`` so a pinned letter in ``.env`` cannot hide a remount.
     """
     env_path = drive_root / "Scripts" / ".env"
     try:
@@ -191,8 +192,10 @@ def load_drive_dotenv(drive_root: Path) -> bool:
         values = dotenv_values(env_path, encoding="utf-8-sig")
     except (OSError, UnicodeError):
         return False
+    # MUSIC_DRIVE_ROOT in .env is a pinned letter (often H:). Loading it into a
+    # long-lived watch process would hide HuntingSzn when Windows remounts as E:.
     for key, value in values.items():
-        if not key or value is None:
+        if not key or value is None or key == "MUSIC_DRIVE_ROOT":
             continue
         os.environ[key] = value
     return True

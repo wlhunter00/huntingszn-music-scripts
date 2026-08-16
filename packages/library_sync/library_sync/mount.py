@@ -121,11 +121,14 @@ def find_drive(explicit: Path | None = None) -> Path | None:
         explicit: If provided, use this path and ignore MUSIC_DRIVE_ROOT
 
     Returns:
-        Path to the drive root, or None if not found/mounted
+        Path to the drive root, or None if not found/mounted. A stale
+        MUSIC_DRIVE_ROOT that is not mounted falls through to volume-name scan.
     """
     if explicit is not None:
         return explicit if explicit.exists() else None
 
+    # Honor MUSIC_DRIVE_ROOT when that path is actually mounted. A stale value
+    # (H: after the stick remounted as E:) must not hide volume-name discovery.
     env_override = os.environ.get("MUSIC_DRIVE_ROOT")
     if env_override:
         p = Path(env_override)
@@ -133,7 +136,8 @@ def find_drive(explicit: Path | None = None) -> Path | None:
             p = Path(p.drive + os.sep)
         if p.exists():
             return p
-        return None
+        # Stale letter/path (H: after HuntingSzn came back as E:). The login stub
+        # falls through to volume-name scan; watch must too or it idles forever.
 
     if sys.platform == "darwin":
         for vol_path in _MACOS_VOLUME_PATHS:

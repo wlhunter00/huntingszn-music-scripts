@@ -29,8 +29,27 @@ class TestFindDrive:
         fake_drive = tmp_path / "nonexistent"
 
         with patch.dict(os.environ, {"MUSIC_DRIVE_ROOT": str(fake_drive)}):
-            result = find_drive()
-            assert result is None
+            with patch("library_sync.mount.sys") as mock_sys:
+                mock_sys.platform = "linux"
+                result = find_drive()
+                assert result is None
+
+    def test_stale_env_falls_through_to_windows_volume(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(tmp_path / "not-mounted"))
+        found = tmp_path / "HuntingSzn"
+        found.mkdir()
+        monkeypatch.setattr("library_sync.mount.sys.platform", "win32")
+        monkeypatch.setattr("library_sync.mount._find_windows_volume", lambda: found)
+        monkeypatch.setattr("library_sync.mount._find_windows_scripts_parent", lambda: None)
+        assert find_drive() == found
+
+    def test_stale_env_falls_through_to_macos_volume(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MUSIC_DRIVE_ROOT", str(tmp_path / "not-mounted"))
+        vol = tmp_path / "HuntingSzn"
+        vol.mkdir()
+        monkeypatch.setattr("library_sync.mount.sys.platform", "darwin")
+        monkeypatch.setattr("library_sync.mount._MACOS_VOLUME_PATHS", [vol])
+        assert find_drive() == vol
 
     def test_explicit_path(self, tmp_path):
         fake_drive = tmp_path / "explicit"
