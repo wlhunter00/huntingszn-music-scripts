@@ -174,12 +174,15 @@ def publish_drive(
     *,
     dry_run: bool = False,
     allow_delete: bool = False,
+    update: bool = False,
 ) -> list[str]:
     """Copy (default) or sync the drive to B2 bucket root.
 
     Default is copy: never deletes remote files; overwrites dest from the drive.
     allow_delete uses sync, which removes dest files that are not on the local
     drive, except excluded B2-only prefixes (projects/, metadata/, templates/).
+    update adds rclone ``--update`` (skip dest files that are newer) and is
+    ignored when allow_delete is set.
 
     Returns list of commands that were (or would be) executed.
     """
@@ -187,10 +190,16 @@ def publish_drive(
     args = [
         action,
         "--progress",
-        str(drive_root),
-        _bucket_target(config, "/"),
-        *_get_exclude_args(),
     ]
+    if update and not allow_delete:
+        args.append("--update")
+    args.extend(
+        [
+            str(drive_root),
+            _bucket_target(config, "/"),
+            *_get_exclude_args(),
+        ]
+    )
     return [_print_or_run(args, config, dry_run=dry_run)]
 
 

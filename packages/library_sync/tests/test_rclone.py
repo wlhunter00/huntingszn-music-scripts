@@ -155,6 +155,17 @@ class TestPublishMode:
         assert "._*" in tokens
         assert "/Scripts/data/library.sqlite-journal" in tokens
 
+    def test_update_flag_is_copy_update_not_sync(self, tmp_path):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
+        commands = publish_drive(drive_root, config, update=True)
+        tokens = shlex.split(commands[0])
+        assert tokens[1] == "copy"
+        assert "--update" in tokens
+        assert "sync" not in tokens
+        assert "--allow-delete" not in tokens
+
     def test_allow_delete_uses_sync(self, tmp_path):
         drive_root = tmp_path / "drive"
         drive_root.mkdir()
