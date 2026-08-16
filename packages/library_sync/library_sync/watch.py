@@ -363,6 +363,10 @@ class WatchController:
         if self.in_flight:
             self._queued = True
             return
+        # A new debounce (startup, remount, H:→E:) replaces a failure retry.
+        # Leaving _queued set caused a second full-drive publish after the
+        # remount run succeeded — the R6 letter-change path after a yank.
+        self._queued = False
         self._pending_at = self._monotonic()
         self._wait_s = self._debounce_s
 

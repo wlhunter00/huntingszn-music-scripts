@@ -208,6 +208,84 @@ def test_drive_letter_change_without_unmount_tick_retriggers(tmp_path):
     clock.advance(2)
     assert ctl.tick(new) == "run"
     assert runs == [str(old), str(new)]
+    clock.advance(2)
+    assert ctl.tick(new) == "idle"
+    assert runs == [str(old), str(new)]
+
+
+def test_failed_run_then_letter_change_does_not_double_publish(tmp_path):
+    """H: yank (fail) then E: remount must publish once, not a leftover retry."""
+    runs: list[str] = []
+    clock = FakeClock()
+    results = {"n": 0}
+
+    def pipeline(drive):
+        results["n"] += 1
+        runs.append(str(drive))
+        return 1 if results["n"] == 1 else 0
+
+    ctl = WatchController(
+        run_pipeline=pipeline,
+        debounce_s=2,
+        monotonic=clock,
+        log=lambda *_: None,
+    )
+    old = tmp_path / "H"
+    new = tmp_path / "E"
+    old.mkdir()
+    new.mkdir()
+    ctl.tick(old)
+    clock.advance(2)
+    assert ctl.tick(old) == "run_failed"
+    assert ctl.tick(new) == "wait_debounce"
+    clock.advance(2)
+    assert ctl.tick(new) == "run"
+    assert runs == [str(old), str(new)]
+    clock.advance(2)
+    assert ctl.tick(new) == "idle"
+    assert runs == [str(old), str(new)]
+
+
+def test_failed_then_successful_retry_does_not_queue_extra_publish(tmp_path):
+    runs: list[int] = []
+    clock = FakeClock()
+    results = {"n": 0}
+
+    def pipeline(_drive):
+        results["n"] += 1
+        runs.append(results["n"])
+        return 1 if results["n"] == 1 else 0
+
+    ctl = WatchController(
+        run_pipeline=pipeline,
+        debounce_s=2,
+        monotonic=clock,
+        log=lambda *_: None,
+    )
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    ctl.tick(drive)
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    assert ctl.tick(drive) == "wait_debounce"
+    clock.advance(2)
+    assert ctl.tick(drive) == "run"
+    clock.advance(2)
+    assert ctl.tick(drive) == "idle"
+    assert runs == [1, 2]
+
+
+def test_root_key_windows_letter_not_path_string():
+    from pathlib import PureWindowsPath
+
+    from library_sync.watch import _root_key
+
+    assert _root_key(PureWindowsPath("H:\\")) == "H"
+    assert _root_key(PureWindowsPath("H:")) == "H"
+    assert _root_key(PureWindowsPath("H:/")) == "H"
+    assert _root_key(PureWindowsPath("E:\\")) == "E"
+    assert _root_key(PureWindowsPath("H:\\")) != _root_key(PureWindowsPath("E:\\"))
+    assert _root_key(PureWindowsPath("h:\\")) == _root_key(PureWindowsPath("H:\\"))
 
 
 def test_same_drive_path_does_not_retrigger(tmp_path):
@@ -924,6 +1002,10 @@ def test_stub_windows_root_is_drive_root_not_cwd():
     assert 'endswith((".cmd", ".bat"))' in stub
     assert "0x08000000" in stub
     assert "0x01000000" not in stub
+    assert "_windows_letter_is_music" in stub
+    assert "_is_bare_windows_root" in stub
+    assert "_macos_volume_name_ok" in stub
+    assert 'extra[:1] == " " and extra[1:].isdigit()' in stub
 
 
 def test_stub_bakes_install_path_and_never_once():

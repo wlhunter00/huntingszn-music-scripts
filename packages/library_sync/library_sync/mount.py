@@ -185,12 +185,16 @@ def _windows_env_override_ok(path: Path) -> bool:
     *because* ``H:`` is already taken; a pinned ``MUSIC_DRIVE_ROOT=H:`` would
     then publish the wrong volume (or idle on a non-music drive). Bare letters
     must match the music volume label. Do not ``exists()`` / ``is_dir()`` a
-    rejected bare letter (empty card readers can hang).
+    rejected bare letter (empty card readers can hang). A music-labeled letter
+    still rejects a subdirectory override (``H:\\DJ Music``) so watch publishes
+    the volume root, not a folder as the bucket root.
     """
     if path.drive:
         result = _windows_letter_is_music_volume(path.drive[0])
         if result is True:
-            return True
+            if _is_bare_drive_root(path):
+                return True
+            return _has_music_layout(path)
         if result is False:
             if _is_bare_drive_root(path):
                 return False
@@ -198,6 +202,55 @@ def _windows_env_override_ok(path: Path) -> bool:
     if _is_bare_drive_root(path):
         return False
     return _has_music_layout(path)
+
+
+def _macos_disambiguated_name(name: str) -> bool:
+    """True for ``HuntingSzn`` / ``Will Hunter Music`` or macOS ``Name 1``."""
+    if name in VOLUME_NAMES:
+        return True
+    for vol in VOLUME_NAMES:
+        extra = name[len(vol) :]
+        if name.startswith(vol) and extra[:1] == " " and extra[1:].isdigit():
+            return True
+    return False
+
+
+def _macos_volume_ok(path: Path) -> bool:
+    """Reject a stale ``/Volumes/HuntingSzn`` directory that is not a mount."""
+    try:
+        if not path.exists():
+            return False
+    except OSError:
+        return False
+    try:
+        if path.is_mount():
+            return True
+    except OSError:
+        pass
+    return _has_music_layout(path)
+
+
+def _macos_override_ok(path: Path) -> bool:
+    """Honor MUSIC_DRIVE_ROOT on macOS only for a music volume or layout copy."""
+    if not _macos_volume_ok(path):
+        return False
+    return _macos_disambiguated_name(path.name) or _has_music_layout(path)
+
+
+def _iter_macos_volume_paths():
+    """Exact ``/Volumes`` names, then Finder's ``HuntingSzn 1`` when taken."""
+    yield from _MACOS_VOLUME_PATHS
+    volumes = Path("/Volumes")
+    try:
+        entries = list(volumes.iterdir())
+    except OSError:
+        return
+    seen = {str(path) for path in _MACOS_VOLUME_PATHS}
+    for entry in entries:
+        if str(entry) in seen:
+            continue
+        if _macos_disambiguated_name(entry.name):
+            yield entry
 
 
 def find_drive(explicit: Path | None = None) -> Path | None:
@@ -227,7 +280,7 @@ def find_drive(explicit: Path | None = None) -> Path | None:
             if _windows_env_override_ok(p):
                 return p
         elif sys.platform == "darwin":
-            if p.exists() and (p.name in VOLUME_NAMES or _has_music_layout(p)):
+            if _macos_override_ok(p):
                 return p
         elif p.exists():
             return p
@@ -235,8 +288,8 @@ def find_drive(explicit: Path | None = None) -> Path | None:
         # scan; watch must too or it publishes the wrong drive / idles forever.
 
     if sys.platform == "darwin":
-        for vol_path in _MACOS_VOLUME_PATHS:
-            if vol_path.exists():
+        for vol_path in _iter_macos_volume_paths():
+            if _macos_volume_ok(vol_path):
                 return vol_path
         return None
 

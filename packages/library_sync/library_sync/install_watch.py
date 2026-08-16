@@ -99,18 +99,79 @@ def _scripts_if_valid(root: Path) -> Path | None:
     return None
 
 
+def _is_bare_windows_root(path: Path) -> bool:
+    text = str(path).rstrip("\\\\/")
+    return len(text) == 2 and text[1] == ":" and text[0].isalpha()
+
+
+def _macos_volume_name_ok(name: str) -> bool:
+    if name in VOLUME_NAMES:
+        return True
+    for vol in VOLUME_NAMES:
+        extra = name[len(vol):]
+        if name.startswith(vol) and extra[:1] == " " and extra[1:].isdigit():
+            return True
+    return False
+
+
+def _windows_letter_is_music(letter: str) -> bool:
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.GetLogicalDrives.restype = ctypes.c_uint32
+    kernel32.GetVolumeInformationW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    ]
+    kernel32.GetVolumeInformationW.restype = ctypes.c_int
+    try:
+        mask = int(kernel32.GetLogicalDrives())
+    except OSError:
+        return False
+    bit = ord(letter[:1].upper()) - ord("A")
+    if bit < 0 or bit > 25 or not mask & (1 << bit):
+        return False
+    buf = ctypes.create_unicode_buffer(1024)
+    root_s = letter[:1].upper() + ":\\\\"
+    try:
+        ok = kernel32.GetVolumeInformationW(root_s, buf, 1024, None, None, None, None, 0)
+    except OSError:
+        return False
+    return bool(ok) and buf.value in VOLUME_NAMES
+
+
 def find_scripts() -> Path | None:
     env = os.environ.get("MUSIC_DRIVE_ROOT")
     if env:
-        found = _scripts_if_valid(Path(env))
-        if found is not None:
-            return found
-
-    if sys.platform == "darwin":
-        for name in VOLUME_NAMES:
-            found = _scripts_if_valid(Path("/Volumes") / name)
+        root = Path(env)
+        if sys.platform == "win32" and _is_bare_windows_root(root):
+            if not _windows_letter_is_music(str(root).rstrip("\\\\/")[0]):
+                root = None
+        if root is not None:
+            found = _scripts_if_valid(root)
             if found is not None:
                 return found
+
+    if sys.platform == "darwin":
+        volumes = Path("/Volumes")
+        for name in VOLUME_NAMES:
+            found = _scripts_if_valid(volumes / name)
+            if found is not None:
+                return found
+        try:
+            for entry in volumes.iterdir():
+                if _macos_volume_name_ok(entry.name):
+                    found = _scripts_if_valid(entry)
+                    if found is not None:
+                        return found
+        except OSError:
+            pass
         return None
 
     if sys.platform == "win32":
