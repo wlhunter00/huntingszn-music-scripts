@@ -227,6 +227,7 @@ class WatchController:
       a run after debounce, not only a rising edge.
     - Rising edge (unmounted -> mounted) schedules a run.
     - One in-flight run at a time; extra triggers queue a single follow-up.
+    - A failed pipeline queues one retry after debounce (login/network races).
     """
 
     def __init__(
@@ -289,17 +290,22 @@ class WatchController:
 
         self._pending_at = None
         self.in_flight = True
+        failed = False
         try:
             self._log(drive_root, f"start: pipeline (drive={drive_root})")
             rc = self._run_pipeline(drive_root)
             if rc != 0:
+                failed = True
                 self._log(drive_root, f"finish: pipeline failed (exit {rc})")
             return "run" if rc == 0 else "run_failed"
         except Exception as exc:
+            failed = True
             self._log(drive_root, f"failure: {exc}")
             return "run_failed"
         finally:
             self.in_flight = False
+            if failed:
+                self._queued = True
 
 
 def watch_once(

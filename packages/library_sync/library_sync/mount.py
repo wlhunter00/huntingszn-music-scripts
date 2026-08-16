@@ -32,6 +32,58 @@ def _wmic_drive_letter_for_music_volume(line: str) -> str | None:
     return None
 
 
+def _iter_logical_drive_letters(mask: int):
+    """Yield drive letters whose bit is set in GetLogicalDrives()."""
+    import string
+
+    for i, letter in enumerate(string.ascii_uppercase):
+        if mask & (1 << i):
+            yield letter
+
+
+def _find_windows_volume_ctypes() -> Path | None:
+    """Scan mounted volumes via GetLogicalDrives + GetVolumeInformationW.
+
+    wmic is missing on some Windows 11 installs; Path.exists() on A:..Z: can hang
+    on empty floppy/card readers, so only letters present in the bitmask are used.
+    """
+    try:
+        import ctypes
+    except ImportError:
+        return None
+    try:
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+
+    kernel32.GetLogicalDrives.restype = ctypes.c_uint32
+    kernel32.GetVolumeInformationW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    ]
+    kernel32.GetVolumeInformationW.restype = ctypes.c_int
+    buf = ctypes.create_unicode_buffer(1024)
+    try:
+        mask = int(kernel32.GetLogicalDrives())
+    except OSError:
+        return None
+    for letter in _iter_logical_drive_letters(mask):
+        root_s = letter + ":\\"
+        try:
+            ok = kernel32.GetVolumeInformationW(root_s, buf, 1024, None, None, None, None, 0)
+        except OSError:
+            continue
+        if ok and buf.value in VOLUME_NAMES:
+            return Path(root_s)
+    return None
+
+
 def _find_windows_volume() -> Path | None:
     """Find a Windows drive with the expected volume label."""
     try:
@@ -41,15 +93,14 @@ def _find_windows_volume() -> Path | None:
             text=True,
             timeout=10,
         )
-        if result.returncode != 0:
-            return None
-        for line in result.stdout.strip().splitlines()[1:]:
-            drive_letter = _wmic_drive_letter_for_music_volume(line)
-            if drive_letter:
-                return Path(drive_letter + os.sep)
+        if result.returncode == 0:
+            for line in result.stdout.strip().splitlines()[1:]:
+                drive_letter = _wmic_drive_letter_for_music_volume(line)
+                if drive_letter:
+                    return Path(drive_letter + os.sep)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
-    return None
+    return _find_windows_volume_ctypes()
 
 
 def _find_windows_scripts_parent() -> Path | None:

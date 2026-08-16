@@ -8,6 +8,8 @@ from library_sync.mount import (
     VOLUME_NAME,
     VOLUME_NAME_ALT,
     VOLUME_NAMES,
+    _find_windows_volume,
+    _iter_logical_drive_letters,
     _wmic_drive_letter_for_music_volume,
     drive_is_mounted,
     find_drive,
@@ -108,6 +110,24 @@ class TestWmicVolumeParse:
 
     def test_header_line(self):
         assert _wmic_drive_letter_for_music_volume("Name  VolumeName") is None
+
+
+def test_iter_logical_drive_letters_uses_bitmask():
+    assert list(_iter_logical_drive_letters(0)) == []
+    assert list(_iter_logical_drive_letters(0b0100)) == ["C"]
+    assert list(_iter_logical_drive_letters(0b1100)) == ["C", "D"]
+
+
+def test_windows_volume_falls_back_to_ctypes_when_wmic_missing(tmp_path, monkeypatch):
+    fake = tmp_path / "HuntingSzn"
+    fake.mkdir()
+
+    def boom(*_a, **_k):
+        raise FileNotFoundError("wmic")
+
+    monkeypatch.setattr("library_sync.mount.subprocess.run", boom)
+    monkeypatch.setattr("library_sync.mount._find_windows_volume_ctypes", lambda: fake)
+    assert _find_windows_volume() == fake
 
 
 class TestMacOSVolumeDetection:

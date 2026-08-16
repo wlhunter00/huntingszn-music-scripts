@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 import os
+import plistlib
+import re
 import shlex
 import sys
+import xml.etree.ElementTree as ET
 from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +17,7 @@ from library_sync.cli import cmd_pull, cmd_watch, configure_stdio_utf8
 from library_sync.cli import main as cli_main
 from library_sync.install_watch import (
     LAUNCHD_LABEL,
+    _xml_escape,
     render_launchd_plist,
     render_stub,
     render_systemd_unit,
@@ -84,6 +89,27 @@ def test_already_mounted_at_start_still_runs_after_debounce(tmp_path):
     clock.advance(2)
     assert ctl.tick(drive) == "run"
     assert runs == ["go"]
+
+
+def test_failed_pipeline_retries_after_debounce(tmp_path):
+    runs: list[int] = []
+    clock = FakeClock()
+    ctl = WatchController(
+        run_pipeline=lambda drive: runs.append(1) or 1,
+        debounce_s=2,
+        monotonic=clock,
+        log=lambda *_: None,
+    )
+    drive = tmp_path / "drive"
+    drive.mkdir()
+    assert ctl.tick(drive) == "wait_debounce"
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    assert runs == [1]
+    assert ctl.tick(drive) == "wait_debounce"
+    clock.advance(2)
+    assert ctl.tick(drive) == "run_failed"
+    assert runs == [1, 1]
 
 
 def test_in_flight_run_queues_follow_up_instead_of_overlapping(tmp_path):
@@ -346,11 +372,15 @@ def test_windows_task_xml_ignores_overlapping_and_has_no_drive_letter(tmp_path):
     assert "LogonTrigger" in xml
     assert str(cmd) in xml
     assert "H:" not in xml
+    assert "<Hidden>true</Hidden>" in xml
     wrapper = render_windows_cmd(
-        Path(r"C:\Users\Will\.local\bin\uv.exe"), tmp_path / "watch-stub.py"
+        Path(r"C:\Users\Will\.local\bin\uv.exe"),
+        tmp_path / "watch-stub.py",
+        r"C:\Users\Will\.local\bin;C:\Windows\system32",
     )
     assert "PYTHONUTF8=1" in wrapper
     assert "H:" not in wrapper
+    assert r"C:\Users\Will\.local\bin" in wrapper
 
 
 def test_systemd_unit_restarts_and_sets_utf8(tmp_path):
@@ -386,6 +416,84 @@ def test_stub_is_valid_python():
     compile(stub, "watch-stub.py", "exec")
     assert "HuntingSzn" in stub
     assert "Will Hunter Music" in stub
+
+
+def test_xml_escape_emits_entities():
+    assert _xml_escape('a<b>c"d&e') == "a&lt;b&gt;c&quot;d&amp;e"
+
+
+def test_launchd_plist_is_well_formed_plist(tmp_path):
+    uv = Path("/opt/homebrew/bin/uv")
+    stub = tmp_path / "Application Support" / "library-sync" / "watch-stub.py"
+    plist = render_launchd_plist(uv, stub, "/opt/homebrew/bin:/usr/bin")
+    data = plistlib.loads(plist.encode("utf-8"))
+    assert data["Label"] == LAUNCHD_LABEL
+    assert data["RunAtLoad"] is True
+    assert data["KeepAlive"] is True
+    assert data["ProgramArguments"] == [
+        str(uv),
+        "run",
+        "--python",
+        "3.12",
+        str(stub),
+    ]
+    assert data["EnvironmentVariables"]["PYTHONUTF8"] == "1"
+    assert data["EnvironmentVariables"]["PATH"].startswith("/opt/homebrew/bin")
+
+
+def test_windows_task_xml_is_well_formed_utf16(tmp_path):
+    cmd = tmp_path / "Will & Co" / "watch-stub.cmd"
+    cmd.parent.mkdir()
+    xml = render_windows_task_xml(
+        cmd,
+        arguments=f'"{cmd}"',
+        user_id=r"WILLS-GAMING\Will & Co",
+        working_directory=cmd.parent,
+    )
+    assert "&amp;" in xml
+    assert "&quot;" in xml
+    path = tmp_path / "watch-task.xml"
+    path.write_text(xml, encoding="utf-16")
+    assert path.read_bytes()[:2] == b"\xff\xfe"
+    tree = ET.parse(path)
+    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    assert tree.find(".//t:MultipleInstancesPolicy", ns).text == "IgnoreNew"
+    assert tree.find(".//t:ExecutionTimeLimit", ns).text == "PT0S"
+    assert tree.find(".//t:Hidden", ns).text == "true"
+    assert tree.find(".//t:Count", ns).text == "999"
+    assert tree.find(".//t:Command", ns).text == str(cmd)
+    assert tree.find(".//t:Arguments", ns).text == f'"{cmd}"'
+    assert tree.find(".//t:WorkingDirectory", ns).text == str(cmd.parent)
+    user_ids = [node.text for node in tree.findall(".//t:UserId", ns)]
+    assert user_ids == [r"WILLS-GAMING\Will & Co", r"WILLS-GAMING\Will & Co"]
+
+
+def test_stub_windows_root_is_drive_root_not_cwd():
+    stub = render_stub(Path("/usr/bin/uv"), r"C:\Users\Will\.local\bin")
+    compile(stub, "watch-stub.py", "exec")
+    match = re.search(r"root_s = letter \+ (\".*\")", stub)
+    assert match is not None
+    suffix = ast.literal_eval(match.group(1))
+    assert suffix == ":\\"
+    assert len(suffix) == 2
+    assert "H" + suffix == "H:\\"
+    assert "GetLogicalDrives" in stub
+    assert "GetVolumeInformationW.argtypes" in stub
+    assert "--once" not in stub
+    assert "time.sleep(POLL_S if rc != 0 else 2)" not in stub
+    assert "PATH_PREFIX" in stub
+    assert "CREATE_NO_WINDOW" in stub
+    assert 'cmd = [UV, "run", "--package", "library-sync", "library-sync", "watch"]' in stub
+
+
+def test_stub_bakes_install_path_and_never_once():
+    stub = render_stub(Path("/opt/homebrew/bin/uv"), "/opt/homebrew/bin:/usr/bin")
+    compile(stub, "watch-stub.py", "exec")
+    ns: dict[str, object] = {}
+    exec(compile(stub, "watch-stub.py", "exec"), ns)
+    assert ns["PATH_PREFIX"] == "/opt/homebrew/bin:/usr/bin"
+    assert ns["UV"] == "/opt/homebrew/bin/uv"
+    assert "--once" not in stub
 
 
 def test_watch_help_says_never_deletes_from_b2(capsys):
