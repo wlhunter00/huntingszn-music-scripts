@@ -4,7 +4,10 @@ Subcommands:
 - detect       — print drive path or "not mounted"
 - index        — scan all catalogs: tracks, stems, ableton projects
 - publish      — index all catalogs + rclone copy FULL drive to B2 (sync with --allow-delete)
-- pull         — rclone copy --update projects/ → Ableton/Music Production Agent/
+- pull         — rclone copy --update projects/ -> Ableton/Music Production Agent/
+- watch        — pull -> incremental index -> publish when the drive is mounted
+- install-watch — install a per-PC login stub (launchd / Task Scheduler / systemd)
+- uninstall-watch — remove the per-PC login stub
 - query        — search tracks by camelot/bpm/text
 - query-stems  — search stem folders by name/model
 - query-projects — search Ableton projects by name/kind
@@ -12,6 +15,7 @@ Subcommands:
 
 Note: Index catalogs tracks (DJ Music + Platnium Notes), stems, and Ableton projects.
       Publish mirrors the ENTIRE drive to B2 (excluding system files).
+      watch never passes --allow-delete; it never auto-deletes remotes.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from library_sync.db import AbletonProject, LibraryDB, Stem
 from library_sync.index import index_files
 from library_sync.index_ableton import index_ableton
 from library_sync.index_stems import index_stems
+from library_sync.install_watch import cmd_install_watch, cmd_uninstall_watch
 from library_sync.mount import find_drive
 from library_sync.query import format_tracks_table, query_tracks, tracks_to_json
 from library_sync.rclone import (
@@ -38,6 +43,57 @@ from library_sync.rclone import (
     publish_template,
     pull_projects,
 )
+from library_sync.watch import DEFAULT_DEBOUNCE_S, DEFAULT_POLL_S, cmd_watch
+
+
+def _stdio_fd_broken(fd: int) -> bool:
+    """True when the OS std handle is closed/invalid (pythonw, CREATE_NO_WINDOW)."""
+    try:
+        os.fstat(fd)
+    except OSError:
+        return True
+    return False
+
+
+def _replace_none_stream(name: str, fd: int, mode: str) -> object:
+    """Give ``sys.std*`` a NUL stream, and repair the OS fd for child processes.
+
+    Replacing ``sys.stdout`` alone is not enough: ``subprocess.run`` inherits
+    OS handles, not ``sys.stdout``. rclone ``--progress`` then talks to a
+    closed console under Task Scheduler.
+    """
+    stream = getattr(sys, name)
+    if stream is None:
+        stream = open(os.devnull, mode, encoding="utf-8", errors="replace")
+        setattr(sys, name, stream)
+        if _stdio_fd_broken(fd):
+            try:
+                os.dup2(stream.fileno(), fd)
+            except OSError:
+                pass
+    return stream
+
+
+def configure_stdio_utf8() -> None:
+    """Keep CLI prints alive on Windows cp1252 consoles and under pythonw.
+
+    ``pythonw.exe`` (Task Scheduler install-watch) sets ``sys.stdout`` /
+    ``sys.stderr`` to ``None``. Bare ``print`` then raises and the watch
+    pipeline never starts. Child processes (uv, rclone) also need valid
+    OS std handles, so NUL is dup'd onto fds 0/1/2 when those are broken.
+    """
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    _replace_none_stream("stdin", 0, "r")
+    for name, fd in (("stdout", 1), ("stderr", 2)):
+        stream = _replace_none_stream(name, fd, "w")
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, AttributeError):
+            pass
 
 
 def _get_paths(args_root: Path | None) -> tuple[Path | None, Path, list[Path]]:
@@ -256,7 +312,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
     config = RcloneConfig.from_env(drive_root)
 
-    print("=== Copying projects from B2 → Ableton/Music Production Agent ===")
+    print("=== Copying projects from B2 -> Ableton/Music Production Agent ===")
     if not config.is_configured:
         print("B2 not configured (B2_REMOTE / B2_BUCKET not set)")
         print("Showing planned command:")
@@ -471,6 +527,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def main() -> None:
     """Main CLI entry point."""
+    configure_stdio_utf8()
     load_dotenv()
 
     parser = argparse.ArgumentParser(
@@ -508,6 +565,60 @@ def main() -> None:
     sub_pull.add_argument("--dry-run", action="store_true", help="Show planned command only")
     sub_pull.add_argument("--root", type=Path, help="Override drive root path")
     sub_pull.set_defaults(func=cmd_pull)
+
+    sub_watch = subparsers.add_parser(
+        "watch",
+        help=(
+            "When the music drive is mounted: pull from B2, incremental index, "
+            "publish (copy --update; never deletes from B2)"
+        ),
+        description=(
+            "Install once per PC with install-watch, then plug in the drive. "
+            "watch runs pull -> incremental index -> publish (rclone copy --update). "
+            "It never passes --allow-delete and never auto-deletes remotes. "
+            "Log: {DRIVE}/Scripts/data/watch.log"
+        ),
+    )
+    sub_watch.add_argument(
+        "--once",
+        action="store_true",
+        help="Run the pipeline once if the drive is mounted, then exit",
+    )
+    sub_watch.add_argument(
+        "--debounce",
+        type=float,
+        default=DEFAULT_DEBOUNCE_S,
+        help=f"Seconds to wait after a mount burst before running (default {DEFAULT_DEBOUNCE_S:g})",
+    )
+    sub_watch.add_argument(
+        "--poll-interval",
+        type=float,
+        default=DEFAULT_POLL_S,
+        help=f"Seconds between mount checks in daemon mode (default {DEFAULT_POLL_S:g})",
+    )
+    sub_watch.add_argument("--dry-run", action="store_true", help="Show planned rclone only")
+    sub_watch.add_argument("--root", type=Path, help="Override drive root path")
+    sub_watch.set_defaults(func=cmd_watch)
+
+    sub_install = subparsers.add_parser(
+        "install-watch",
+        help="Install a per-PC login stub (Task Scheduler / launchd / systemd user)",
+        description=(
+            "Install once per PC (not on the HDD). After that, plugging in the "
+            "HuntingSzn / Will Hunter Music drive runs pull -> index -> publish. "
+            "Never deletes from B2. Discovers the drive by volume name; does not "
+            "hardcode H:."
+        ),
+    )
+    sub_install.add_argument("--dry-run", action="store_true", help="Print what would be installed")
+    sub_install.set_defaults(func=cmd_install_watch)
+
+    sub_uninstall = subparsers.add_parser(
+        "uninstall-watch",
+        help="Remove the per-PC login stub installed by install-watch",
+    )
+    sub_uninstall.add_argument("--dry-run", action="store_true", help="Print what would be removed")
+    sub_uninstall.set_defaults(func=cmd_uninstall_watch)
 
     sub_query = subparsers.add_parser("query", help="Query tracks by camelot/BPM/text")
     sub_query.add_argument("--db", type=Path, help="Path to SQLite database")

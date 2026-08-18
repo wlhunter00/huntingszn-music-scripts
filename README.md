@@ -141,6 +141,10 @@ uv run --package library-sync library-sync publish --allow-delete --dry-run
 # Copy projects from B2 to Ableton/Music Production Agent (does not delete local work)
 uv run --package library-sync library-sync pull --dry-run
 
+# Auto-run pull -> index -> publish when the portable HDD is plugged in
+uv run --package library-sync library-sync install-watch
+uv run --package library-sync library-sync watch --once   # optional: one-shot from Scripts
+
 # Show status (counts for tracks, stems, Ableton projects)
 uv run --package library-sync library-sync status
 ```
@@ -153,6 +157,7 @@ uv run --package library-sync library-sync status
 **Full-drive mirror vs catalog-only:**
 - **Index** catalogs tracks, stems, and Ableton projects into SQLite
 - **Publish** copies the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.). Does not delete remote files unless you pass `--allow-delete` (rclone sync). Sync still keeps B2-only prefixes: `projects/`, `metadata/`, `templates/`.
+- **watch** is the hands-off path: pull (B2 `projects/` -> `Ableton/Music Production Agent/<slug>/`) -> incremental index -> publish (`rclone copy --update`). It never passes `--allow-delete` and never auto-deletes remotes.
 - Excludes system files, Ableton `Backup/`, secrets (`.env`, `cookies.txt`, `*.pem`), and `Scripts/data/library.sqlite` (catalog is uploaded separately to `metadata/library.sqlite`)
 
 **Harmonic mixing rules (tracks only):**
@@ -165,7 +170,43 @@ uv run --package library-sync library-sync status
 - `templates/mashup/` — from `Ableton/HuntingSzn Mashup Template Project`
 - `projects/<slug>/` — pulled to `Ableton/Music Production Agent/<slug>/`
 
-### Tests & lint
+### Drive-mount watcher (install once per PC)
+
+`install-watch` writes a **local** login stub (Task Scheduler on Windows, launchd on macOS, systemd user on Linux). The stub cannot live only on the HDD: the computer has to see the volume appear. It discovers the drive by volume name (`HuntingSzn` or `Will Hunter Music`) — it does **not** hardcode `H:`.
+
+When the drive is already plugged in at login (or right after install), the pipeline still runs once after a short debounce. A burst of mount events does not overlap runs. If the drive is unplugged, the stub idles (no crash, no B2 calls). Log: `{DRIVE}/Scripts/data/watch.log`.
+
+**Windows (Wills-Gaming-Desktop)** — from the repo on the music drive (whatever letter it mounted as, currently often `H:\Scripts`):
+
+```bat
+uv sync --package library-sync
+uv run --package library-sync library-sync install-watch
+```
+
+This creates a logon scheduled task named `HuntingSzn library-sync watch` plus `%LOCALAPPDATA%\library-sync\watch-stub.py`. Unplug/replug the drive; pull -> index -> publish happens automatically. `PYTHONUTF8=1` is set so the Windows console cannot crash on Unicode. Remove with:
+
+```bat
+uv run --package library-sync library-sync uninstall-watch
+```
+
+**macOS** — from `/Volumes/HuntingSzn/Scripts` or `/Volumes/Will Hunter Music/Scripts`:
+
+```bash
+uv sync --package library-sync
+uv run --package library-sync library-sync install-watch
+```
+
+This writes `~/Library/LaunchAgents/com.huntingszn.library-sync.watch.plist` (RunAtLoad + KeepAlive) and `~/Library/Application Support/library-sync/watch-stub.py`. Same uninstall command as Windows.
+
+Uses existing host rclone/B2 config (`B2_REMOTE=b2`, `B2_BUCKET=huntingszn-music`, `rclone.conf`). Does not write secrets or overwrite `rclone.conf`.
+
+To run the job once by hand (drive must be mounted):
+
+```bash
+uv run --package library-sync library-sync watch --once
+```
+
+## Tests & lint
 
 ```bash
 uv sync --package mashup-pop-finder --extra dev
