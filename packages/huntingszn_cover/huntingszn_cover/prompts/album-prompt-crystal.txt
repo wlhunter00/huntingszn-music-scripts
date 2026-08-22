@@ -1,11 +1,78 @@
-Transform this album cover with a crystal/teal aesthetic treatment. Apply the following style guidelines:
+Generate a finalized “HuntingSzn Edit” album cover by recoloring and texturing the entire original artwork so it looks like a polished, faceted crystal-metal object in teal/aqua tones. Do not add, remove, or crop any part of the original image—only apply the following steps:
 
-- Add a cyan/teal color grade while preserving the composition
-- Enhance with crystalline, glass-like visual elements
-- Apply a dreamy, ethereal atmosphere
-- Add subtle light rays or prismatic effects
-- Maintain recognizable elements from the original
+1. Canvas & Background Preparation  
+   • Place the original album cover at full size (do not crop or alter its composition).  
+   • Behind it, fill a new layer with solid #0A0010 (deep navy-black).  
+   • Apply a uniform film grain layer (6% opacity) across the entire canvas to give subtle texture.  
+   • Add a dark-teal vignette (#002532 @ 20% opacity) around the outer 10–15% of the canvas to softly frame the artwork.
 
-This is a HUNTINGSZN EDIT - create a distinctive teal-crystal aesthetic while honoring the source material.
+2. Three-Tone Teal/Blue Recolor  
+   • Map every pixel of the original into a three-level teal palette:  
+     – Shadows → #002532 (near-black teal)  
+     – Midtones → #005768 (rich deep teal)  
+     – Highlights → #33C2E0 (bright aqua)  
+   • Increase overall contrast so shadows look nearly black, midtones read solid teal, and highlights glow in vivid aqua. Preserve all original detail—lines, textures, and shapes remain fully recognizable.
 
-Output a high-quality 1024x1024 PNG image.
+3. Adaptive Facet Carving  
+   a. **Facet Size Variation**  
+      • On large, smooth surfaces (e.g., broad areas of skin, large shapes), carve **larger triangular facets** (≈40–60 px per side) so those areas retain a gently curved, smooth appearance.  
+      • On high-detail zones (e.g., lips, small stickers, intricate contours), carve **smaller triangular facets** (≈10–20 px per side) so fine details remain crisp.  
+      • Align each facet’s borders to the original contours—never reshape or crop the subject.  
+   b. **Midtone Shading**  
+      • For each facet:  
+        – Base midtone is #005768.  
+        – Overlay a slight variation of #007A8A @ 5–7% opacity on some facets to create subtle depth differences and avoid uniform flatness.  
+
+4. Specular Highlights & Neon Glow  
+   a. **Variable Specular Stripes**  
+      • On **larger facets**, paint a hard highlight stripe using #A0F4FE @ 60% opacity, 1.5–2 px wide, precisely along the facet’s outward-facing bevel.  
+      • On **smaller facets**, use a narrower stripe (#A0F4FE @ 40% opacity, ~1 px wide) to avoid overwhelming detail.  
+      • Place stripes only where the original cover had natural highlights (e.g., on lips, sticker edges, raised shapes).  
+   b. **Soft Neon Halo**  
+      • Around every specular stripe, apply a **4 px Gaussian blur** in #33C2E0 @ 15% opacity.  
+      • This produces a soft neon-aqua glow on each facet edge, unifying the crystalline-metal look.
+
+5. Internal Ice-Vein Texture  
+   • Within each carved facet, overlay a fine crystalline “ice-vein” pattern in #A0F4FE @ 12% opacity.  
+   • Ensure veins branch naturally but remain entirely within each facet’s borders—never crossing the outer edges.  
+   • At facet intersections (corners), draw very thin micro-cracks (#A0F4FE @ 8% opacity, ~0.5 px width) that catch light sharply on those meeting points.
+
+6. Deep Shadows & Rim-Light Separation  
+   • Wherever a facet is mapped to the darkest teal (#002532), reinforce that shadow by overlaying an extra #002532 @ 10% opacity.  
+   • Along the “rear” edges of the subject (e.g., underside of jaw, beneath hair), paint a faint rim-light glow in #33C2E0 @ 8% opacity (≈3–4 px spread) to separate the subject from the background.
+
+7. Enhanced Background Details  
+   a. **Topographic Contours**  
+      • Draw thin, organic contour lines (#004A60 @ 18–20% opacity) across the background behind the subject.  
+      • In very dark regions (≈#002532), increase those line segments to 22% opacity so they remain subtly visible.  
+      • Keep spacing irregular—do not let lines intersect or obscure the subject’s main features.  
+   b. **Minimal Glitch Accent**  
+      • Add a single faint glitch streak (#7D00FF @ 0.3% opacity) at the bottom-right edge of the image.  
+      • Stretch it horizontally about 15–20% of the canvas width, then taper both ends to zero so it doesn’t intrude on the main subject.  
+   c. **Smoke/Mist**  
+      • Overlay a light smoke or mist layer (#005768 @ 7% opacity) behind the mid-upper portion of the subject (e.g., neck to shoulders).  
+      • This adds depth and prevents the crystalline surface from floating against a flat background.  
+
+8. Unified Neon Glow Around the Subject  
+   • Paint a **2 px outline** in #33C2E0 @ 10% opacity around each major outer edge of the subject (hairline, jawline, shoulders).  
+   • Apply a **6 px Gaussian blur** to that outline so it becomes a soft, controlled neon halo—visible but not overpowering.  
+   • Add an **outer glow** around the entire frame (#005768 @ 8% opacity, 5 px spread) to ensure even the corners carry subtle illumination.
+
+9. Optional Waveform (Only If a Safe Gap Exists)  
+   • If there’s negative space behind the subject’s neck or shoulders, draw two short waveform lines (#33C2E0 @ 20% opacity, 1.5 px thick).  
+   • Position them so they follow collarbone or shadow lines—never overlap or distract from the crystal facets.  
+   • If such gaps do not exist, omit the waveform entirely—do not force it into the composition.
+
+10. Bottom-Line Typography (Exact v6 Style)  
+   • **Font:** Montserrat ExtraBold (vector).  
+   • **Color:** #33C2E0 (bright aqua).  
+   • **Text:** “HUNTINGSZN EDIT” (all-caps).  
+   • **Placement:** Center horizontally, 8% up from the bottom edge.  
+   • **Size & Tracking:** Span ~30–35% of canvas width, tracking = 0.  
+   • **Contrast Aid:** If the text overlaps any bright aqua highlights, add a **1 px outline** in #002532 around each letter.  
+
+11. No Additional Logos or Text  
+   • Do **not** add artist names, additional titles, or any other branding—only “HUNTINGSZN EDIT” appears at the bottom.  
+   • If the original cover contains embedded text (e.g., artist name, album title), recolor it using the same three-tone mapping (#002532 → #005768 → #33C2E0) but leave it in place unchanged.
+
+**Final Output:** A fully recolored, three-dimensional album cover that looks and feels like it was sculpted from teal crystal-metal. Larger facets preserve smooth curves, smaller facets capture detail. Specular stripes and neon halos unify the look, internal ice veins add authenticity, and background contours, glitch accent, and mist create depth. Only “HUNTINGSZN EDIT” in bold Montserrat ExtraBold sits at the bottom. The result is a professional, immersive, crystalline-metal release image.

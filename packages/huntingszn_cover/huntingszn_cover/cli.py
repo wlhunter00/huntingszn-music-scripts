@@ -123,8 +123,8 @@ def transform(
     This uses OpenAI's images.edit endpoint with the source image as input.
 
     Requires OPENAI_API_KEY environment variable.
-    Prompts are loaded from files in order: env var, package prompts/, workspace assets,
-    or /Volumes/HuntingSzn/Thumbnails/.
+    Prompts are loaded from files in order: env var, workspace assets,
+    /Volumes/HuntingSzn/Thumbnails/, then package prompts/ as fallback only.
 
     Example:
         huntingszn-cover transform --image cover.png --prompts clean --prompts crystal
