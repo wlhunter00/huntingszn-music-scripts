@@ -60,18 +60,18 @@ class TestValidatePromptContent:
             validate_prompt_content(stub, prompt_type="crystal")
 
     def test_clean_requires_aqua_hex(self) -> None:
-        prompt = ("HUNTINGSZN EDIT Re-Colour " + "x" * MIN_ALBUM_PROMPT_CHARS)
+        prompt = "HUNTINGSZN EDIT Re-Colour " + "x" * MIN_ALBUM_PROMPT_CHARS
         with pytest.raises(ValueError, match=r"#33C2E0"):
             validate_prompt_content(prompt, prompt_type="clean")
 
     def test_clean_requires_recolour(self) -> None:
-        prompt = ("HUNTINGSZN EDIT #33C2E0 " + "x" * MIN_ALBUM_PROMPT_CHARS)
+        prompt = "HUNTINGSZN EDIT #33C2E0 " + "x" * MIN_ALBUM_PROMPT_CHARS
         with pytest.raises(ValueError, match="Re-Colour"):
             validate_prompt_content(prompt, prompt_type="clean")
 
     def test_crystal_requires_facet(self) -> None:
-        prompt = ("HUNTINGSZN EDIT #33C2E0 " + "x" * MIN_ALBUM_PROMPT_CHARS)
-        with pytest.raises(ValueError, match="[Ff]acet"):
+        prompt = "HUNTINGSZN EDIT #33C2E0 " + "x" * MIN_ALBUM_PROMPT_CHARS
+        with pytest.raises(ValueError, match=r"Facet"):
             validate_prompt_content(prompt, prompt_type="crystal")
 
     def test_composite_skips_length_and_wordmark_rules(self) -> None:
