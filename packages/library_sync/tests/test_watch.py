@@ -427,7 +427,7 @@ def test_watch_pipeline_never_passes_allow_delete(tmp_path, monkeypatch):
     logs: list[str] = []
     rc = run_watch_pipeline(drive, dry_run=True, log=logs.append)
     assert rc == 0
-    assert any("B2 bucket -> drive exclude projects/" in line for line in logs)
+    assert any("allowlisted B2 prefixes -> drive" in line for line in logs)
     assert any("Ableton/Music Production Agent" in line for line in logs)
     assert captured["allow_delete"] is False
     assert captured["update"] is True
@@ -731,18 +731,80 @@ def test_watch_pipeline_missing_rclone_logs_and_returns(tmp_path, monkeypatch):
     drive.mkdir()
     monkeypatch.setenv("B2_REMOTE", "b2")
     monkeypatch.setenv("B2_BUCKET", "huntingszn-music")
-    monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
+    later = {"index": 0, "publish": 0}
+
+    def boom_index(*_a, **_k):
+        later["index"] += 1
+        raise AssertionError("index must not run after pull failure")
+
+    def boom_publish(*_a, **_k):
+        later["publish"] += 1
+        raise AssertionError("publish must not run after pull failure")
+
+    monkeypatch.setattr("library_sync.watch.index_drive", boom_index)
+    monkeypatch.setattr("library_sync.watch.publish_drive", boom_publish)
+    monkeypatch.setattr("library_sync.watch.publish_sqlite", boom_publish)
+    monkeypatch.setattr("library_sync.watch.publish_template", boom_publish)
 
     logs: list[str] = []
     with patch("library_sync.rclone.subprocess.run", side_effect=FileNotFoundError("rclone")):
         rc = run_watch_pipeline(drive, log=logs.append)
     assert rc == 1
+    assert later == {"index": 0, "publish": 0}
     assert any("failure: pull" in line for line in logs)
     assert any("rclone not found" in line for line in logs)
     log_file = drive / "Scripts" / "data" / "watch.log"
     assert log_file.is_file()
     text = log_file.read_text(encoding="utf-8")
     assert "failure: pull" in text
+
+
+def test_watch_first_pull_rclone_step_skips_index_and_publish(tmp_path, monkeypatch):
+    """If the first allowlisted rclone copy fails, later stages must not run."""
+    drive = tmp_path / "HuntingSzn"
+    drive.mkdir()
+    monkeypatch.setenv("B2_REMOTE", "b2")
+    monkeypatch.setenv("B2_BUCKET", "huntingszn-music")
+    rclone_cmds: list[list[str]] = []
+    later = {"index": 0, "publish": 0, "sqlite": 0, "template": 0}
+
+    def fake_run(cmd, check=False):
+        rclone_cmds.append(cmd)
+        if len(rclone_cmds) == 1:
+            raise FileNotFoundError("rclone")
+
+        class _Result:
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(
+        "library_sync.watch.index_drive",
+        lambda *_a, **_k: later.__setitem__("index", later["index"] + 1),
+    )
+    monkeypatch.setattr(
+        "library_sync.watch.publish_drive",
+        lambda *_a, **_k: later.__setitem__("publish", later["publish"] + 1) or ["ok"],
+    )
+    monkeypatch.setattr(
+        "library_sync.watch.publish_sqlite",
+        lambda *_a, **_k: later.__setitem__("sqlite", later["sqlite"] + 1),
+    )
+    monkeypatch.setattr(
+        "library_sync.watch.publish_template",
+        lambda *_a, **_k: later.__setitem__("template", later["template"] + 1),
+    )
+
+    logs: list[str] = []
+    with patch("library_sync.rclone.subprocess.run", side_effect=fake_run):
+        rc = run_watch_pipeline(drive, log=logs.append)
+    assert rc == 1
+    assert len(rclone_cmds) == 1
+    assert any("Thumbnails/" in t for t in rclone_cmds[0])
+    assert later == {"index": 0, "publish": 0, "sqlite": 0, "template": 0}
+    assert any("failure: pull" in line for line in logs)
+    assert not any("start: incremental index" in line for line in logs)
+    assert not any("start: publish" in line for line in logs)
 
 
 def test_watch_pipeline_unconfigured_b2_does_not_hang(tmp_path, monkeypatch):
@@ -890,8 +952,11 @@ def test_pull_banner_is_ascii_arrow(capsys, monkeypatch, tmp_path):
     out = capsys.readouterr().out
     assert "->" in out
     assert "\u2192" not in out
-    assert "exclude projects/" in out
+    assert "allowlisted B2 prefixes" in out
+    assert "Thumbnails/" in out
     assert "Music Production Agent" in out
+    assert "full B2 bucket" not in out
+    assert "DJ Music" not in out or "not pull" in out.lower()
 
 
 def test_configure_stdio_utf8_sets_env(monkeypatch):
@@ -1097,10 +1162,12 @@ def test_pull_help_says_full_bucket_copy_update(capsys):
             assert exc.code == 0
     out = capsys.readouterr().out
     normalized = " ".join(out.split()).lower()
-    assert "full b2 bucket" in normalized
+    assert "full b2 bucket" not in normalized
+    assert "allowlisted" in normalized
     assert "copy --update" in normalized
     assert "never deletes" in normalized
-    assert "projects/**" in normalized or "projects/" in normalized
+    assert "dj music" in normalized
+    assert "not resurrected" in normalized or "not pull" in normalized
     assert "music production agent" in normalized
     assert "thumbnails" in normalized
 
@@ -1114,6 +1181,7 @@ def test_watch_help_says_never_deletes_from_b2(capsys):
     out = capsys.readouterr().out
     normalized = " ".join(out.split())
     assert "never passes --allow-delete" in normalized
+    assert "allowlisted" in normalized
     assert "pull" in normalized.lower()
     assert "Ableton/Music Production Agent" in normalized
     assert "publish" in normalized.lower()

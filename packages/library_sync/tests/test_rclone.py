@@ -10,7 +10,8 @@ import pytest
 from library_sync.cli import parse_cli_limit
 from library_sync.rclone import (
     PUBLISH_EXCLUDES,
-    PULL_BUCKET_EXCLUDES,
+    PULL_AGENT_PREFIXES,
+    PULL_DRIVE_PRIMARY_PREFIXES,
     RcloneConfig,
     publish_drive,
     publish_sqlite,
@@ -18,6 +19,34 @@ from library_sync.rclone import (
     pull_drive,
     pull_projects,
 )
+
+
+def _rclone_sources(tokens: list[str]) -> list[str]:
+    return [t for t in tokens if t.startswith("b2:")]
+
+
+def _is_bucket_root_source(token: str) -> bool:
+    if ":" not in token or token.startswith("-"):
+        return False
+    path = token.split(":", 1)[1].strip("/")
+    return bool(path) and "/" not in path
+
+
+def _assert_safe_pull_tokens(tokens: list[str]) -> None:
+    assert tokens[0] == "rclone"
+    assert tokens[1] == "copy"
+    assert "--update" in tokens
+    assert "--ignore-case" in tokens
+    assert "sync" not in tokens
+    assert "--delete" not in tokens
+    assert "--allow-delete" not in tokens
+    sources = _rclone_sources(tokens)
+    assert sources
+    assert not any(_is_bucket_root_source(s) for s in sources)
+    joined = " ".join(sources)
+    for prefix in PULL_DRIVE_PRIMARY_PREFIXES:
+        assert prefix.rstrip("/") not in joined
+    assert "DJ Music" not in joined
 
 
 class TestRcloneConfig:
@@ -90,9 +119,23 @@ class TestPublishExcludes:
         assert "/projects/**" in PUBLISH_EXCLUDES
         assert "/metadata/**" in PUBLISH_EXCLUDES
         assert "/templates/**" in PUBLISH_EXCLUDES
-        assert "/projects/**" in PULL_BUCKET_EXCLUDES
-        assert "/metadata/**" not in PULL_BUCKET_EXCLUDES
-        assert "/templates/**" not in PULL_BUCKET_EXCLUDES
+
+
+class TestPullAllowlist:
+    def test_agent_prefixes_are_thumbnails_only(self):
+        assert PULL_AGENT_PREFIXES == ("Thumbnails/",)
+        assert "DJ Music/" not in PULL_AGENT_PREFIXES
+        assert "Ableton/" not in PULL_AGENT_PREFIXES
+        assert "metadata/" not in PULL_AGENT_PREFIXES
+        assert "templates/" not in PULL_AGENT_PREFIXES
+
+    def test_drive_primary_trees_are_not_pull_sources(self):
+        assert "DJ Music/" in PULL_DRIVE_PRIMARY_PREFIXES
+        assert "Platnium Notes/" in PULL_DRIVE_PRIMARY_PREFIXES
+        assert "Stem Splitting/" in PULL_DRIVE_PRIMARY_PREFIXES
+        assert "Set Recording/" in PULL_DRIVE_PRIMARY_PREFIXES
+        assert "Scripts/" in PULL_DRIVE_PRIMARY_PREFIXES
+        assert "Ableton/" in PULL_DRIVE_PRIMARY_PREFIXES
 
 
 class TestDryRun:
@@ -134,19 +177,12 @@ class TestDryRun:
 
         assert len(commands) == 2
         for cmd in commands:
-            tokens = shlex.split(cmd)
-            assert tokens[0] == "rclone"
-            assert tokens[1] == "copy"
-            assert "--update" in tokens
-            assert "sync" not in tokens
-            assert "--delete" not in tokens
-            assert "--allow-delete" not in tokens
+            _assert_safe_pull_tokens(shlex.split(cmd))
 
-        bucket_tokens = shlex.split(commands[0])
-        assert any(t.endswith(":BUCKET/") and not t.endswith("/projects/") for t in bucket_tokens)
-        assert str(drive_root) in bucket_tokens
-        assert "/projects/**" in bucket_tokens
-        assert "--exclude" in bucket_tokens
+        thumb_tokens = shlex.split(commands[0])
+        assert any(t.endswith("/Thumbnails/") for t in thumb_tokens)
+        assert str(drive_root / "Thumbnails") in thumb_tokens
+        assert str(drive_root) not in thumb_tokens
 
         remap_tokens = shlex.split(commands[1])
         assert any(t.endswith("/projects/") for t in remap_tokens)
@@ -269,7 +305,7 @@ class TestUnconfiguredB2:
 
 
 class TestPullDestination:
-    def test_pull_is_two_copy_update_steps_never_delete(self, tmp_path):
+    def test_pull_is_allowlisted_copy_update_never_delete(self, tmp_path):
         drive_root = tmp_path / "Will Hunter Music"
         drive_root.mkdir()
         config = RcloneConfig(remote="b2", bucket="huntingszn-music", mashup_template_path=None)
@@ -288,17 +324,14 @@ class TestPullDestination:
         assert len(captured) == 2
         assert len(commands) == 2
         for args in captured:
-            assert args[0] == "rclone"
-            assert args[1] == "copy"
-            assert "--update" in args
-            assert "sync" not in args
-            assert "--delete" not in args
-            assert "--allow-delete" not in args
+            _assert_safe_pull_tokens(args)
 
-        bucket_args = captured[0]
-        assert "b2:huntingszn-music/" in bucket_args
-        assert str(drive_root) in bucket_args
-        assert "/projects/**" in bucket_args
+        thumb_args = captured[0]
+        assert "b2:huntingszn-music/Thumbnails/" in thumb_args
+        assert str(drive_root / "Thumbnails") in thumb_args
+        assert str(drive_root) not in thumb_args
+        assert "b2:huntingszn-music/" not in thumb_args
+        assert (drive_root / "Thumbnails").is_dir()
 
         remap_args = captured[1]
         dest = drive_root / "Ableton" / "Music Production Agent"
@@ -306,18 +339,39 @@ class TestPullDestination:
         assert str(dest) in remap_args
         assert dest.is_dir()
 
-    def test_pull_thumbnails_land_one_to_one_on_drive_root(self, tmp_path):
+    def test_pull_does_not_target_dj_music_or_bucket_root(self, tmp_path):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        config = RcloneConfig(remote="b2", bucket="huntingszn-music", mashup_template_path=None)
+        captured: list[list[str]] = []
+
+        class _Result:
+            returncode = 0
+
+        def fake_run(cmd, check=False):
+            captured.append(cmd)
+            return _Result()
+
+        with patch("library_sync.rclone.subprocess.run", side_effect=fake_run):
+            pull_drive(drive_root, config, dry_run=False)
+
+        all_args = [tok for args in captured for tok in args]
+        assert "DJ Music" not in " ".join(all_args)
+        assert not any(_is_bucket_root_source(t) for t in all_args)
+        assert "b2:huntingszn-music/DJ Music/" not in all_args
+
+    def test_pull_thumbnails_land_one_to_one(self, tmp_path):
         drive_root = tmp_path / "drive"
         drive_root.mkdir()
         config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
         commands = pull_drive(drive_root, config, dry_run=True)
-        bucket_tokens = shlex.split(commands[0])
-        # rclone copy remote:bucket/ dest/ --exclude /projects/**
-        # copies Thumbnails/Releases/... to {DRIVE}/Thumbnails/Releases/...
-        sources = [t for t in bucket_tokens if t.startswith("b2:") or t.endswith(":BUCKET/")]
-        assert sources == ["b2:BUCKET/"]
-        assert str(drive_root) in bucket_tokens
-        assert "/projects/**" in bucket_tokens
+        thumb_tokens = shlex.split(commands[0])
+        # rclone copy remote:bucket/Thumbnails/ {DRIVE}/Thumbnails/
+        # copies Releases/03-finals/... and root prompt txts 1:1.
+        sources = _rclone_sources(thumb_tokens)
+        assert sources == ["b2:BUCKET/Thumbnails/"]
+        assert str(drive_root / "Thumbnails") in thumb_tokens
+        assert str(drive_root) not in thumb_tokens
 
     def test_pull_projects_remaps_into_music_production_agent(self, tmp_path):
         drive_root = tmp_path / "drive"
@@ -325,11 +379,36 @@ class TestPullDestination:
         config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
         commands = pull_drive(drive_root, config, dry_run=True)
         remap_tokens = shlex.split(commands[1])
+        _assert_safe_pull_tokens(remap_tokens)
         # rclone copy remote:bucket/projects/ dest/ copies projects/<slug>/
-        # into Ableton/Music Production Agent/<slug>/.
-        assert remap_tokens[-2].endswith("/projects/")
-        assert remap_tokens[-1] == str(drive_root / "Ableton" / "Music Production Agent")
-        assert not remap_tokens[-1].endswith("Ready to Mix")
+        # into Ableton/Music Production Agent/<slug>/. Sole writer of that dest.
+        assert any(t.endswith("/projects/") for t in remap_tokens)
+        assert str(drive_root / "Ableton" / "Music Production Agent") in remap_tokens
+        assert not any(t.endswith("Ready to Mix") for t in remap_tokens)
+
+    def test_first_pull_rclone_failure_does_not_start_remap(self, tmp_path):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        config = RcloneConfig(remote="b2", bucket="huntingszn-music", mashup_template_path=None)
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, check=False):
+            captured.append(cmd)
+            raise FileNotFoundError("rclone")
+
+        with patch("library_sync.rclone.subprocess.run", side_effect=fake_run):
+            try:
+                pull_drive(drive_root, config, dry_run=False)
+                raise AssertionError("expected RcloneError")
+            except Exception as exc:
+                from library_sync.rclone import RcloneError
+
+                assert isinstance(exc, RcloneError)
+        assert len(captured) == 1
+        assert "Thumbnails/" in captured[0][-2] or any(
+            "Thumbnails/" in t for t in captured[0]
+        )
+        assert not any("/projects/" in t for t in captured[0])
 
     def test_pull_projects_alone_is_copy_update_into_ableton(self, tmp_path):
         drive_root = tmp_path / "Will Hunter Music"
@@ -349,12 +428,10 @@ class TestPullDestination:
 
         assert captured
         args = captured[0]
-        assert args[1] == "copy"
-        assert "--update" in args
-        assert "sync" not in args
-        assert args[-2] == "b2:library/projects/"
+        _assert_safe_pull_tokens(args)
+        assert "b2:library/projects/" in args
         dest = drive_root / "Ableton" / "Music Production Agent"
-        assert args[-1] == str(dest)
+        assert str(dest) in args
         assert dest.is_dir()
         assert cmd is not None
 

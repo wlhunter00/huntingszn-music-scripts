@@ -267,7 +267,7 @@ def run_watch_pipeline(
             return 1
 
         write_log(
-            "start: pull (B2 bucket -> drive exclude projects/, then "
+            "start: pull (allowlisted B2 prefixes -> drive, then "
             "projects -> Ableton/Music Production Agent; copy --update, never delete)"
         )
         try:

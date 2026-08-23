@@ -4,7 +4,7 @@ Subcommands:
 - detect       — print drive path or "not mounted"
 - index        — scan all catalogs: tracks, stems, ableton projects
 - publish      — index all catalogs + rclone copy FULL drive to B2 (sync with --allow-delete)
-- pull         — rclone copy --update B2 bucket -> drive (exclude projects/)
+- pull         — rclone copy --update allowlisted B2 prefixes (Thumbnails/)
                  then projects/ -> Ableton/Music Production Agent/
 - watch        — pull -> incremental index -> publish when the drive is mounted
 - install-watch — install a per-PC login stub (launchd / Task Scheduler / systemd)
@@ -304,7 +304,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
 
 
 def cmd_pull(args: argparse.Namespace) -> int:
-    """Pull B2 onto the drive: bucket (minus projects/) plus Ableton remap."""
+    """Pull allowlisted B2 agent prefixes plus the Ableton projects remap."""
     drive_root, _, _ = _get_paths(args.root)
 
     if drive_root is None:
@@ -313,7 +313,10 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
     config = RcloneConfig.from_env(drive_root)
 
-    print("=== Copying B2 bucket -> drive (exclude projects/, copy --update, no deletes) ===")
+    print(
+        "=== Copying allowlisted B2 prefixes -> drive "
+        "(Thumbnails/, copy --update, no deletes) ==="
+    )
     print("=== then B2 projects -> Ableton/Music Production Agent ===")
     if not config.is_configured:
         print("B2 not configured (B2_REMOTE / B2_BUCKET not set)")
@@ -564,15 +567,18 @@ def main() -> None:
     sub_pull = subparsers.add_parser(
         "pull",
         help=(
-            "Copy B2 to the drive (bucket minus projects/, then projects -> "
-            "Ableton; copy --update; never deletes)"
+            "Copy allowlisted B2 agent prefixes (Thumbnails/) plus projects -> "
+            "Ableton; copy --update; never deletes"
         ),
         description=(
-            "Two rclone copy --update steps, never deletes from the drive or B2. "
-            "1) Full B2 bucket -> drive root, excluding projects/** so "
-            "Thumbnails/Releases/... lands at {DRIVE}/Thumbnails/.... "
+            "Allowlisted rclone copy --update only; never deletes from the drive "
+            "or B2. Does not pull DJ Music, stems, Scripts, Set Recording, or "
+            "Ableton trees, so local deletes in those libraries are not "
+            "resurrected from B2. "
+            "1) Thumbnails/ -> {DRIVE}/Thumbnails/ (Releases/**/03-finals and "
+            "root prompt txts land 1:1). "
             "2) B2 projects/<slug>/ -> {DRIVE}/Ableton/Music Production Agent/<slug>/. "
-            "Newer local files are kept."
+            "Newer files in those drop zones are kept via --update."
         ),
     )
     sub_pull.add_argument("--dry-run", action="store_true", help="Show planned command only")
@@ -582,15 +588,16 @@ def main() -> None:
     sub_watch = subparsers.add_parser(
         "watch",
         help=(
-            "When the music drive is mounted: pull B2 (bucket + Ableton remap), "
-            "incremental index, publish (copy --update; never deletes from B2)"
+            "When the music drive is mounted: pull allowlisted B2 prefixes + "
+            "Ableton remap, incremental index, publish (copy --update; never "
+            "deletes from B2)"
         ),
         description=(
             "Install once per PC with install-watch, then plug in the drive. "
-            "watch runs pull (B2 bucket -> drive excluding projects/, then "
+            "watch runs pull (allowlisted B2 prefixes such as Thumbnails/, then "
             "projects -> Ableton/Music Production Agent) -> incremental index -> "
             "publish (rclone copy --update). "
-            "It never passes --allow-delete and never auto-deletes remotes. "
+            "It never pulls DJ/library trees and never passes --allow-delete. "
             "Log: {DRIVE}/Scripts/data/watch.log"
         ),
     )
