@@ -133,11 +133,13 @@ Our tool uses the structured naming above instead.
 Prompts are loaded at runtime from these locations (in order):
 
 1. Environment variables: `HUNTINGSZN_PROMPT_CLEAN`, `HUNTINGSZN_PROMPT_CRYSTAL`
-2. Package prompts: `huntingszn_cover/prompts/album-prompt-*.txt`
-3. Workspace: `./huntingszn-assets/cover-prompts/album-prompt-*.txt` (relative to cwd)
-4. Volume: `/Volumes/HuntingSzn/Thumbnails/Album Prompt - *.txt`
+2. Workspace: `./huntingszn-assets/cover-prompts/album-prompt-*.txt` (relative to cwd)
+3. Volume: `/Volumes/HuntingSzn/Thumbnails/Album Prompt - *.txt`
+4. Package prompts (fallback only): `huntingszn_cover/prompts/album-prompt-*.txt`
 
-The wordmark in prompt files should be `HUNTINGSZN EDIT` (not FLIP).
+Package `prompts/` files are last on purpose. Early versions shipped ~500-char stubs that still contained `HUNTINGSZN EDIT`, so validation passed while transforms used the wrong text. Clean/crystal prompts must be the full Album Prompt files (`Re-Colour` / faceted crystal-metal, `#33C2E0`, `HUNTINGSZN EDIT`, >2000 chars). Composite is a separate locked short prompt and is not subject to the length rule.
+
+The wordmark in clean/crystal prompt files should be `HUNTINGSZN EDIT` (not FLIP).
 
 **Important**: Prompt files already forbid adding extra logos. Brand assets live at `/Volumes/HuntingSzn/Thumbnails/Logos/` - do not bake additional logos into transforms.
 
