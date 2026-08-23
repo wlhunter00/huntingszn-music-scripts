@@ -38,7 +38,7 @@ help:
 	@echo "  make rift-catalog      Scan Rift presets -> CSV"
 	@echo "  make library-index     Index library to SQLite"
 	@echo "  make library-publish   Publish library to B2"
-	@echo "  make library-pull      Pull projects from B2"
+	@echo "  make library-pull      Pull allowlisted B2 prefixes + Ableton remap"
 	@echo "  make library-watch     Watch for the music drive (ONCE=1 for one-shot)"
 	@echo "  make library-install-watch  Install per-PC login stub (launchd / Task Scheduler)"
 	@echo "  make library-query     Query library (CAMELOT=..., BPM=..., Q=...)"

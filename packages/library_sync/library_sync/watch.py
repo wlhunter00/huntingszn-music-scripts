@@ -30,7 +30,7 @@ from library_sync.rclone import (
     publish_drive,
     publish_sqlite,
     publish_template,
-    pull_projects,
+    pull_drive,
 )
 
 DEFAULT_DEBOUNCE_S = 8.0
@@ -266,9 +266,12 @@ def run_watch_pipeline(
             write_log("failure: B2 not configured (B2_REMOTE / B2_BUCKET); skipping run")
             return 1
 
-        write_log("start: pull (B2 projects -> Ableton/Music Production Agent)")
+        write_log(
+            "start: pull (allowlisted B2 prefixes -> drive, then "
+            "projects -> Ableton/Music Production Agent; copy --update, never delete)"
+        )
         try:
-            pull_projects(drive_root, config, dry_run=dry_run, progress=False)
+            pull_drive(drive_root, config, dry_run=dry_run, progress=False)
         except RcloneError as exc:
             write_log(f"failure: pull: {exc}{rclone_log_hint}")
             return 1

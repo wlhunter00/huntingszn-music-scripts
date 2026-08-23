@@ -138,7 +138,7 @@ uv run --package library-sync library-sync query-projects --q "mashup" --kind te
 uv run --package library-sync library-sync publish --dry-run
 uv run --package library-sync library-sync publish --allow-delete --dry-run
 
-# Copy projects from B2 to Ableton/Music Production Agent (does not delete local work)
+# Copy allowlisted B2 agent prefixes + Ableton remap (does not pull DJ Music)
 uv run --package library-sync library-sync pull --dry-run
 
 # Auto-run pull -> index -> publish when the portable HDD is plugged in
@@ -157,8 +157,11 @@ uv run --package library-sync library-sync status
 **Full-drive mirror vs catalog-only:**
 - **Index** catalogs tracks, stems, and Ableton projects into SQLite
 - **Publish** copies the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.). Does not delete remote files unless you pass `--allow-delete` (rclone sync). Sync still keeps B2-only prefixes: `projects/`, `metadata/`, `templates/`.
-- **watch** is the hands-off path: pull (B2 `projects/` -> `Ableton/Music Production Agent/<slug>/`) -> incremental index -> publish (`rclone copy --update`). It never passes `--allow-delete` and never auto-deletes remotes.
-- Excludes system files, Ableton `Backup/`, secrets (`.env`, `cookies.txt`, `*.pem`), and `Scripts/data/library.sqlite` (catalog is uploaded separately to `metadata/library.sqlite`)
+- **Pull** is allowlisted `rclone copy --update` only (never a whole-bucket copy, never deletes). Drive-primary trees (`DJ Music/`, `Platnium Notes/`, `Stem Splitting/`, `Set Recording/`, `Scripts/`, `Ableton/`) are **not** pull sources, so a local delete there is **not** resurrected from B2.
+  1. Agent prefixes in `PULL_AGENT_PREFIXES` (currently `Thumbnails/`) → `{DRIVE}/Thumbnails/` 1:1 (`Releases/**/03-finals/`, root prompt txts).
+  2. B2 `projects/<slug>/` → `{DRIVE}/Ableton/Music Production Agent/<slug>/` (sole writer of that job home).
+- **watch** is the hands-off path: allowlisted pull → incremental index → publish (`rclone copy --update`). It never passes `--allow-delete` and never auto-deletes remotes.
+- **Publish** excludes (not pull): system files, Ableton `Backup/`, secrets (`.env`, `cookies.txt`, `*.pem`), and `Scripts/data/library.sqlite` (catalog is uploaded separately to `metadata/library.sqlite`)
 
 **Harmonic mixing rules (tracks only):**
 - Camelot: matches ±1 on wheel plus relative major/minor (e.g., 8A matches 7A, 8A, 9A, 8B)
@@ -168,7 +171,8 @@ uv run --package library-sync library-sync status
 - Bucket root mirrors drive folders (DJ Music, Ableton, Stem Splitting, Set Recording, etc.)
 - `metadata/library.sqlite` — track catalog for queries
 - `templates/mashup/` — from `Ableton/HuntingSzn Mashup Template Project`
-- `projects/<slug>/` — pulled to `Ableton/Music Production Agent/<slug>/`
+- `Thumbnails/` — agent drop zone, pulled 1:1 onto the drive
+- `projects/<slug>/` — pulled to `Ableton/Music Production Agent/<slug>/` (not `{DRIVE}/projects/`)
 
 ### Drive-mount watcher (install once per PC)
 
