@@ -138,7 +138,7 @@ uv run --package library-sync library-sync query-projects --q "mashup" --kind te
 uv run --package library-sync library-sync publish --dry-run
 uv run --package library-sync library-sync publish --allow-delete --dry-run
 
-# Copy projects from B2 to Ableton/Music Production Agent (does not delete local work)
+# Copy the full B2 bucket onto the drive (does not delete local or remote files)
 uv run --package library-sync library-sync pull --dry-run
 
 # Auto-run pull -> index -> publish when the portable HDD is plugged in
@@ -157,7 +157,8 @@ uv run --package library-sync library-sync status
 **Full-drive mirror vs catalog-only:**
 - **Index** catalogs tracks, stems, and Ableton projects into SQLite
 - **Publish** copies the ENTIRE drive to B2 bucket root (DJ Music, Ableton, Stem Splitting, etc.). Does not delete remote files unless you pass `--allow-delete` (rclone sync). Sync still keeps B2-only prefixes: `projects/`, `metadata/`, `templates/`.
-- **watch** is the hands-off path: pull (B2 `projects/` -> `Ableton/Music Production Agent/<slug>/`) -> incremental index -> publish (`rclone copy --update`). It never passes `--allow-delete` and never auto-deletes remotes.
+- **Pull** copies the ENTIRE B2 bucket onto the drive root (`rclone copy --update`). Newer local files are kept. It never deletes from the drive or from B2. Prefixes land 1:1 (`Thumbnails/Releases/...` -> `{DRIVE}/Thumbnails/Releases/...`).
+- **watch** is the hands-off path: pull (full B2 bucket -> drive) -> incremental index -> publish (`rclone copy --update`). It never passes `--allow-delete` and never auto-deletes remotes.
 - Excludes system files, Ableton `Backup/`, secrets (`.env`, `cookies.txt`, `*.pem`), and `Scripts/data/library.sqlite` (catalog is uploaded separately to `metadata/library.sqlite`)
 
 **Harmonic mixing rules (tracks only):**
@@ -168,7 +169,7 @@ uv run --package library-sync library-sync status
 - Bucket root mirrors drive folders (DJ Music, Ableton, Stem Splitting, Set Recording, etc.)
 - `metadata/library.sqlite` — track catalog for queries
 - `templates/mashup/` — from `Ableton/HuntingSzn Mashup Template Project`
-- `projects/<slug>/` — pulled to `Ableton/Music Production Agent/<slug>/`
+- Other prefixes (e.g. `Thumbnails/`, `projects/`) — pulled 1:1 onto the drive root
 
 ### Drive-mount watcher (install once per PC)
 

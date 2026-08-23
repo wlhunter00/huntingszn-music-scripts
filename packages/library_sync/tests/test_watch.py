@@ -418,7 +418,7 @@ def test_watch_pipeline_never_passes_allow_delete(tmp_path, monkeypatch):
         commands.extend(result)
         return result
 
-    monkeypatch.setattr("library_sync.watch.pull_projects", lambda *a, **k: "ok")
+    monkeypatch.setattr("library_sync.watch.pull_drive", lambda *a, **k: "ok")
     monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
     monkeypatch.setattr("library_sync.watch.publish_sqlite", lambda *a, **k: None)
     monkeypatch.setattr("library_sync.watch.publish_template", lambda *a, **k: None)
@@ -427,6 +427,7 @@ def test_watch_pipeline_never_passes_allow_delete(tmp_path, monkeypatch):
     logs: list[str] = []
     rc = run_watch_pipeline(drive, dry_run=True, log=logs.append)
     assert rc == 0
+    assert any("full B2 bucket -> drive" in line for line in logs)
     assert captured["allow_delete"] is False
     assert captured["update"] is True
     assert captured["progress"] is False
@@ -449,7 +450,7 @@ def test_watch_pipeline_loads_env_from_drive_scripts(tmp_path, monkeypatch):
     monkeypatch.delenv("B2_REMOTE", raising=False)
     monkeypatch.delenv("B2_BUCKET", raising=False)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("library_sync.watch.pull_projects", lambda *a, **k: "ok")
+    monkeypatch.setattr("library_sync.watch.pull_drive", lambda *a, **k: "ok")
     monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
     monkeypatch.setattr(
         "library_sync.watch.publish_drive",
@@ -668,7 +669,7 @@ def test_watch_pipeline_sets_rclone_log_file(tmp_path, monkeypatch):
         seen["progress"] = _k.get("progress")
         return "ok"
 
-    monkeypatch.setattr("library_sync.watch.pull_projects", fake_pull)
+    monkeypatch.setattr("library_sync.watch.pull_drive", fake_pull)
     monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
     monkeypatch.setattr(
         "library_sync.watch.publish_drive",
@@ -689,7 +690,7 @@ def test_watch_pipeline_missing_template_does_not_fail_publish(tmp_path, monkeyp
     drive.mkdir()
     monkeypatch.setenv("B2_REMOTE", "b2")
     monkeypatch.setenv("B2_BUCKET", "huntingszn-music")
-    monkeypatch.setattr("library_sync.watch.pull_projects", lambda *a, **k: "ok")
+    monkeypatch.setattr("library_sync.watch.pull_drive", lambda *a, **k: "ok")
     monkeypatch.setattr("library_sync.watch.index_drive", lambda *a, **k: None)
     captured: list[str] = []
 
@@ -853,6 +854,8 @@ def test_windows_task_xml_ignores_overlapping_and_has_no_drive_letter(tmp_path):
     xml = render_windows_task_xml(cmd)
     assert "IgnoreNew" in xml
     assert "PT0S" in xml
+    assert "PT1M" in xml
+    assert "PT10S" not in xml
     assert "LogonTrigger" in xml
     assert str(cmd) in xml
     assert "H:" not in xml
@@ -886,6 +889,8 @@ def test_pull_banner_is_ascii_arrow(capsys, monkeypatch, tmp_path):
     out = capsys.readouterr().out
     assert "->" in out
     assert "\u2192" not in out
+    assert "full B2 bucket" in out
+    assert "Music Production Agent" not in out
 
 
 def test_configure_stdio_utf8_sets_env(monkeypatch):
@@ -974,6 +979,7 @@ def test_windows_task_xml_is_well_formed_utf16(tmp_path):
     assert tree.find(".//t:MultipleInstancesPolicy", ns).text == "IgnoreNew"
     assert tree.find(".//t:ExecutionTimeLimit", ns).text == "PT0S"
     assert tree.find(".//t:Hidden", ns).text == "true"
+    assert tree.find(".//t:Interval", ns).text == "PT1M"
     assert tree.find(".//t:Count", ns).text == "999"
     assert tree.find(".//t:Command", ns).text == str(cmd)
     assert tree.find(".//t:Arguments", ns).text == f'"{cmd}"'
@@ -1082,6 +1088,20 @@ def test_uninstall_windows_ends_then_force_deletes_task(tmp_path, monkeypatch):
     assert not (tmp_path / "watch-task.xml").exists()
 
 
+def test_pull_help_says_full_bucket_copy_update(capsys):
+    with patch.object(sys, "argv", ["library-sync", "pull", "--help"]):
+        try:
+            cli_main()
+        except SystemExit as exc:
+            assert exc.code == 0
+    out = capsys.readouterr().out
+    normalized = " ".join(out.split())
+    assert "full B2 bucket" in normalized
+    assert "copy --update" in normalized
+    assert "never deletes" in normalized
+    assert "Music Production Agent" not in normalized
+
+
 def test_watch_help_says_never_deletes_from_b2(capsys):
     with patch.object(sys, "argv", ["library-sync", "watch", "--help"]):
         try:
@@ -1092,4 +1112,5 @@ def test_watch_help_says_never_deletes_from_b2(capsys):
     normalized = " ".join(out.split())
     assert "never passes --allow-delete" in normalized
     assert "pull" in normalized.lower()
+    assert "full B2 bucket" in normalized
     assert "publish" in normalized.lower()

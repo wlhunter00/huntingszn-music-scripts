@@ -344,6 +344,9 @@ def render_windows_task_xml(
         wd_block = (
             f"      <WorkingDirectory>{_xml_escape(str(working_directory))}</WorkingDirectory>\n"
         )
+    # RestartInterval must be >= PT1M. schtasks rejects PT10S
+    # (Wills-Gaming-Desktop: "The task XML contains a value which is
+    # incorrectly formatted or out of range").
     return f"""\
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -381,7 +384,7 @@ pull from B2, incremental index, publish. Never deletes from B2.</Description>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <Priority>7</Priority>
     <RestartOnFailure>
-      <Interval>PT10S</Interval>
+      <Interval>PT1M</Interval>
       <Count>999</Count>
     </RestartOnFailure>
   </Settings>

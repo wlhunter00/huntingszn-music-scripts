@@ -1,16 +1,19 @@
 """B2 / rclone operations for library sync.
 
 B2 layout:
-- Bucket root mirrors drive folders (DJ Music, Ableton, Stem Splitting, etc.)
+- Bucket root mirrors drive folders (DJ Music, Ableton, Stem Splitting,
+  Thumbnails, etc.)
 - metadata/library.sqlite — one-way UP (track catalog for queries)
 - templates/mashup/ — one-way UP from Ableton/HuntingSzn Mashup Template Project
-- projects/<slug>/ — one-way DOWN to Ableton/Music Production Agent/<slug>/
+- Other agent-written prefixes (e.g. Thumbnails/, projects/) land 1:1 on the
+  drive when pulled (``Thumbnails/Releases/...`` -> ``{DRIVE}/Thumbnails/...``)
 
 Publish defaults to `rclone copy` (no remote deletes, overwrites dest from
 the drive). Pass allow_delete=True for `rclone sync`. Sync excludes the
 B2-only prefixes (projects/, metadata/, templates/) so they are not deleted.
 
-Pull uses `rclone copy --update` so newer local Ableton work is kept.
+Pull copies the **whole bucket** to the drive root with `rclone copy --update`
+so newer local files are kept. It never deletes local or remote files.
 
 Env vars:
 - B2_BUCKET       — bucket name (stub)
@@ -256,34 +259,28 @@ def publish_template(
     return _print_or_run(args, config, dry_run=dry_run)
 
 
-def pull_projects(
+def pull_drive(
     drive_root: Path,
     config: RcloneConfig,
     *,
     dry_run: bool = False,
     progress: bool = True,
 ) -> str | None:
-    """Copy projects from B2 to Ableton/Music Production Agent.
+    """Copy the whole B2 bucket onto the drive root.
 
-    Uses copy --update: never deletes local files, does not overwrite newer local work.
-
-    B2 projects/<slug>/ → {DRIVE}/Ableton/Music Production Agent/<slug>/
+    Uses copy --update: never deletes local files, does not overwrite newer
+    local work. Prefixes stay 1:1 (``Thumbnails/`` -> ``{DRIVE}/Thumbnails/``).
 
     Returns command that was (or would be) executed.
     """
-    agent_projects = drive_root / "Ableton" / "Music Production Agent"
-
-    if config.is_configured and not dry_run:
-        agent_projects.mkdir(parents=True, exist_ok=True)
-
     args = ["copy"]
     if progress:
         args.append("--progress")
     args.extend(
         [
             "--update",
-            _bucket_target(config, "/projects/"),
-            str(agent_projects),
+            _bucket_target(config, "/"),
+            str(drive_root),
         ]
     )
     return _print_or_run(args, config, dry_run=dry_run)

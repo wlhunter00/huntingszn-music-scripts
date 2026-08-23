@@ -4,7 +4,7 @@ Subcommands:
 - detect       — print drive path or "not mounted"
 - index        — scan all catalogs: tracks, stems, ableton projects
 - publish      — index all catalogs + rclone copy FULL drive to B2 (sync with --allow-delete)
-- pull         — rclone copy --update projects/ -> Ableton/Music Production Agent/
+- pull         — rclone copy --update full B2 bucket -> drive root
 - watch        — pull -> incremental index -> publish when the drive is mounted
 - install-watch — install a per-PC login stub (launchd / Task Scheduler / systemd)
 - uninstall-watch — remove the per-PC login stub
@@ -41,7 +41,7 @@ from library_sync.rclone import (
     publish_drive,
     publish_sqlite,
     publish_template,
-    pull_projects,
+    pull_drive,
 )
 from library_sync.watch import DEFAULT_DEBOUNCE_S, DEFAULT_POLL_S, cmd_watch
 
@@ -303,7 +303,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
 
 
 def cmd_pull(args: argparse.Namespace) -> int:
-    """Pull projects from B2 without deleting local Ableton work."""
+    """Pull the full B2 bucket onto the drive without deleting local files."""
     drive_root, _, _ = _get_paths(args.root)
 
     if drive_root is None:
@@ -312,14 +312,14 @@ def cmd_pull(args: argparse.Namespace) -> int:
 
     config = RcloneConfig.from_env(drive_root)
 
-    print("=== Copying projects from B2 -> Ableton/Music Production Agent ===")
+    print("=== Copying full B2 bucket -> drive (rclone copy --update, no deletes) ===")
     if not config.is_configured:
         print("B2 not configured (B2_REMOTE / B2_BUCKET not set)")
         print("Showing planned command:")
         print()
 
     try:
-        pull_projects(drive_root, config, dry_run=args.dry_run)
+        pull_drive(drive_root, config, dry_run=args.dry_run)
     except RcloneError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -560,7 +560,8 @@ def main() -> None:
     sub_publish.set_defaults(func=cmd_publish)
 
     sub_pull = subparsers.add_parser(
-        "pull", help="Pull projects from B2 to Ableton/Music Production Agent"
+        "pull",
+        help="Copy the full B2 bucket to the drive (copy --update; never deletes)",
     )
     sub_pull.add_argument("--dry-run", action="store_true", help="Show planned command only")
     sub_pull.add_argument("--root", type=Path, help="Override drive root path")
@@ -569,12 +570,13 @@ def main() -> None:
     sub_watch = subparsers.add_parser(
         "watch",
         help=(
-            "When the music drive is mounted: pull from B2, incremental index, "
-            "publish (copy --update; never deletes from B2)"
+            "When the music drive is mounted: pull full B2 bucket to the drive, "
+            "incremental index, publish (copy --update; never deletes from B2)"
         ),
         description=(
             "Install once per PC with install-watch, then plug in the drive. "
-            "watch runs pull -> incremental index -> publish (rclone copy --update). "
+            "watch runs pull (full B2 bucket -> drive) -> incremental index -> "
+            "publish (rclone copy --update). "
             "It never passes --allow-delete and never auto-deletes remotes. "
             "Log: {DRIVE}/Scripts/data/watch.log"
         ),
