@@ -266,7 +266,10 @@ def run_watch_pipeline(
             write_log("failure: B2 not configured (B2_REMOTE / B2_BUCKET); skipping run")
             return 1
 
-        write_log("start: pull (full B2 bucket -> drive, rclone copy --update, never delete)")
+        write_log(
+            "start: pull (B2 bucket -> drive exclude projects/, then "
+            "projects -> Ableton/Music Production Agent; copy --update, never delete)"
+        )
         try:
             pull_drive(drive_root, config, dry_run=dry_run, progress=False)
         except RcloneError as exc:

@@ -5,15 +5,18 @@ B2 layout:
   Thumbnails, etc.)
 - metadata/library.sqlite — one-way UP (track catalog for queries)
 - templates/mashup/ — one-way UP from Ableton/HuntingSzn Mashup Template Project
-- Other agent-written prefixes (e.g. Thumbnails/, projects/) land 1:1 on the
-  drive when pulled (``Thumbnails/Releases/...`` -> ``{DRIVE}/Thumbnails/...``)
+- Other agent-written prefixes (e.g. Thumbnails/) land 1:1 on the drive
+  (``Thumbnails/Releases/...`` -> ``{DRIVE}/Thumbnails/Releases/...``)
+- projects/<slug>/ — remapped DOWN to Ableton/Music Production Agent/<slug>/
+  (excluded from the root pull so jobs do not pile up under {DRIVE}/projects/)
 
 Publish defaults to `rclone copy` (no remote deletes, overwrites dest from
 the drive). Pass allow_delete=True for `rclone sync`. Sync excludes the
 B2-only prefixes (projects/, metadata/, templates/) so they are not deleted.
 
-Pull copies the **whole bucket** to the drive root with `rclone copy --update`
-so newer local files are kept. It never deletes local or remote files.
+Pull is two ``rclone copy --update`` steps (never deletes):
+1. Whole bucket -> drive root, excluding ``projects/**``
+2. ``projects/`` -> ``Ableton/Music Production Agent/``
 
 Env vars:
 - B2_BUCKET       — bucket name (stub)
@@ -69,6 +72,12 @@ PUBLISH_EXCLUDES = [
     "/projects/**",
     "/metadata/**",
     "/templates/**",
+]
+
+# Root pull copies every prefix 1:1 except projects/, which is remapped
+# into Ableton/Music Production Agent/ so that folder stays the job home.
+PULL_BUCKET_EXCLUDES = [
+    "/projects/**",
 ]
 
 
@@ -259,19 +268,54 @@ def publish_template(
     return _print_or_run(args, config, dry_run=dry_run)
 
 
+def pull_projects(
+    drive_root: Path,
+    config: RcloneConfig,
+    *,
+    dry_run: bool = False,
+    progress: bool = True,
+) -> str:
+    """Copy B2 projects/ into Ableton/Music Production Agent.
+
+    Uses copy --update: never deletes local files, does not overwrite newer
+    local work.
+
+    B2 projects/<slug>/ → {DRIVE}/Ableton/Music Production Agent/<slug>/
+    """
+    agent_projects = drive_root / "Ableton" / "Music Production Agent"
+
+    if config.is_configured and not dry_run:
+        agent_projects.mkdir(parents=True, exist_ok=True)
+
+    args = ["copy"]
+    if progress:
+        args.append("--progress")
+    args.extend(
+        [
+            "--update",
+            _bucket_target(config, "/projects/"),
+            str(agent_projects),
+        ]
+    )
+    return _print_or_run(args, config, dry_run=dry_run)
+
+
 def pull_drive(
     drive_root: Path,
     config: RcloneConfig,
     *,
     dry_run: bool = False,
     progress: bool = True,
-) -> str | None:
-    """Copy the whole B2 bucket onto the drive root.
+) -> list[str]:
+    """Pull B2 onto the drive: whole bucket (minus projects/) plus Ableton remap.
 
-    Uses copy --update: never deletes local files, does not overwrite newer
-    local work. Prefixes stay 1:1 (``Thumbnails/`` -> ``{DRIVE}/Thumbnails/``).
+    1. ``rclone copy --update`` bucket root -> drive, excluding ``projects/**``
+       so Thumbnails/, metadata/, etc. land 1:1.
+    2. ``rclone copy --update`` ``projects/`` -> ``Ableton/Music Production Agent/``.
 
-    Returns command that was (or would be) executed.
+    Never deletes local or remote files; never overwrites newer local work.
+
+    Returns the commands that were (or would be) executed.
     """
     args = ["copy"]
     if progress:
@@ -283,4 +327,10 @@ def pull_drive(
             str(drive_root),
         ]
     )
-    return _print_or_run(args, config, dry_run=dry_run)
+    for pattern in PULL_BUCKET_EXCLUDES:
+        args.extend(["--exclude", pattern])
+    bucket_cmd = _print_or_run(args, config, dry_run=dry_run)
+    projects_cmd = pull_projects(
+        drive_root, config, dry_run=dry_run, progress=progress
+    )
+    return [bucket_cmd, projects_cmd]

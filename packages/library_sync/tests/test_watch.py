@@ -427,7 +427,8 @@ def test_watch_pipeline_never_passes_allow_delete(tmp_path, monkeypatch):
     logs: list[str] = []
     rc = run_watch_pipeline(drive, dry_run=True, log=logs.append)
     assert rc == 0
-    assert any("full B2 bucket -> drive" in line for line in logs)
+    assert any("B2 bucket -> drive exclude projects/" in line for line in logs)
+    assert any("Ableton/Music Production Agent" in line for line in logs)
     assert captured["allow_delete"] is False
     assert captured["update"] is True
     assert captured["progress"] is False
@@ -889,8 +890,8 @@ def test_pull_banner_is_ascii_arrow(capsys, monkeypatch, tmp_path):
     out = capsys.readouterr().out
     assert "->" in out
     assert "\u2192" not in out
-    assert "full B2 bucket" in out
-    assert "Music Production Agent" not in out
+    assert "exclude projects/" in out
+    assert "Music Production Agent" in out
 
 
 def test_configure_stdio_utf8_sets_env(monkeypatch):
@@ -1099,7 +1100,9 @@ def test_pull_help_says_full_bucket_copy_update(capsys):
     assert "full b2 bucket" in normalized
     assert "copy --update" in normalized
     assert "never deletes" in normalized
-    assert "music production agent" not in normalized
+    assert "projects/**" in normalized or "projects/" in normalized
+    assert "music production agent" in normalized
+    assert "thumbnails" in normalized
 
 
 def test_watch_help_says_never_deletes_from_b2(capsys):
@@ -1112,5 +1115,5 @@ def test_watch_help_says_never_deletes_from_b2(capsys):
     normalized = " ".join(out.split())
     assert "never passes --allow-delete" in normalized
     assert "pull" in normalized.lower()
-    assert "full B2 bucket" in normalized
+    assert "Ableton/Music Production Agent" in normalized
     assert "publish" in normalized.lower()
