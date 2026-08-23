@@ -562,6 +562,11 @@ def main() -> None:
     sub_pull = subparsers.add_parser(
         "pull",
         help="Copy the full B2 bucket to the drive (copy --update; never deletes)",
+        description=(
+            "Copy the full B2 bucket onto the drive root with rclone copy --update. "
+            "Newer local files are kept. Never deletes from the drive or from B2. "
+            "Prefixes land 1:1 (Thumbnails/Releases/... -> {DRIVE}/Thumbnails/...)."
+        ),
     )
     sub_pull.add_argument("--dry-run", action="store_true", help="Show planned command only")
     sub_pull.add_argument("--root", type=Path, help="Override drive root path")

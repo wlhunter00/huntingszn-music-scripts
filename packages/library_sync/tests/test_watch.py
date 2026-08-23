@@ -1095,11 +1095,11 @@ def test_pull_help_says_full_bucket_copy_update(capsys):
         except SystemExit as exc:
             assert exc.code == 0
     out = capsys.readouterr().out
-    normalized = " ".join(out.split())
-    assert "full B2 bucket" in normalized
+    normalized = " ".join(out.split()).lower()
+    assert "full b2 bucket" in normalized
     assert "copy --update" in normalized
     assert "never deletes" in normalized
-    assert "Music Production Agent" not in normalized
+    assert "music production agent" not in normalized
 
 
 def test_watch_help_says_never_deletes_from_b2(capsys):
