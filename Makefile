@@ -39,6 +39,8 @@ help:
 	@echo "  make library-index     Index library to SQLite"
 	@echo "  make library-publish   Publish library to B2"
 	@echo "  make library-pull      Pull projects from B2"
+	@echo "  make library-watch     Watch for the music drive (ONCE=1 for one-shot)"
+	@echo "  make library-install-watch  Install per-PC login stub (launchd / Task Scheduler)"
 	@echo "  make library-query     Query library (CAMELOT=..., BPM=..., Q=...)"
 	@echo "  make test              Run mashup-pop-finder tests"
 	@echo "  make test-library      Run library_tools metadata tests"
@@ -127,6 +129,12 @@ library-publish:
 
 library-pull:
 	uv run --package library-sync library-sync pull $(if $(DRY_RUN),--dry-run,) $(ARGS)
+
+library-watch:
+	uv run --package library-sync library-sync watch $(if $(ONCE),--once,) $(if $(DRY_RUN),--dry-run,) $(ARGS)
+
+library-install-watch:
+	uv run --package library-sync library-sync install-watch $(if $(DRY_RUN),--dry-run,) $(ARGS)
 
 library-query:
 	uv run --package library-sync library-sync query $(if $(CAMELOT),--camelot "$(CAMELOT)",) $(if $(BPM),--bpm $(BPM),) $(if $(Q),--q "$(Q)",) $(if $(ROLE),--role $(ROLE),) $(if $(LIMIT),--limit $(LIMIT),) $(if $(JSON),--json,) $(ARGS)

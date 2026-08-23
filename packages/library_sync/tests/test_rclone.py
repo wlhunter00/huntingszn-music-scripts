@@ -155,6 +155,27 @@ class TestPublishMode:
         assert "._*" in tokens
         assert "/Scripts/data/library.sqlite-journal" in tokens
 
+    def test_update_flag_is_copy_update_not_sync(self, tmp_path):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
+        commands = publish_drive(drive_root, config, update=True)
+        tokens = shlex.split(commands[0])
+        assert tokens[1] == "copy"
+        assert "--update" in tokens
+        assert "sync" not in tokens
+        assert "--allow-delete" not in tokens
+
+    def test_progress_false_omits_progress_flag(self, tmp_path):
+        drive_root = tmp_path / "drive"
+        drive_root.mkdir()
+        config = RcloneConfig(remote=None, bucket=None, mashup_template_path=None)
+        commands = publish_drive(drive_root, config, update=True, progress=False)
+        tokens = shlex.split(commands[0])
+        assert tokens[1] == "copy"
+        assert "--update" in tokens
+        assert "--progress" not in tokens
+
     def test_allow_delete_uses_sync(self, tmp_path):
         drive_root = tmp_path / "drive"
         drive_root.mkdir()
@@ -202,6 +223,20 @@ class TestPublishMode:
             except RcloneError as exc:
                 assert exc.returncode == 127
                 assert "rclone not found" in str(exc)
+
+    def test_oserror_starting_rclone(self):
+        from library_sync.rclone import RcloneError, _run_rclone
+
+        with patch(
+            "library_sync.rclone.subprocess.run",
+            side_effect=OSError(6, "The handle is invalid"),
+        ):
+            try:
+                _run_rclone(["copy", "a", "b"])
+                raise AssertionError("expected RcloneError")
+            except RcloneError as exc:
+                assert exc.returncode == 127
+                assert "handle is invalid" in str(exc)
 
 
 class TestUnconfiguredB2:
