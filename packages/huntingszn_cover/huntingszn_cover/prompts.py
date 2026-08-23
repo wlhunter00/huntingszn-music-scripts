@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-PromptType = Literal["clean", "crystal"]
+PromptType = Literal["clean", "crystal", "composite"]
 
 # Full Album Prompt files (clean/crystal) must be Will's real prompts, not stubs.
 # Composite is a separate locked short prompt and must not use this threshold.
@@ -17,11 +17,13 @@ AQUA_HEX = "#33C2E0"
 PROMPT_ENV_VARS: dict[PromptType, str] = {
     "clean": "HUNTINGSZN_PROMPT_CLEAN",
     "crystal": "HUNTINGSZN_PROMPT_CRYSTAL",
+    "composite": "HUNTINGSZN_PROMPT_COMPOSITE",
 }
 
 PROMPT_FILENAMES: dict[PromptType, list[str]] = {
     "clean": ["album-prompt-clean.txt", "Album Prompt - clean.txt"],
     "crystal": ["album-prompt-crystal.txt", "Album Prompt - crystal.txt"],
+    "composite": ["album-prompt-composite.txt", "Album Prompt - composite.txt"],
 }
 
 
@@ -62,7 +64,8 @@ def load_prompt(prompt_type: PromptType) -> str:
     """Load prompt text from the first available source.
 
     Lookup order:
-    1. Environment variable (HUNTINGSZN_PROMPT_CLEAN or HUNTINGSZN_PROMPT_CRYSTAL)
+    1. Environment variable (HUNTINGSZN_PROMPT_CLEAN, HUNTINGSZN_PROMPT_CRYSTAL,
+       or HUNTINGSZN_PROMPT_COMPOSITE)
     2. ./huntingszn-assets/cover-prompts/ (relative to cwd)
     3. /Volumes/HuntingSzn/Thumbnails/ (Album Prompt - clean/crystal.txt)
     4. Package prompts/ directory (fallback only)
@@ -149,9 +152,11 @@ def get_prompt(prompt_type: PromptType, *, validate: bool = True) -> str:
     """Load and optionally validate a prompt.
 
     Args:
-        prompt_type: Either "clean" or "crystal".
-        validate: If True, validate the prompt doesn't contain FLIP wordmark
-            and (for clean/crystal) is not a stub.
+        prompt_type: "clean", "crystal", or "composite".
+        validate: If True, validate transform prompts don't contain FLIP
+            wordmark and (for clean/crystal) are not stubs. Composite prompts
+            skip those rules; they are a locked images.edit instruction
+            without HUNTINGSZN EDIT.
 
     Returns:
         The prompt text content.

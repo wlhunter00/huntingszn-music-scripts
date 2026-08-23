@@ -234,9 +234,9 @@ def mashup(
     """Create a mashup album cover composite.
 
     ALWAYS fetches fresh album covers via SerpAPI Google Images (default behavior).
-    Auto-selects the best square cover per track, then creates a composite via
-    OpenAI multi-image edit (gpt-image-1.5, falling back to gpt-image-1) and
-    transforms with clean + crystal prompts.
+    Auto-selects the best square cover per track, then creates two composites via
+    OpenAI multi-image edit (gpt-image-1.5, falling back to gpt-image-1) — each
+    track as primary — and transforms with clean + crystal prompts.
 
     Does NOT read from or overwrite existing Releases folders - those are finished work only.
     Use --image only as a rare override when fetch returns unusable results.
@@ -315,7 +315,13 @@ def mashup(
             for track, paths in manifest.originals.items():
                 console.print(f"  {track}: {len(paths)} image(s)")
 
-        if manifest.composite_path:
+        if manifest.composites:
+            console.print("\n[bold]Composites:[/bold]")
+            for run in manifest.composites:
+                console.print(
+                    f"  primary {run.primary_track}: {run.path} [{run.method}]"
+                )
+        elif manifest.composite_path:
             method = manifest.composite_method or "unknown"
             console.print(f"\n[bold]Composite:[/bold] {manifest.composite_path} [{method}]")
 

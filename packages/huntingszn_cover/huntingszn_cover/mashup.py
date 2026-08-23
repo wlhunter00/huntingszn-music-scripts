@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -30,6 +30,16 @@ MAX_COMPOSITE_IMAGES = 16
 
 
 @dataclass
+class CompositeRun:
+    """One mashup composite with a designated primary cover."""
+
+    primary_track: str
+    secondary_track: str
+    path: str
+    method: str
+
+
+@dataclass
 class MashupManifest:
     """Manifest tracking all files created for a mashup."""
 
@@ -40,6 +50,7 @@ class MashupManifest:
     originals: dict[str, list[str]] = field(default_factory=dict)
     composite_path: str | None = None
     composite_method: str | None = None
+    composites: list[CompositeRun] = field(default_factory=list)
     transformed: dict[str, list[str]] = field(default_factory=dict)
     output_dir: str = ""
     copied_to_volume: str | None = None
@@ -195,6 +206,25 @@ def create_openai_composite(
     return output_path, model_to_use
 
 
+def _composite_image_orders(covers: list[Path]) -> list[list[Path]]:
+    """Return image lists for each composite run: original order, then swapped.
+
+    images.edit treats the first image as primary and the second as secondary.
+    """
+    if len(covers) < 2:
+        raise MashupError("Need at least 2 images for composite")
+    original = list(covers)
+    swapped = [covers[1], covers[0], *covers[2:]]
+    return [original, swapped]
+
+
+def _cover_label(index: int, tracks: list[str], covers: list[Path]) -> str:
+    """Label a cover by matching track when possible, else the file stem."""
+    if 0 <= index < len(tracks):
+        return tracks[index]
+    return covers[index].stem
+
+
 def _format_candidate_paths(all_candidates: dict[str, list[str]]) -> str:
     return "\n".join(
         f"  {track}: {paths if paths else '(no images fetched)'}"
@@ -217,6 +247,10 @@ def run_mashup(
 
     ALWAYS fetches fresh covers via SerpAPI unless override_images is provided.
     Does NOT read from or overwrite existing Releases folders - those are finished work only.
+
+    Creates two OpenAI composites, swapping image order so each of the first two
+    covers is primary once. The composite prompt is the locked text from
+    get_prompt("composite") with nothing appended.
 
     Args:
         mashup_name: Name for the mashup (e.g., "The Cure x Pray").
@@ -242,6 +276,7 @@ def run_mashup(
 
     prompt_clean = get_prompt("clean")
     prompt_crystal = get_prompt("crystal")
+    prompt_composite = get_prompt("composite")
 
     slug = slugify(mashup_name)
     mashup_dir = output_dir / slug
@@ -319,27 +354,38 @@ def run_mashup(
             f"Provide more tracks or use --image override."
         )
 
-    composite_path = mashup_dir / f"{slug}-composite.png"
+    all_composite_transforms: list[str] = []
+    for run_index, images in enumerate(_composite_image_orders(best_covers)):
+        primary_i = 0 if run_index == 0 else 1
+        secondary_i = 1 if run_index == 0 else 0
+        primary_label = _cover_label(primary_i, tracks, best_covers)
+        secondary_label = _cover_label(secondary_i, tracks, best_covers)
+        primary_slug = track_slug(primary_label)
 
-    composite_prompt = (
-        f"Create a seamless mashup album cover blending these album art images. "
-        f"This is for '{mashup_name}'. Create an artistic composite that merges "
-        f"the visual elements of the covers into one cohesive design."
-    )
+        composite_path = mashup_dir / f"{slug}-composite-primary-{primary_slug}.png"
+        out_path, method = create_openai_composite(
+            images, composite_path, prompt_composite
+        )
+        run = CompositeRun(
+            primary_track=primary_label,
+            secondary_track=secondary_label,
+            path=str(out_path),
+            method=method,
+        )
+        manifest.composites.append(run)
+        if run_index == 0:
+            manifest.composite_path = run.path
+            manifest.composite_method = run.method
 
-    composite_path, method = create_openai_composite(
-        best_covers, composite_path, composite_prompt
-    )
-    manifest.composite_path = str(composite_path)
-    manifest.composite_method = method
+        transformed_paths: list[str] = []
+        for prompt, ptype in [(prompt_clean, "clean"), (prompt_crystal, "crystal")]:
+            t_path = mashup_dir / f"{slug}-composite-primary-{primary_slug}-{ptype}.png"
+            result = transform_image(out_path, prompt, t_path)
+            transformed_paths.append(str(result.output_path))
+        manifest.transformed[f"composite:{primary_label}"] = transformed_paths
+        all_composite_transforms.extend(transformed_paths)
 
-    composite_results = []
-    for prompt, ptype in [(prompt_clean, "clean"), (prompt_crystal, "crystal")]:
-        out_path = mashup_dir / f"{slug}-composite-{ptype}.png"
-        result = transform_image(composite_path, prompt, out_path)
-        composite_results.append(result)
-
-    manifest.transformed["composite"] = [str(r.output_path) for r in composite_results]
+    manifest.transformed["composite"] = all_composite_transforms
 
     if not override_images:
         for track in tracks:
@@ -375,6 +421,7 @@ def run_mashup(
                     "originals": manifest.originals,
                     "composite_path": manifest.composite_path,
                     "composite_method": manifest.composite_method,
+                    "composites": [asdict(c) for c in manifest.composites],
                     "transformed": manifest.transformed,
                     "output_dir": manifest.output_dir,
                     "copied_to_volume": manifest.copied_to_volume,
