@@ -2,7 +2,6 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-
 from library_tools.mik_clear_cues import (
     clear_mik_cues_rule,
     is_mik_comment,
@@ -69,7 +68,7 @@ def test_is_mik_comment():
 
 def test_process_folder_strips_mik_comments(tmp_path: Path):
     from mutagen.easyid3 import EasyID3
-    from mutagen.id3 import ID3, COMM
+    from mutagen.id3 import COMM, ID3
 
     folder = tmp_path / "spotify"
     folder.mkdir()
