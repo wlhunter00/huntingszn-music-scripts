@@ -1,8 +1,15 @@
 import dataclasses
+from pathlib import Path
 
 import pytest
 
-from library_tools.mik_clear_cues import clear_mik_cues_rule, is_mik_cue_name, main
+from library_tools.mik_clear_cues import (
+    clear_mik_cues_rule,
+    is_mik_comment,
+    is_mik_cue_name,
+    main,
+    process_folder,
+)
 from serato_tools.track_cues_v2 import TrackCuesV2
 
 
@@ -51,6 +58,35 @@ def test_clear_mik_cues_rule_drops_energy_keeps_others():
     assert result.cues == [drop]
     assert result.loops == [loop]
     assert dataclasses.replace(track, cues=[drop]) == result
+
+
+def test_is_mik_comment():
+    assert is_mik_comment("9A - Energy 8")
+    assert is_mik_comment("10B - Energy 7")
+    assert not is_mik_comment("DROP")
+    assert not is_mik_comment("")
+
+
+def test_process_folder_strips_mik_comments(tmp_path: Path):
+    from mutagen.easyid3 import EasyID3
+    from mutagen.id3 import ID3, COMM
+
+    folder = tmp_path / "spotify"
+    folder.mkdir()
+    track = folder / "Song.mp3"
+    track.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 256)
+    EasyID3().save(track)
+    id3 = ID3(track)
+    id3.add(COMM(encoding=3, lang="eng", desc="", text=["9A - Energy 8"]))
+    id3.add(COMM(encoding=3, lang="eng", desc="ID3v1 Comment", text=["9A - Energy 8"]))
+    id3.add(COMM(encoding=3, lang="eng", desc="note", text=["keep this"]))
+    id3.save(track)
+
+    process_folder(tmp_path, dry_run=False)
+
+    leftover = ID3(track).getall("COMM")
+    texts = [str(frame.text[0]) for frame in leftover]
+    assert texts == ["keep this"]
 
 
 def test_main_requires_folder(capsys, monkeypatch):

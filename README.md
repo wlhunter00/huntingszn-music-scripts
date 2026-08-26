@@ -67,7 +67,7 @@ uv run --package library-tools serato-clear-cues --root "H:\DJ Music\Soundcloud\
 uv run --package library-tools serato-clear-cues --root "H:\DJ Music\Soundcloud\1- need to nuke"
 ```
 
-**Mixed In Key cue clearing** — removes Platinum Notes/MIK phrase markers (`Energy 7` Serato hot cues + `CuePoints` GEOB). Key tags, energy level, beatgrid, and loops stay. You must pass the folder; there is no default:
+**Mixed In Key cue clearing** — removes Platinum Notes/MIK phrase markers (`Energy 7` Serato hot cues + `CuePoints` GEOB) and comments like `9A - Energy 8`. Key tags, energy level, beatgrid, and loops stay. You must pass the folder; there is no default:
 
 ```bash
 uv run --package library-tools mik-clear-cues --dry-run "/Volumes/HuntingSzn/Platnium Notes/make it bump"
