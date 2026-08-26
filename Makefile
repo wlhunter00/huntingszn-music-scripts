@@ -25,6 +25,7 @@ help:
 	@echo "  make platinum-metadata Write ID3 tags from filenames"
 	@echo "  make library-dedupe    Remove duplicate files in DJ Spotify (filename/extension)"
 	@echo "  make serato-clear-cues Remove Serato hot cues from folder (ROOT=..., DRY_RUN=1)"
+	@echo "  make mik-clear-cues    Remove Mixed In Key cue points (ROOT=folder required, DRY_RUN=1)"
 	@echo "  make wav2mp3 INPUT=... Convert .wav to .mp3 (optional OUTPUT=..., BITRATE=320k)"
 	@echo "  make pn-filename ROOT=... Normalize flip filenames for Platinum Notes"
 	@echo "  make key-correct-catalog  Step 1: catalog current key tags"
@@ -79,6 +80,10 @@ library-dedupe:
 
 serato-clear-cues:
 	uv run --package library-tools serato-clear-cues $(if $(ROOT),--root "$(ROOT)",) $(if $(DRY_RUN),--dry-run,) $(ARGS)
+
+mik-clear-cues:
+	@test -n "$(ROOT)" || (echo 'mik-clear-cues requires ROOT=/path/to/folder'; exit 1)
+	uv run --package library-tools mik-clear-cues $(if $(DRY_RUN),--dry-run,) "$(ROOT)" $(ARGS)
 
 wav2mp3:
 	uv run --package library-tools wav2mp3 $(if $(OUTPUT),-o "$(OUTPUT)",) $(if $(BITRATE),-b "$(BITRATE)",) $(if $(OVERWRITE),--overwrite,) "$(INPUT)"

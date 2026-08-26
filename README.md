@@ -56,14 +56,22 @@ Optional: add `--flip-style` only if you want retail artists stripped from flip 
 | Catalog current key tags (step 1) | `uv run --package library-tools key-correct-catalog` |
 | Convert `.wav` → `.mp3` | `uv run --package library-tools wav2mp3 -b 320k song.wav` |
 | Remove Serato hot cues | `uv run --package library-tools serato-clear-cues --dry-run` |
+| Remove Mixed In Key cue points | `uv run --package library-tools mik-clear-cues --dry-run FOLDER` |
 
-Common flags: `--root PATH` (pn-pipeline, pn-rename, library-metadata, serato-clear-cues), `--force` (pn-pipeline), `--flip-style` (optional; pn-pipeline / pn-filename only), `--library PATH` (library-dedupe, key-correct-catalog), `-o` / `--overwrite` (wav2mp3).
+Common flags: `--root PATH` (pn-pipeline, pn-rename, library-metadata, serato-clear-cues), `--force` (pn-pipeline), `--flip-style` (optional; pn-pipeline / pn-filename only), `--library PATH` (library-dedupe, key-correct-catalog), `-o` / `--overwrite` (wav2mp3). `mik-clear-cues` requires a folder path.
 
 **Serato cue clearing** — strips hot cues only (loops/beatgrid stay). Close Serato DJ first; MP3/AIFF only (`serato-tools` limitation):
 
 ```bash
 uv run --package library-tools serato-clear-cues --root "H:\DJ Music\Soundcloud\1- need to nuke" --dry-run
 uv run --package library-tools serato-clear-cues --root "H:\DJ Music\Soundcloud\1- need to nuke"
+```
+
+**Mixed In Key cue clearing** — removes Platinum Notes/MIK phrase markers (`Energy 7` Serato hot cues + `CuePoints` GEOB). Key tags, energy level, beatgrid, and loops stay. You must pass the folder; there is no default:
+
+```bash
+uv run --package library-tools mik-clear-cues --dry-run "/Volumes/HuntingSzn/Platnium Notes/make it bump"
+uv run --package library-tools mik-clear-cues "/Volumes/HuntingSzn/Platnium Notes/make it bump"
 ```
 
 ### `stem-split` — vocal + Demucs stems

@@ -26,6 +26,7 @@ wav2mp3 = "library_tools.wav2mp3:main"
 pn-filename = "library_tools.pn_filename:main"
 pn-pipeline = "library_tools.pn_pipeline:main"
 serato-clear-cues = "library_tools.serato_clear_cues:main"
+mik-clear-cues = "library_tools.mik_clear_cues:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["library_tools"]

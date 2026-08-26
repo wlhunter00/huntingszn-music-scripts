@@ -1,0 +1,62 @@
+import dataclasses
+
+import pytest
+
+from library_tools.mik_clear_cues import clear_mik_cues_rule, is_mik_cue_name, main
+from serato_tools.track_cues_v2 import TrackCuesV2
+
+
+def _cue(index: int, name: str) -> TrackCuesV2.CueEntry:
+    return TrackCuesV2.CueEntry(
+        field1=b"\x00",
+        index=index,
+        position=1000 * (index + 1),
+        field4=b"\x00",
+        color=TrackCuesV2.CueColors.RED.value,
+        field6=b"\x00\x00",
+        name=name,
+    )
+
+
+def test_is_mik_cue_name():
+    assert is_mik_cue_name("Energy 7")
+    assert is_mik_cue_name("energy 4")
+    assert not is_mik_cue_name("DROP")
+    assert not is_mik_cue_name("Energy")
+    assert not is_mik_cue_name("")
+
+
+def test_clear_mik_cues_rule_none_when_no_energy_cues():
+    track = TrackCuesV2.TrackCuesInfo(cues=[_cue(0, "DROP")])
+    assert clear_mik_cues_rule(track) is None
+
+
+def test_clear_mik_cues_rule_drops_energy_keeps_others():
+    drop = _cue(0, "DROP")
+    energy = _cue(1, "Energy 7")
+    loop = TrackCuesV2.LoopEntry(
+        field1=b"\x00",
+        index=0,
+        startposition=0,
+        endposition=4000,
+        field5=b"\x00\x00\x00\x00",
+        field6=b"\x00\x00\x00\x00",
+        color=TrackCuesV2.CueColors.RED.value,
+        locked=False,
+        name="LOOP",
+    )
+    track = TrackCuesV2.TrackCuesInfo(cues=[drop, energy], loops=[loop])
+    result = clear_mik_cues_rule(track)
+    assert result is not None
+    assert result.cues == [drop]
+    assert result.loops == [loop]
+    assert dataclasses.replace(track, cues=[drop]) == result
+
+
+def test_main_requires_folder(capsys, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["mik-clear-cues"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code != 0
+    err = capsys.readouterr().err
+    assert "required" in err.lower() or "root" in err.lower()
