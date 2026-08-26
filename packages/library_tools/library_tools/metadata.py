@@ -1,4 +1,4 @@
-"""Parse Artist - Title filenames and write ID3 metadata (EasyID3)."""
+"""Write ID3 title/artist from filenames, using folder-specific rules."""
 
 from __future__ import annotations
 
@@ -11,227 +11,170 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
 
 from config.paths import PLATINUM_NOTES
-from library_tools.known_artists import KNOWN_ARTISTS
-from library_tools.pn_filename import normalize_parentheses, strip_title_noise
 
-FEATURE_PATTERNS = [
-    r"\bft\.?\b",
-    r"\bfeat\.?\b",
-    r"\bfeatures?\b",
-    r"\bfeaturing\b",
-    r"\bwith\b",
-]
-REMIX_PATTERNS = [
-    r"\bremix\b",
-    r"\bedit\b",
-    r"\bflip\b",
-    r"\bbootleg\b",
-    r"\breboot\b",
-    r"\bversion\b",
-    r"\bvip\b",
-    r"\bmashup\b",
-]
-COLLAB_INDICATORS = [" x ", " vs ", " & ", " and "]
-PARENTHETICAL_REMIX = re.compile(
-    r"\([^)]*(?:remix|flip|bootleg|edit|mashup|vip|re-?up|version)[^)]*\)",
-    re.IGNORECASE,
-)
+AUDIO_SUFFIXES = {".mp3", ".m4a", ".flac", ".wav"}
+
+# Folder names under Platinum Notes (case-insensitive).
+MODE_DASH = "dash_or_title"  # first " - " split; otherwise title-only
+MODE_TITLE_KEEP_ARTIST = "title_keep_artist"  # whole stem is title; keep existing artist
+FOLDER_MODES = {
+    "make it bump": MODE_DASH,
+    "spotify": MODE_DASH,
+    "huntingszn": MODE_TITLE_KEEP_ARTIST,
+}
 
 
-def title_case_preserve(text: str) -> str:
-    words = text.split()
-    return " ".join(
-        word
-        if word and word[0].isupper()
-        else (word[0].upper() + word[1:] if word and word[0].isalpha() else word)
-        for word in words
-    )
+def infer_mode(path: Path, root: Path | None = None) -> str:
+    """Pick a tagging mode from the file's parent folders under ``root``.
+
+    Walks from the file upward and stops at ``root`` so a volume named
+    HuntingSzn is not treated as the huntingszn library folder.
+    """
+    current = path.parent
+    root_resolved = root.resolve() if root is not None else None
+    while True:
+        name = current.name.lower()
+        mode = FOLDER_MODES.get(name)
+        if mode and current.parent.name.lower() != "volumes":
+            return mode
+        if root_resolved is not None and current.resolve() == root_resolved:
+            break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return MODE_DASH
 
 
-def apply_file_namer_title_cleanup(title: str) -> str:
-    """Strip trailing BPM/key and label brackets (from file-namer.py)."""
-    title = re.sub(r"\s+[A-Ga-g]b?\s+\d+$", "", title)
-    title = re.sub(r"\s+\d{1,2}[AB]\s+\d{2,3}$", "", title, flags=re.IGNORECASE)
-    title = re.sub(r"\s*\[[^\]]+\]\s*$", "", title)
-    return title.strip()
+def strip_pn_suffix(stem: str) -> str:
+    return re.sub(r"_PN$", "", stem, flags=re.IGNORECASE)
 
 
-def split_simple_artists(artist_part: str) -> list[str]:
-    """Split artist string on vs/x/comma/& (from file-namer.py)."""
-    parts = re.split(r" [Vv][Ss] ", artist_part)
-    parts = [p for artist in parts for p in artist.split(" x ")]
-    parts = [p for artist in parts for p in artist.split(",")]
-    parts = [p for artist in parts for p in artist.split("&")]
-    return [title_case_preserve(a.strip()) for a in parts if a.strip()]
+def desired_from_stem(stem: str, mode: str) -> tuple[str, str | None]:
+    """Return (title, artist_or_none). None artist means do not take artist from the filename."""
+    stem = strip_pn_suffix(stem)
+    if mode == MODE_TITLE_KEEP_ARTIST:
+        return stem, None
+    if " - " in stem:
+        artist, title = stem.split(" - ", 1)
+        artist = artist.strip()
+        title = title.strip()
+        return title, artist or None
+    return stem, None
 
 
-def parse_song_info(filename: str) -> dict[str, str | list[str]] | None:
-    """Parse song title and artists from filename."""
-    name_without_ext = os.path.splitext(filename)[0]
-    name_without_pn = re.sub(r"_PN$", "", name_without_ext, flags=re.IGNORECASE)
+def format_existing_artist(value: str) -> str:
+    """Keep one artist string; turn slash-joined lists into ' x ' collabs."""
+    value = value.strip()
+    if "/" in value and " x " not in value:
+        parts = [part.strip() for part in value.split("/") if part.strip()]
+        if len(parts) > 1:
+            return " x ".join(parts)
+    return value
 
-    artists: list[str] = []
-    title = ""
-    remix_info = ""
 
-    if " - " not in name_without_pn:
-        # No Artist - Title separator: use the whole filename as title, leave artist blank.
-        title = name_without_pn.replace("-", " ")
-        artists = []
-    else:
-        artist_part, title_part = name_without_pn.split(" - ", 1)
-        artist_part = artist_part.strip()
-        title_part = title_part.strip()
-        title_with_spaces = title_part.replace("-", " ")
+def artist_from_tags(audio: EasyID3) -> str:
+    values = [str(v).strip() for v in (audio.get("artist") or []) if str(v).strip()]
+    if not values:
+        return ""
+    if len(values) > 1:
+        return " x ".join(values)
+    return format_existing_artist(values[0])
 
-        lower_name = (artist_part + " " + title_part).lower()
-        found_artists = []
-        for artist in KNOWN_ARTISTS:
-            if artist in lower_name:
-                found_artists.append(artist)
 
-        if "(Evalution" in artist_part:
-            title = artist_part
-            artists = split_simple_artists(title_part)
-        elif found_artists:
-            artists = [a.title() for a in found_artists]
-            title = title_with_spaces
-        else:
-            artist_split = False
-            for indicator in COLLAB_INDICATORS:
-                if indicator.lower() in artist_part.lower():
-                    split_artists = re.split(re.escape(indicator), artist_part, flags=re.IGNORECASE)
-                    artists.extend([a.strip() for a in split_artists if a.strip()])
-                    artist_split = True
-                    break
-            if not artist_split:
-                artists = split_simple_artists(artist_part) or [artist_part]
-            title = title_with_spaces
+def title_from_tags(audio: EasyID3) -> str:
+    values = audio.get("title") or []
+    return str(values[0]).strip() if values else ""
 
-        for pattern in FEATURE_PATTERNS:
-            feature_match = re.search(rf"{pattern}(.*?)($|\()", title, re.IGNORECASE)
-            if feature_match:
-                feature_artists = feature_match.group(1).strip()
-                feature_split = False
-                for indicator in COLLAB_INDICATORS:
-                    if indicator.lower() in feature_artists.lower():
-                        split_features = re.split(
-                            re.escape(indicator), feature_artists, flags=re.IGNORECASE
-                        )
-                        artists.extend([a.strip() for a in split_features if a.strip()])
-                        feature_split = True
-                        break
-                if not feature_split and feature_artists:
-                    artists.append(feature_artists)
-                title = re.sub(rf"{pattern}.*?($|\()", " ", title, flags=re.IGNORECASE).strip()
-                break
 
-        if not PARENTHETICAL_REMIX.search(title):
-            for pattern in REMIX_PATTERNS:
-                remix_match = re.search(rf"\b{pattern}\b", title, re.IGNORECASE)
-                if remix_match:
-                    remix_start = remix_match.start()
-                    remix_prefix = ""
-                    if remix_start > 0:
-                        prefix_words = title[:remix_start].strip().split()
-                        if prefix_words:
-                            remix_prefix = prefix_words[-1]
-                    remix_end = len(title)
-                    for sep in [" - ", " | "]:
-                        sep_pos = title.find(sep, remix_start)
-                        if sep_pos != -1 and sep_pos < remix_end:
-                            remix_end = sep_pos
-                    remix_pattern = remix_match.group(0)
-                    remix_suffix = title[remix_match.end() : remix_end].strip()
-                    suffix_part = f" {remix_suffix}" if remix_suffix else ""
-                    if remix_prefix:
-                        remix_info = f"{remix_prefix} {remix_pattern}{suffix_part}"
-                        title_words = title[:remix_start].strip().split()
-                        if title_words:
-                            title_words.pop()
-                            title = " ".join(title_words) + " " + title[remix_end:].strip()
-                    else:
-                        remix_info = f"{remix_pattern}{suffix_part}"
-                        title = title[:remix_start].strip() + " " + title[remix_end:].strip()
-                    title = re.sub(r"\s+", " ", title).strip()
-                    break
-
-    cleaned_artists: list[str] = []
-    for artist in artists:
-        artist = re.sub(r"\([^)]*\)", "", artist).strip()
-        for pattern in REMIX_PATTERNS:
-            artist = re.sub(rf"\b{pattern}\b", "", artist, flags=re.IGNORECASE).strip()
-        if artist:
-            cleaned_artists.append(artist)
-
-    title = apply_file_namer_title_cleanup(title.strip())
-
-    if remix_info:
-        remix_info = title_case_preserve(remix_info).strip()
-        if remix_info and not re.search(r"\([^)]*\)", title):
-            if remix_info.startswith("("):
-                title = f"{title} {remix_info}"
-            else:
-                title = f"{title} ({remix_info})"
-
-    title = normalize_parentheses(strip_title_noise(title.strip()))
-    title = title_case_preserve(title)
-    cleaned_artists = [title_case_preserve(a) for a in cleaned_artists]
-
-    if not title or title.strip() == "()":
-        title = "Unknown Title"
-
-    return {"title": title, "contributing_artists": cleaned_artists}
+def parse_song_info(
+    filename: str, *, mode: str = MODE_DASH
+) -> dict[str, str | list[str]]:
+    """Filename → title/artist. Artist is a single string (no x/vs splitting)."""
+    title, artist = desired_from_stem(Path(filename).stem, mode)
+    return {
+        "title": title,
+        "contributing_artists": [artist] if artist else [],
+    }
 
 
 def process_folder(root: Path, *, force: bool, dry_run: bool) -> None:
-    stats = {"total": 0, "has_meta": 0, "updated": 0, "unparsed": 0}
+    stats = {"total": 0, "already_ok": 0, "updated": 0, "skipped": 0, "errors": 0}
     for dirpath, _, files in os.walk(root):
         for filename in files:
-            if not filename.lower().endswith((".mp3", ".m4a", ".flac", ".wav")):
+            if filename.startswith("._"):
+                stats["skipped"] += 1
+                continue
+            suffix = Path(filename).suffix.lower()
+            if suffix not in AUDIO_SUFFIXES:
                 continue
             stats["total"] += 1
             filepath = Path(dirpath) / filename
+            mode = infer_mode(filepath, root)
+            desired_title, artist_from_name = desired_from_stem(filepath.stem, mode)
+
             try:
                 audio = EasyID3(filepath)
-                if not force and "title" in audio and "artist" in audio:
-                    stats["has_meta"] += 1
-                    continue
             except (ID3NoHeaderError, Exception):
                 audio = EasyID3()
                 audio.filename = filepath
 
-            info = parse_song_info(filename)
-            if not info:
-                print(f"unparsed: {filepath}")
-                stats["unparsed"] += 1
+            existing_title = title_from_tags(audio)
+            existing_artist = artist_from_tags(audio)
+            if artist_from_name:
+                new_artist = artist_from_name
+            elif existing_artist:
+                new_artist = format_existing_artist(existing_artist)
+            else:
+                new_artist = ""
+
+            already_ok = existing_title == desired_title and existing_artist == new_artist
+            if already_ok and not force:
+                stats["already_ok"] += 1
                 continue
 
-            artists = info["contributing_artists"]
-            artist_display = ", ".join(artists) if artists else ""
+            artist_display = new_artist or "(keep empty)"
             print(
                 f"{'[dry-run] ' if dry_run else ''}update: {filename} -> "
-                f"{info['title']}" + (f" / {artist_display}" if artist_display else "")
+                f"{desired_title} / {artist_display}"
             )
             if not dry_run:
-                audio["title"] = info["title"]
-                if artists:
-                    audio["artist"] = artists
-                elif "artist" in audio:
-                    del audio["artist"]
-                audio.save(filepath)
+                try:
+                    audio["title"] = desired_title
+                    if new_artist:
+                        audio["artist"] = new_artist
+                    elif "artist" in audio:
+                        # Title-only filename with no existing artist: leave artist absent.
+                        del audio["artist"]
+                    audio.save(filepath)
+                except Exception as exc:
+                    print(f"error: {filepath}: {exc}")
+                    stats["errors"] += 1
+                    continue
             stats["updated"] += 1
 
     print(
-        f"total={stats['total']} already_tagged={stats['has_meta']} "
-        f"updated={stats['updated']} unparsed={stats['unparsed']}"
+        f"total={stats['total']} already_ok={stats['already_ok']} "
+        f"updated={stats['updated']} skipped_sidecars={stats['skipped']} "
+        f"errors={stats['errors']}"
     )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Write ID3 tags from filenames.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Write ID3 title/artist from filenames. "
+            "make it bump + spotify: split on the first ' - ' and keep both sides unchanged. "
+            "huntingszn: title is the whole filename; existing artist is kept. "
+            "Does not split collabs or rewrite title case."
+        )
+    )
     parser.add_argument("--root", type=Path, default=PLATINUM_NOTES)
-    parser.add_argument("--force", action="store_true", help="Update even if tags exist")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rewrite tags even when they already match the filename",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if not args.root.is_dir():
