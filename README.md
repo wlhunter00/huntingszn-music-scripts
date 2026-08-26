@@ -74,6 +74,21 @@ uv run --package library-tools mik-clear-cues --dry-run "/Volumes/HuntingSzn/Pla
 uv run --package library-tools mik-clear-cues "/Volumes/HuntingSzn/Platnium Notes/make it bump"
 ```
 
+### `serato-bpm-cleanup` — round fractional Serato BPMs
+
+Serato analysis often writes 128.31 / 128.5. Default is **dry-run**. `--write` rounds to the nearest integer, keeps the first-beat grid offset on constant beatgrids, and **never** rewrites a track that has any Serato hot cues or loops. Close Serato DJ Pro first (`--write` refuses if it looks running). Backs up mutated tags and `_Serato_/database V2`.
+
+```bash
+uv run --package serato-bpm-cleanup serato-bpm-cleanup --library "H:\DJ Music"
+uv run --package serato-bpm-cleanup serato-bpm-cleanup --library "H:\DJ Music" --csv bpm-report.csv
+uv run --package serato-bpm-cleanup serato-bpm-cleanup \
+  --library "H:\DJ Music" \
+  --db "C:\Users\Will\Music\_Serato_\database V2" \
+  --write
+```
+
+See [packages/serato_bpm_cleanup/README.md](packages/serato_bpm_cleanup/README.md) for what storage is rewritten (BeatGrid / Autotags / TBPM / database `tbpm`) vs left alone.
+
 ### `stem-split` — vocal + Demucs stems
 
 ```bash
@@ -230,6 +245,9 @@ uv run --package library-tools pytest packages/library_tools/tests
 uv sync --package library-sync --extra dev
 uv run --package library-sync pytest packages/library_sync/tests
 
+uv sync --package serato-bpm-cleanup --extra dev
+uv run --package serato-bpm-cleanup pytest packages/serato_bpm_cleanup/tests
+
 uv run ruff check packages config
 ```
 
@@ -245,6 +263,7 @@ uv run ruff check packages config
 | `stem_split` | Vocal ensemble + Demucs stems |
 | `library_tools` | Metadata, duplicates, Platinum Notes cleanup, key correction |
 | `library_sync` | Music inventory: index HDD, sync B2, query by key/BPM |
+| `serato_bpm_cleanup` | Round fractional Serato BPMs (dry-run default; skip tracks with cues) |
 | `music-downloads` | SoundCloud (MP3 320) / YouTube |
 | `music-catalogs` | Sample/plugin CSV scanners |
 | `soundcloud_repost` | Selenium unrepost tool |

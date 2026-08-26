@@ -29,6 +29,7 @@ members = [
     "packages/soundcloud_repost",
     "packages/gpt_trainer",
     "packages/huntingszn_cover",
+    "packages/serato_bpm_cleanup",
 ]
 
 [dependency-groups]
