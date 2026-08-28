@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-from mutagen.easyid3 import EasyID3
-
 from library_tools.metadata import (
     MODE_DASH,
     MODE_TITLE_KEEP_ARTIST,
@@ -13,6 +11,7 @@ from library_tools.metadata import (
     parse_song_info,
     process_folder,
 )
+from mutagen.easyid3 import EasyID3
 
 
 def test_infer_mode_from_folder_name():

@@ -47,6 +47,8 @@ help:
 	@echo "  make test-library      Run library_tools metadata tests"
 	@echo "  make test-library-sync Run library_sync tests"
 	@echo "  make test-cover        Run huntingszn-cover tests"
+	@echo "  make serato-bpm-cleanup  Round fractional Serato BPMs (LIBRARY=..., WRITE=1, DRY_RUN default)"
+	@echo "  make test-serato-bpm   Run serato-bpm-cleanup tests"
 
 sync:
 	uv sync --all-packages
@@ -151,6 +153,13 @@ test-library-sync:
 test-cover:
 	uv sync --package huntingszn-cover --extra dev
 	uv run --package huntingszn-cover pytest packages/huntingszn_cover/tests
+
+serato-bpm-cleanup:
+	uv run --package serato-bpm-cleanup serato-bpm-cleanup $(if $(LIBRARY),--library "$(LIBRARY)",) $(if $(DB),--db "$(DB)",) $(if $(WRITE),--write,) $(if $(CSV),--csv "$(CSV)",) $(ARGS)
+
+test-serato-bpm:
+	uv sync --package serato-bpm-cleanup --extra dev
+	uv run --package serato-bpm-cleanup pytest packages/serato_bpm_cleanup/tests
 
 lint:
 	uv run ruff check packages config

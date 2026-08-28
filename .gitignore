@@ -64,3 +64,6 @@ Thumbs.db
 
 # Nested package venvs (legacy)
 key_correction/.venv/
+
+# serato-bpm-cleanup write backups (created next to cwd)
+serato-bpm-cleanup-backups/
