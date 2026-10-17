@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <title>HuntingSzn Studio</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>HuntingSzn Studio</h1>
+        <p class="sub">Python scripts + Beat Visualizer, one control panel</p>
+      </div>
+      <div class="drive-pill" id="drivePill">
+        <span class="dot" id="driveDot"></span>
+        <span id="driveLabel">Checking drive…</span>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="release">Release</button>
+      <button class="tab" data-tab="ingest">DJ ingest</button>
+      <button class="tab" data-tab="tools">Tools</button>
+    </nav>
+
+    <main>
+      <section class="panel active" id="panel-release">
+        <h2>Finished song → artwork → visualizer</h2>
+        <div class="grid">
+          <label>
+            Song (My Songs)
+            <select id="releaseSong"></select>
+          </label>
+          <label>
+            Mashup name
+            <input id="mashupName" type="text" placeholder="The Cure x Pray" />
+          </label>
+          <label>
+            Track A (Artist:Title)
+            <input id="trackA" type="text" placeholder="Olivia Rodrigo:The Cure" />
+          </label>
+          <label>
+            Track B (Artist:Title)
+            <input id="trackB" type="text" placeholder="Illenium:Pray" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="btnPickImages">Pick 2 cover images</button>
+          <span id="pickedImages" class="muted">none</span>
+        </div>
+        <div class="row actions">
+          <button class="primary" id="btnMashup">Run mashup</button>
+          <button id="btnTransformClean">Transform clean</button>
+          <button id="btnTransformCrystal">Transform crystal</button>
+        </div>
+        <div class="grid">
+          <label>
+            Release folder
+            <select id="releaseFolder"></select>
+          </label>
+          <label>
+            Final image
+            <select id="finalImage"></select>
+          </label>
+          <label>
+            Embed into MP3
+            <select id="embedMp3"></select>
+          </label>
+        </div>
+        <div class="row actions">
+          <button id="btnRefreshReleases">Refresh releases</button>
+          <button class="primary" id="btnEmbed">Embed cover</button>
+          <button class="accent" id="btnVisualizer">Open Beat Visualizer</button>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-ingest">
+        <h2>Download → Platinum Notes → DJ library → Serato</h2>
+        <div class="row actions">
+          <button id="btnOpenViWizard">Open ViWizard</button>
+          <button id="btnOpenPN">Open Platinum Notes</button>
+          <button id="btnOpenMIK">Open Mixed In Key</button>
+          <button id="btnOpenSerato">Open Serato</button>
+        </div>
+        <div class="row actions">
+          <button class="primary" id="btnPnPipeline">Run pn-pipeline</button>
+          <button id="btnPnDry">pn-pipeline dry-run</button>
+        </div>
+        <div class="grid">
+          <label>
+            Import source (Platnium Notes)
+            <input id="importSource" type="text" readonly />
+          </label>
+          <label>
+            DJ destination
+            <select id="djDest"></select>
+          </label>
+        </div>
+        <div class="row actions">
+          <button id="btnImportPreview">Preview import</button>
+          <button class="primary" id="btnImportRun">Copy into DJ folder</button>
+          <button id="btnDedupe">library-dedupe</button>
+        </div>
+        <pre id="importPreview" class="preview"></pre>
+        <div class="row actions">
+          <button id="btnMikClear">mik-clear-cues (PN root)</button>
+          <button id="btnSeratoBpm">serato-bpm-cleanup (dry-run)</button>
+          <button id="btnSeratoBpmWrite">serato-bpm-cleanup --write</button>
+        </div>
+        <p class="muted" id="seratoStatus">Serato status: unknown</p>
+      </section>
+
+      <section class="panel" id="panel-tools">
+        <h2>Extra tools</h2>
+        <div class="row actions">
+          <button id="btnStemSplit">stem-split</button>
+          <button id="btnOpenScripts">Open Scripts folder</button>
+          <button id="btnOpenDrive">Open drive root</button>
+          <button id="btnRefreshDrive">Refresh drive</button>
+        </div>
+        <p class="muted">
+          Catalog, SoundCloud unrepost, and key-correction stay CLI-only until these two
+          workflows are solid.
+        </p>
+      </section>
+    </main>
+
+    <section class="log-panel">
+      <div class="log-header">
+        <h3>Live log</h3>
+        <div class="row">
+          <button id="btnStop">Stop</button>
+          <button id="btnClearLog">Clear</button>
+        </div>
+      </div>
+      <pre id="log"></pre>
+    </section>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

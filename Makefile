@@ -51,6 +51,7 @@ help:
 	@echo "  make test-cover        Run huntingszn-cover tests"
 	@echo "  make serato-bpm-cleanup  Round fractional Serato BPMs (LIBRARY=..., WRITE=1, DRY_RUN default)"
 	@echo "  make test-serato-bpm   Run serato-bpm-cleanup tests"
+	@echo "  make studio            Launch HuntingSzn Studio (Electron)"
 
 sync:
 	uv sync --all-packages
@@ -168,6 +169,9 @@ serato-bpm-cleanup:
 test-serato-bpm:
 	uv sync --package serato-bpm-cleanup --extra dev
 	uv run --package serato-bpm-cleanup pytest packages/serato_bpm_cleanup/tests
+
+studio:
+	cd apps/studio && npm start
 
 lint:
 	uv run ruff check packages config

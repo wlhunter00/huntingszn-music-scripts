@@ -1,0 +1,14 @@
+{
+  "name": "huntingszn-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron control panel for HuntingSzn music scripts and Beat Visualizer",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}

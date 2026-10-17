@@ -18,13 +18,26 @@ Private monorepo for DJ library tools, stem splitting, downloads, and harmonic m
 ## Setup
 
 ```bash
-cd "/Volumes/Will Hunter Music/Scripts"   # or G:\Scripts on Windows
+cd "/Volumes/HuntingSzn/Scripts"   # or H:\Scripts on Windows
 cp .env.example .env    # fill GETSONGBPM_API_KEY, Spotify creds, etc.
 make sync
 make help
 ```
 
-Drive paths are inferred from the repo location (`H:\Scripts` → `H:\`). Set `MUSIC_DRIVE_ROOT` in `.env` only if Scripts is not on the music drive root.
+Drive paths are inferred from the repo location (`H:\Scripts` → `H:\`). Set `MUSIC_DRIVE_ROOT` in `.env` only if Scripts is not on the music drive root. Volume detection prefers **HuntingSzn** over the legacy **Will Hunter Music** label.
+
+### HuntingSzn Studio (Electron)
+
+GUI for the release and DJ-ingest workflows. It shells out to the same `uv run` CLIs.
+
+```bash
+cd apps/studio
+npm install
+npm start
+# or from repo root: make studio
+```
+
+See [apps/studio/README.md](apps/studio/README.md).
 
 ## Commands
 
