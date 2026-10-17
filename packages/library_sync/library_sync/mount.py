@@ -1,8 +1,8 @@
 """Drive detection for the portable music drive.
 
-Volume names: "Will Hunter Music" or "HuntingSzn"
-- macOS: /Volumes/Will Hunter Music or /Volumes/HuntingSzn
-- Windows: scan volumes for label, or accept Scripts-parent drive (G:/H:/E:)
+Volume names: prefer ``HuntingSzn``, then legacy ``Will Hunter Music``.
+- macOS: /Volumes/HuntingSzn or /Volumes/Will Hunter Music
+- Windows: scan volumes for label + Scripts/pyproject.toml (G:/H:/E:)
 - Linux: MUSIC_DRIVE_ROOT env only
 """
 
@@ -13,23 +13,50 @@ import subprocess
 import sys
 from pathlib import Path
 
-VOLUME_NAME = "Will Hunter Music"
-VOLUME_NAME_ALT = "HuntingSzn"
+# HuntingSzn is preferred. Will Hunter Music is accepted only when HuntingSzn
+# is not mounted (legacy label / older stick). Order matters for A→Z scans.
+VOLUME_NAME = "HuntingSzn"
+VOLUME_NAME_ALT = "Will Hunter Music"
 VOLUME_NAMES = (VOLUME_NAME, VOLUME_NAME_ALT)
 
 _MACOS_VOLUME_PATHS = [Path("/Volumes") / name for name in VOLUME_NAMES]
 
 
-def _wmic_drive_letter_for_music_volume(line: str) -> str | None:
-    """Return drive letter (e.g. ``D:``) if a WMIC logicaldisk line is a music volume."""
+def _has_scripts_repo(path: Path) -> bool:
+    """True when ``path/Scripts/pyproject.toml`` exists (the music-drive Scripts repo)."""
+    try:
+        return (path / "Scripts" / "pyproject.toml").is_file()
+    except OSError:
+        return False
+
+
+def _prefer_volume_candidate(candidates: list[tuple[str, Path]]) -> Path | None:
+    """Pick HuntingSzn over Will Hunter Music when both music volumes are present."""
+    if not candidates:
+        return None
+    for preferred in VOLUME_NAMES:
+        for label, root in candidates:
+            if label == preferred:
+                return root
+    return candidates[0][1]
+
+
+def _wmic_volume_label(line: str) -> tuple[str, str] | None:
+    """Return ``(drive_letter, volume_name)`` for a WMIC logicaldisk line."""
     parts = line.strip().split()
     if len(parts) < 2:
         return None
     drive_letter = parts[0]
     volume_name = " ".join(parts[1:])
     if volume_name in VOLUME_NAMES:
-        return drive_letter
+        return drive_letter, volume_name
     return None
+
+
+def _wmic_drive_letter_for_music_volume(line: str) -> str | None:
+    """Return drive letter (e.g. ``D:``) if a WMIC logicaldisk line is a music volume."""
+    parsed = _wmic_volume_label(line)
+    return parsed[0] if parsed else None
 
 
 def _iter_logical_drive_letters(mask: int):
@@ -46,6 +73,7 @@ def _find_windows_volume_ctypes() -> Path | None:
 
     wmic is missing on some Windows 11 installs; Path.exists() on A:..Z: can hang
     on empty floppy/card readers, so only letters present in the bitmask are used.
+    Prefers HuntingSzn when both labels are mounted. Requires Scripts/pyproject.toml.
     """
     try:
         import ctypes
@@ -73,6 +101,7 @@ def _find_windows_volume_ctypes() -> Path | None:
         mask = int(kernel32.GetLogicalDrives())
     except OSError:
         return None
+    candidates: list[tuple[str, Path]] = []
     for letter in _iter_logical_drive_letters(mask):
         root_s = letter + ":\\"
         try:
@@ -80,12 +109,14 @@ def _find_windows_volume_ctypes() -> Path | None:
         except OSError:
             continue
         if ok and buf.value in VOLUME_NAMES:
-            return Path(root_s)
-    return None
+            root = Path(root_s)
+            if _has_scripts_repo(root):
+                candidates.append((buf.value, root))
+    return _prefer_volume_candidate(candidates)
 
 
 def _find_windows_volume() -> Path | None:
-    """Find a Windows drive with the expected volume label."""
+    """Find a Windows drive with the expected volume label and Scripts repo."""
     try:
         result = subprocess.run(
             ["wmic", "logicaldisk", "get", "name,volumename"],
@@ -94,10 +125,18 @@ def _find_windows_volume() -> Path | None:
             timeout=10,
         )
         if result.returncode == 0:
+            candidates: list[tuple[str, Path]] = []
             for line in result.stdout.strip().splitlines()[1:]:
-                drive_letter = _wmic_drive_letter_for_music_volume(line)
-                if drive_letter:
-                    return Path(drive_letter + os.sep)
+                parsed = _wmic_volume_label(line)
+                if not parsed:
+                    continue
+                drive_letter, label = parsed
+                root = Path(drive_letter + os.sep)
+                if _has_scripts_repo(root):
+                    candidates.append((label, root))
+            preferred = _prefer_volume_candidate(candidates)
+            if preferred is not None:
+                return preferred
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     return _find_windows_volume_ctypes()

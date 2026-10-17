@@ -208,6 +208,9 @@ def _find_windows_scripts() -> Path | None:
     kernel32.GetVolumeInformationW.restype = ctypes.c_int
     buf = ctypes.create_unicode_buffer(1024)
     mask = kernel32.GetLogicalDrives()
+    # Collect label+scripts matches, then prefer HuntingSzn over Will Hunter Music.
+    # G: "Will Hunter Music" must not win over H: "HuntingSzn" just because G < H.
+    candidates = []
     for i, letter in enumerate(string.ascii_uppercase):
         if not mask & (1 << i):
             continue
@@ -219,8 +222,12 @@ def _find_windows_scripts() -> Path | None:
         if ok and buf.value in VOLUME_NAMES:
             found = _scripts_if_valid(Path(root_s))
             if found is not None:
-                return found
-    return None
+                candidates.append((buf.value, found))
+    for preferred in VOLUME_NAMES:
+        for label, scripts in candidates:
+            if label == preferred:
+                return scripts
+    return candidates[0][1] if candidates else None
 
 
 def main() -> int:

@@ -8,9 +8,9 @@ from pathlib import Path
 # Repo root: …/Scripts/config/paths.py -> …/Scripts
 _SCRIPTS_ROOT = Path(__file__).resolve().parent.parent
 
-# Volume names for portable HDD detection
-VOLUME_NAME = "Will Hunter Music"
-VOLUME_NAME_ALT = "HuntingSzn"
+# Volume names for portable HDD detection (HuntingSzn preferred)
+VOLUME_NAME = "HuntingSzn"
+VOLUME_NAME_ALT = "Will Hunter Music"
 VOLUME_NAMES = (VOLUME_NAME, VOLUME_NAME_ALT)
 
 

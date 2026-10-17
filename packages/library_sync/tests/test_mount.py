@@ -11,6 +11,7 @@ from library_sync.mount import (
     VOLUME_NAMES,
     _find_windows_volume,
     _iter_logical_drive_letters,
+    _prefer_volume_candidate,
     _wmic_drive_letter_for_music_volume,
     drive_is_mounted,
     find_drive,
@@ -135,22 +136,22 @@ class TestDriveIsMounted:
 
 
 def test_volume_name():
-    assert VOLUME_NAME == "Will Hunter Music"
+    assert VOLUME_NAME == "HuntingSzn"
 
 
 def test_volume_name_alt():
-    assert VOLUME_NAME_ALT == "HuntingSzn"
+    assert VOLUME_NAME_ALT == "Will Hunter Music"
 
 
 def test_volume_names_tuple():
-    assert VOLUME_NAMES == ("Will Hunter Music", "HuntingSzn")
+    assert VOLUME_NAMES == ("HuntingSzn", "Will Hunter Music")
 
 
 def test_macos_volume_paths_include_alias():
-    assert {str(path) for path in _MACOS_VOLUME_PATHS} == {
-        "/Volumes/Will Hunter Music",
-        "/Volumes/HuntingSzn",
-    }
+    assert [path.name for path in _MACOS_VOLUME_PATHS] == [
+        "HuntingSzn",
+        "Will Hunter Music",
+    ]
 
 
 class TestWmicVolumeParse:
@@ -322,6 +323,76 @@ def test_windows_volume_falls_back_to_ctypes_when_wmic_missing(tmp_path, monkeyp
     monkeypatch.setattr("library_sync.mount.subprocess.run", boom)
     monkeypatch.setattr("library_sync.mount._find_windows_volume_ctypes", lambda: fake)
     assert _find_windows_volume() == fake
+
+
+def test_prefer_volume_candidate_picks_huntingszn_over_will_hunter_music(tmp_path):
+    will = tmp_path / "G"
+    hunt = tmp_path / "H"
+    will.mkdir()
+    hunt.mkdir()
+    # G: comes first in A→Z order; HuntingSzn on H: must still win.
+    assert (
+        _prefer_volume_candidate(
+            [
+                ("Will Hunter Music", will),
+                ("HuntingSzn", hunt),
+            ]
+        )
+        == hunt
+    )
+
+
+def test_windows_wmic_prefers_huntingszn_when_both_labels_mounted(monkeypatch):
+    """G: Will Hunter Music must not win over H: HuntingSzn just because G < H."""
+    wmic_out = (
+        "Name  VolumeName\n"
+        "G:         Will Hunter Music\n"
+        "H:          HuntingSzn\n"
+    )
+
+    class Result:
+        returncode = 0
+        stdout = wmic_out
+
+    monkeypatch.setattr(
+        "library_sync.mount.subprocess.run",
+        lambda *_a, **_k: Result(),
+    )
+    monkeypatch.setattr(
+        "library_sync.mount._has_scripts_repo",
+        lambda path: path.drive[:1].upper() in {"G", "H"},
+    )
+    monkeypatch.setattr(
+        "library_sync.mount._find_windows_volume_ctypes",
+        lambda: (_ for _ in ()).throw(AssertionError("ctypes must not run")),
+    )
+    found = _find_windows_volume()
+    assert found is not None
+    assert found.drive.upper().startswith("H")
+
+
+def test_windows_wmic_skips_music_label_without_scripts_repo(monkeypatch):
+    wmic_out = (
+        "Name  VolumeName\n"
+        "G:         Will Hunter Music\n"
+        "H:          HuntingSzn\n"
+    )
+
+    class Result:
+        returncode = 0
+        stdout = wmic_out
+
+    monkeypatch.setattr(
+        "library_sync.mount.subprocess.run",
+        lambda *_a, **_k: Result(),
+    )
+    monkeypatch.setattr(
+        "library_sync.mount._has_scripts_repo",
+        lambda path: path.drive[:1].upper() == "H",
+    )
+    found = _find_windows_volume()
+    assert found is not None
+    assert found.drive.upper().startswith("H")
 
 
 def test_ctypes_volume_scan_sets_argtypes_and_uses_logical_drive_mask():
