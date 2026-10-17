@@ -120,6 +120,39 @@ def _separator_export_dir(song_stems_dir: Path):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+@contextmanager
+def _separator_input(input_path: str | Path):
+    """Local copy of the mix for mlx-audio-io, which cannot load files on /Volumes."""
+    src = Path(input_path)
+    if platform.system() != "Darwin":
+        yield str(src)
+        return
+
+    scratch_root = Path.home() / "Library" / "Caches" / "stem-splitting-scratch"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    work_dir = Path(tempfile.mkdtemp(prefix="in-", dir=scratch_root))
+    dest = work_dir / f"{src.stem}.wav"
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(src),
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                str(dest),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        yield str(dest)
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def _sanitize_for_filesystem(name: str) -> str:
     """Strip trailing whitespace/dots/dashes and replace path-illegal chars.
 
@@ -338,8 +371,9 @@ def run_htdemucs(input_path: str, song_stems_dir: Path, title: str) -> None:
 
 def process_audio_folder(input_folder: str, output_folder: str) -> None:
     audio_files = [
-        f for f in os.listdir(input_folder)
-        if f.lower().endswith(SUPPORTED_AUDIO_EXTENSIONS)
+        f
+        for f in os.listdir(input_folder)
+        if f.lower().endswith(SUPPORTED_AUDIO_EXTENSIONS) and not f.startswith("._")
     ]
 
     if not audio_files:
@@ -358,9 +392,9 @@ def process_audio_folder(input_folder: str, output_folder: str) -> None:
         try:
             clean_partial_state(song_stems_dir, title)
 
-            run_vocal_ensemble(input_path, song_stems_dir, title)
-
-            run_htdemucs(input_path, song_stems_dir, title)
+            with _separator_input(input_path) as local_input:
+                run_vocal_ensemble(local_input, song_stems_dir, title)
+                run_htdemucs(local_input, song_stems_dir, title)
 
             drums_path = song_stems_dir / f"{title}_drums.wav"
             for i in range(2, 5):

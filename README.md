@@ -8,7 +8,8 @@ Private monorepo for DJ library tools, stem splitting, downloads, and harmonic m
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- [ffmpeg](https://ffmpeg.org/) and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for downloaders
+- [ffmpeg](https://ffmpeg.org/) for downloaders
+- [Deno](https://deno.com/) (or Node 22+) for YouTube JS challenges; `yt-dlp` is installed via uv, not brew
 - [ffprobe](https://ffmpeg.org/) for key catalog step
 - Stem splitting on macOS: `mlx-audio-separator` (installed via `uv sync --package stem-split --extra mac`)
 - Stem splitting on Windows/Linux with NVIDIA GPU: `audio-separator[gpu]` + CUDA PyTorch (via `uv sync --package stem-split --extra gpu`)
@@ -57,8 +58,9 @@ Optional: add `--flip-style` only if you want retail artists stripped from flip 
 | Convert `.wav` → `.mp3` | `uv run --package library-tools wav2mp3 -b 320k song.wav` |
 | Remove Serato hot cues | `uv run --package library-tools serato-clear-cues --dry-run` |
 | Remove Mixed In Key cue points | `uv run --package library-tools mik-clear-cues --dry-run FOLDER` |
+| Embed release `final.png` into HuntingSzn MP3s | `uv run --package library-tools embed-cover --dry-run` |
 
-Common flags: `--root PATH` (pn-pipeline, pn-rename, library-metadata, serato-clear-cues), `--force` (pn-pipeline), `--flip-style` (optional; pn-pipeline / pn-filename only), `--library PATH` (library-dedupe, key-correct-catalog), `-o` / `--overwrite` (wav2mp3). `mik-clear-cues` requires a folder path.
+Common flags: `--root PATH` (pn-pipeline, pn-rename, library-metadata, serato-clear-cues), `--force` (pn-pipeline), `--flip-style` (optional; pn-pipeline / pn-filename only), `--library PATH` (library-dedupe, key-correct-catalog), `-o` / `--overwrite` (wav2mp3). `mik-clear-cues` requires a folder path. `embed-cover` defaults to `DJ Music/HuntingSzn` + `Thumbnails/Releases`; override with `--music` / `--releases`, or pass `--mp3` + `--image` for one file.
 
 **Serato cue clearing** — strips hot cues only (loops/beatgrid stay). Close Serato DJ first; MP3/AIFF only (`serato-tools` limitation):
 
@@ -73,6 +75,15 @@ uv run --package library-tools serato-clear-cues --root "H:\DJ Music\Soundcloud\
 uv run --package library-tools mik-clear-cues --dry-run "/Volumes/HuntingSzn/Platnium Notes/make it bump"
 uv run --package library-tools mik-clear-cues "/Volumes/HuntingSzn/Platnium Notes/make it bump"
 ```
+
+**HuntingSzn cover embedding** — rename the chosen artwork to `final.png` (or `*-final.png`) in `Thumbnails/Releases/<mashup>/`, then:
+
+```bash
+uv run --package library-tools embed-cover --dry-run
+uv run --package library-tools embed-cover
+```
+
+Edit and Mashup versions of the same track both get that image. `--skip-existing` leaves MP3s that already have cover art. One-off: `--mp3 song.mp3 --image cover.png`.
 
 ### `serato-bpm-cleanup` — round fractional Serato BPMs
 
@@ -107,14 +118,23 @@ uv run --package mashup-pop-finder mashup-pop-finder match --title "Song" --arti
 
 Optional: `--base-key`, `--base-bpm`, `--pages`, `--limit`, `--debug`. Requires `GETSONGBPM_API_KEY` in `.env` for match.
 
-### `music-downloads` — SoundCloud / YouTube
+### `music-downloads` — SoundCloud / YouTube / Spotify metadata
 
 ```bash
 uv run --package music-downloads sc-dl "https://soundcloud.com/..."
 uv run --package music-downloads yt-dl "https://youtube.com/watch?v=..."
+uv run --package music-downloads sp-dl "https://open.spotify.com/track/..."
+uv run --package music-downloads sp-dl --dry-run "https://open.spotify.com/playlist/..."
 ```
 
-Optional: `--output-dir`. SoundCloud auth via `SOUNDCLOUD_AUTH_TOKEN` in `.env`.
+Optional: `--output-dir`, `--to-library` (writes to `DJ Music/Spotify`), `--best`, `--source auto|youtube|soundcloud`, `--skip-existing`, `--limit`.
+
+`sp-dl` uses the **official Spotify Web API for metadata only**, then downloads matching audio from YouTube (default) or SoundCloud. It does **not** decrypt Spotify streams. Requires `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` in `.env`.
+
+SoundCloud auth via `SOUNDCLOUD_AUTH_TOKEN` in `.env`.
+YouTube needs Deno or Node on PATH so yt-dlp can solve player JS challenges.
+
+Research (ViWizard architecture + ToS analysis): [`docs/research/viwizard-spotify-converter-analysis.md`](docs/research/viwizard-spotify-converter-analysis.md).
 
 ### `music-catalogs` — sample & plugin scanners
 
@@ -261,10 +281,10 @@ uv run ruff check packages config
 |---------|-------------|
 | `mashup_pop_finder` | Mashup/pop key + BPM matcher |
 | `stem_split` | Vocal ensemble + Demucs stems |
-| `library_tools` | Metadata, duplicates, Platinum Notes cleanup, key correction |
+| `library_tools` | Metadata, cover embedding, duplicates, Platinum Notes cleanup, key correction |
 | `library_sync` | Music inventory: index HDD, sync B2, query by key/BPM |
 | `serato_bpm_cleanup` | Round fractional Serato BPMs (dry-run default; skip tracks with cues) |
-| `music-downloads` | SoundCloud (MP3 320) / YouTube |
+| `music-downloads` | SoundCloud / YouTube (MP3 320) / Spotify metadata → YT/SC |
 | `music-catalogs` | Sample/plugin CSV scanners |
 | `soundcloud_repost` | Selenium unrepost tool |
 | `gpt_trainer` | (placeholder) — [docs/prds/gpt-trainer.md](docs/prds/gpt-trainer.md) |

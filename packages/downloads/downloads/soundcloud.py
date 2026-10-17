@@ -9,13 +9,16 @@ import os
 import subprocess
 import sys
 
-from downloads._common import dated_output_dir, run_yt_dlp
+from downloads._common import dated_output_dir, run_yt_dlp, yt_dlp_cmd
 
 
 def check_preview_only(url: str, auth_token: str | None) -> tuple[bool, float]:
-    cmd = ["yt-dlp", "--dump-json", "--no-download", url]
+    cmd = yt_dlp_cmd("--dump-json", "--no-download")
+    if cmd is None:
+        return False, 0.0
     if auth_token:
         cmd.extend(["--username", "oauth", "--password", auth_token])
+    cmd.append(url)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)

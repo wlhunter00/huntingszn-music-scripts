@@ -26,6 +26,7 @@ help:
 	@echo "  make library-dedupe    Remove duplicate files in DJ Spotify (filename/extension)"
 	@echo "  make serato-clear-cues Remove Serato hot cues from folder (ROOT=..., DRY_RUN=1)"
 	@echo "  make mik-clear-cues    Remove Mixed In Key cue points (ROOT=folder required, DRY_RUN=1)"
+	@echo "  make embed-cover       Embed Thumbnails/Releases final.png into HuntingSzn MP3s (DRY_RUN=1)"
 	@echo "  make wav2mp3 INPUT=... Convert .wav to .mp3 (optional OUTPUT=..., BITRATE=320k)"
 	@echo "  make pn-filename ROOT=... Normalize flip filenames for Platinum Notes"
 	@echo "  make key-correct-catalog  Step 1: catalog current key tags"
@@ -33,6 +34,7 @@ help:
 	@echo "  make mashup-match      mashup-pop-finder match (TITLE=... ARTIST=...)"
 	@echo "  make sc-dl URL=...     Download SoundCloud track"
 	@echo "  make yt-dl URL=...     Download YouTube audio"
+	@echo "  make sp-dl URL=...     Spotify metadata → YouTube/SoundCloud download"
 	@echo "  make sample-inventory  Scan sample/project roots -> CSV"
 	@echo "  make vst-index         Scan VST plugins -> CSV"
 	@echo "  make minimal-catalog   Scan Minimal plugin XML -> CSV"
@@ -87,6 +89,9 @@ mik-clear-cues:
 	@test -n "$(ROOT)" || (echo 'mik-clear-cues requires ROOT=/path/to/folder'; exit 1)
 	uv run --package library-tools mik-clear-cues $(if $(DRY_RUN),--dry-run,) "$(ROOT)" $(ARGS)
 
+embed-cover:
+	uv run --package library-tools embed-cover $(if $(DRY_RUN),--dry-run,) $(if $(SKIP_EXISTING),--skip-existing,) $(ARGS)
+
 wav2mp3:
 	uv run --package library-tools wav2mp3 $(if $(OUTPUT),-o "$(OUTPUT)",) $(if $(BITRATE),-b "$(BITRATE)",) $(if $(OVERWRITE),--overwrite,) "$(INPUT)"
 
@@ -107,6 +112,9 @@ sc-dl:
 
 yt-dl:
 	uv run --package music-downloads yt-dl $(ARGS) "$(URL)"
+
+sp-dl:
+	uv run --package music-downloads sp-dl $(ARGS) "$(URL)"
 
 sample-inventory:
 	uv run --package music-catalogs sample-inventory $(ARGS)

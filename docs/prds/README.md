@@ -7,6 +7,8 @@ Most library and catalog scripts were **restored from backup** on 2026-05-25 (`E
 | [stem-split](stem-split.md) | **Restored** — synced from drive; legacy scripts removed |
 | [soundcloud-dl](soundcloud-dl.md) | Restored in `packages/downloads` |
 | [yt-audio-dl](yt-audio-dl.md) | Restored in `packages/downloads` |
+| [spotify-dl](spotify-dl.md) | **Implemented** — `sp-dl` in `packages/downloads` (metadata + external sources) |
+| [viwizard analysis](../research/viwizard-spotify-converter-analysis.md) | Research — architecture + ToS (not a PRD) |
 | [pn-script](pn-script.md) | **Restored** — `library_tools.pn_rename` |
 | [file-namer](file-namer.md) | **Restored** — merged into `library_tools.metadata` |
 | [song-metadata-extractor](song-metadata-extractor.md) | **Restored** — `library_tools.metadata` |

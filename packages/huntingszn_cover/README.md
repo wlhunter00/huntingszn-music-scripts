@@ -122,6 +122,13 @@ Transformed outputs follow this pattern:
 
 **Note**: Renaming to `final.png` or similar is a human task - this tool does not auto-rename outputs.
 
+After you mark a winner, embed it into the HuntingSzn MP3s:
+
+```bash
+uv run --package library-tools embed-cover --dry-run
+uv run --package library-tools embed-cover
+```
+
 ### ChatGPT Outputs (Historical)
 
 Previous ChatGPT image generations used: `ChatGPT Image MMM DD, YYYY, HH_MM_SS AM.png`
@@ -180,7 +187,7 @@ This package handles **image assets only**:
 - Image transformation
 - Composite creation
 
-**Not in scope**: videos, audio files (wav/mp3), .env files, databases (sqlite).
+**Not in scope**: videos, audio files (wav/mp3), .env files, databases (sqlite). Embedding a chosen `final.png` into MP3s is `embed-cover` in `library-tools`.
 
 ## Development
 

@@ -5,10 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "music-downloads"
 version = "0.1.0"
-description = "SoundCloud and YouTube audio downloaders"
+description = "SoundCloud, YouTube, and Spotify-metadata audio downloaders"
 requires-python = ">=3.11"
 dependencies = [
     "huntingszn-music-scripts",
+    "yt-dlp[default]>=2026.8.19",
+    "spotipy>=2.23",
+    "mutagen>=1.47",
 ]
 
 [tool.uv.sources]
@@ -17,6 +20,7 @@ huntingszn-music-scripts = { workspace = true }
 [project.scripts]
 sc-dl = "downloads.soundcloud:main"
 yt-dl = "downloads.youtube:main"
+sp-dl = "downloads.spotify:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["downloads"]

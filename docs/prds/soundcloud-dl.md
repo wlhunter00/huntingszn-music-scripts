@@ -15,7 +15,7 @@ Download SoundCloud tracks at best quality as MP3 320kbps via `yt-dlp`; embed ti
 
 ## Dependencies
 
-- `yt-dlp` (CLI subprocess)
+- `yt-dlp[default]` (Python package, not PATH CLI)
 - `ffmpeg` (for transcode/embed)
 
 ## Behavior

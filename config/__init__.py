@@ -1,6 +1,7 @@
 """Shared configuration for HuntingSzn music scripts."""
 
 from config.paths import (
+    DJ_HUNTINGSZN,
     DJ_MUSIC,
     DJ_SPOTIFY,
     DOWNLOADS,
@@ -15,6 +16,8 @@ from config.paths import (
     STEM_INPUT,
     STEM_OUTPUT,
     STEM_OUTPUT_MODEL,
+    THUMBNAILS,
+    THUMBNAILS_RELEASES,
     VOLUME_NAME,
     VOLUME_NAME_ALT,
     VOLUME_NAMES,
@@ -26,6 +29,9 @@ __all__ = [
     "PLATINUM_NOTES",
     "DJ_SPOTIFY",
     "DJ_MUSIC",
+    "DJ_HUNTINGSZN",
+    "THUMBNAILS",
+    "THUMBNAILS_RELEASES",
     "DOWNLOADS",
     "STEM_DIR",
     "STEM_INPUT",

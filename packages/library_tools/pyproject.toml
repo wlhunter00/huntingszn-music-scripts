@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "library-tools"
 version = "0.1.0"
-description = "DJ library metadata, duplicates, Platinum Notes cleanup, Serato cue clearing, key correction"
+description = "DJ library metadata, cover embedding, duplicates, Platinum Notes cleanup, Serato cue clearing, key correction"
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "mutagen>=1.47",
@@ -27,6 +27,7 @@ pn-filename = "library_tools.pn_filename:main"
 pn-pipeline = "library_tools.pn_pipeline:main"
 serato-clear-cues = "library_tools.serato_clear_cues:main"
 mik-clear-cues = "library_tools.mik_clear_cues:main"
+embed-cover = "library_tools.embed_cover:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["library_tools"]
