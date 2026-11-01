@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import struct
 import tempfile
 from pathlib import Path
 
-import pytest
 import numpy as np
+import pytest
 
 
 @pytest.fixture
@@ -44,19 +43,19 @@ def sample_m4a(temp_dir: Path) -> Path:
 def _create_silent_mp3(path: Path, duration_s: float = 10.0, sr: int = 44100) -> None:
     """Create a silent MP3 file using soundfile + ffmpeg fallback."""
     import soundfile as sf
-    
+
     wav_path = path.with_suffix(".wav")
     samples = int(sr * duration_s)
     silence = np.zeros(samples, dtype=np.float32)
     sf.write(wav_path, silence, sr)
-    
+
     try:
         import subprocess
-        result = subprocess.run(
-            ["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame", "-qscale:a", "9", str(path)],
-            capture_output=True,
-            timeout=30,
-        )
+        cmd = [
+            "ffmpeg", "-y", "-i", str(wav_path),
+            "-codec:a", "libmp3lame", "-qscale:a", "9", str(path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
         wav_path.unlink()
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg failed: {result.stderr.decode()}")
@@ -68,7 +67,7 @@ def _create_silent_mp3(path: Path, duration_s: float = 10.0, sr: int = 44100) ->
 def _create_silent_flac(path: Path, duration_s: float = 10.0, sr: int = 44100) -> None:
     """Create a silent FLAC file."""
     import soundfile as sf
-    
+
     samples = int(sr * duration_s)
     silence = np.zeros(samples, dtype=np.float32)
     sf.write(path, silence, sr, format="FLAC")
@@ -77,12 +76,12 @@ def _create_silent_flac(path: Path, duration_s: float = 10.0, sr: int = 44100) -
 def _create_silent_m4a(path: Path, duration_s: float = 10.0, sr: int = 44100) -> None:
     """Create a silent M4A/AAC file."""
     import soundfile as sf
-    
+
     wav_path = path.with_suffix(".wav")
     samples = int(sr * duration_s)
     silence = np.zeros(samples, dtype=np.float32)
     sf.write(wav_path, silence, sr)
-    
+
     try:
         import subprocess
         result = subprocess.run(

@@ -13,23 +13,22 @@ import shutil
 from pathlib import Path
 
 import pytest
-
 from auto_cue.tags import (
+    SERATO_DEFAULT_COLORS,
     CuePoint,
     Loop,
     Markers2Data,
-    parse_markers2,
     encode_markers2,
+    parse_markers2,
     read_track_tags,
-    write_track_markers2,
     write_track_beatgrid,
-    SERATO_DEFAULT_COLORS,
+    write_track_markers2,
 )
 from serato_bpm_cleanup.beatgrid import (
     BeatGrid,
     TerminalMarker,
-    parse_beatgrid,
     dump_beatgrid,
+    parse_beatgrid,
 )
 
 
@@ -41,7 +40,7 @@ class TestMarkers2ParseEncode:
         markers = Markers2Data()
         encoded = encode_markers2(markers)
         decoded = parse_markers2(encoded)
-        
+
         assert decoded.cues == []
         assert decoded.loops == []
         assert decoded.bpm_lock is False
@@ -53,7 +52,7 @@ class TestMarkers2ParseEncode:
         )
         encoded = encode_markers2(markers)
         decoded = parse_markers2(encoded)
-        
+
         assert len(decoded.cues) == 1
         assert decoded.cues[0].index == 0
         assert decoded.cues[0].position_ms == 1000
@@ -69,11 +68,11 @@ class TestMarkers2ParseEncode:
                 color=SERATO_DEFAULT_COLORS[i],
                 name="",
             ))
-        
+
         markers = Markers2Data(cues=cues)
         encoded = encode_markers2(markers)
         decoded = parse_markers2(encoded)
-        
+
         assert len(decoded.cues) == 8
         for i, cue in enumerate(decoded.cues):
             assert cue.index == i
@@ -87,7 +86,7 @@ class TestMarkers2ParseEncode:
         )
         encoded = encode_markers2(markers)
         decoded = parse_markers2(encoded)
-        
+
         assert decoded.cues[0].name == "Drop"
 
     def test_loop_roundtrip(self):
@@ -97,7 +96,7 @@ class TestMarkers2ParseEncode:
         )
         encoded = encode_markers2(markers)
         decoded = parse_markers2(encoded)
-        
+
         assert len(decoded.loops) == 1
         assert decoded.loops[0].start_ms == 1000
         assert decoded.loops[0].end_ms == 5000
@@ -108,7 +107,7 @@ class TestMarkers2ParseEncode:
         markers = Markers2Data(bpm_lock=True)
         encoded = encode_markers2(markers)
         decoded = parse_markers2(encoded)
-        
+
         assert decoded.bpm_lock is True
 
     def test_track_color_roundtrip(self):
@@ -116,7 +115,7 @@ class TestMarkers2ParseEncode:
         markers = Markers2Data(track_color=(0x12, 0x34, 0x56))
         encoded = encode_markers2(markers)
         decoded = parse_markers2(encoded)
-        
+
         assert decoded.track_color == (0x12, 0x34, 0x56)
 
     def test_complex_markers_roundtrip(self):
@@ -135,7 +134,7 @@ class TestMarkers2ParseEncode:
         )
         encoded = encode_markers2(markers)
         decoded = parse_markers2(encoded)
-        
+
         assert len(decoded.cues) == 3
         assert len(decoded.loops) == 1
         assert decoded.track_color == (0xFF, 0x00, 0xFF)
@@ -153,7 +152,7 @@ class TestBeatGridRoundtrip:
         )
         encoded = dump_beatgrid(grid)
         decoded = parse_beatgrid(encoded)
-        
+
         assert decoded.is_constant
         assert decoded.bpm == pytest.approx(128.0)
         assert decoded.first_beat_s == pytest.approx(0.215)
@@ -172,9 +171,9 @@ class TestMP3WriteReadRoundtrip:
                 CuePoint(index=5, position_ms=60000),
             ]
         )
-        
+
         write_track_markers2(sample_mp3, markers)
-        
+
         tags = read_track_tags(sample_mp3)
         assert tags.markers2 is not None
         assert len(tags.markers2.cues) == 3
@@ -187,9 +186,9 @@ class TestMP3WriteReadRoundtrip:
         grid = BeatGrid(
             markers=(TerminalMarker(position_s=0.1, bpm=126.0),),
         )
-        
+
         write_track_beatgrid(sample_mp3, grid)
-        
+
         tags = read_track_tags(sample_mp3)
         assert tags.beatgrid is not None
         assert tags.beatgrid.bpm == pytest.approx(126.0)
@@ -202,10 +201,10 @@ class TestMP3WriteReadRoundtrip:
             bpm_lock=True,
         )
         write_track_markers2(sample_mp3, markers)
-        
+
         grid = BeatGrid(markers=(TerminalMarker(position_s=0.2, bpm=128.0),))
         write_track_beatgrid(sample_mp3, grid)
-        
+
         tags = read_track_tags(sample_mp3)
         assert tags.markers2 is not None
         assert len(tags.markers2.cues) == 1
@@ -225,9 +224,9 @@ class TestFLACWriteReadRoundtrip:
                 CuePoint(index=3, position_ms=30000),
             ]
         )
-        
+
         write_track_markers2(sample_flac, markers)
-        
+
         tags = read_track_tags(sample_flac)
         assert tags.markers2 is not None
         assert len(tags.markers2.cues) == 2
@@ -237,9 +236,9 @@ class TestFLACWriteReadRoundtrip:
         grid = BeatGrid(
             markers=(TerminalMarker(position_s=0.15, bpm=140.0),),
         )
-        
+
         write_track_beatgrid(sample_flac, grid)
-        
+
         tags = read_track_tags(sample_flac)
         assert tags.beatgrid is not None
         assert tags.beatgrid.bpm == pytest.approx(140.0)
@@ -252,37 +251,38 @@ class TestRealQASongs:
         """Read tags from real QA MP3 files."""
         if qa_songs_dir is None:
             pytest.skip("QA songs not available")
-        
+
         mp3_files = list(qa_songs_dir.glob("*.mp3"))
         assert len(mp3_files) > 0, "No MP3 files in QA directory"
-        
+
         for mp3 in mp3_files:
             tags = read_track_tags(mp3)
             assert tags.error is None, f"Error reading {mp3.name}: {tags.error}"
             assert tags.markers2 is not None, f"No markers2 in {mp3.name}"
             assert tags.beatgrid is not None, f"No beatgrid in {mp3.name}"
-            assert len(tags.markers2.cues) == 8, f"Expected 8 cues in {mp3.name}, got {len(tags.markers2.cues)}"
+            num_cues = len(tags.markers2.cues)
+            assert num_cues == 8, f"Expected 8 cues in {mp3.name}, got {num_cues}"
             assert tags.beatgrid.is_constant, f"Expected constant grid in {mp3.name}"
 
     def test_roundtrip_on_copy(self, qa_songs_dir: Path | None, temp_dir: Path):
         """Write/read roundtrip on copies of real files."""
         if qa_songs_dir is None:
             pytest.skip("QA songs not available")
-        
+
         mp3_files = list(qa_songs_dir.glob("*.mp3"))[:1]
-        
+
         for mp3 in mp3_files:
             copy_path = temp_dir / mp3.name
             shutil.copy2(mp3, copy_path)
-            
+
             original_tags = read_track_tags(copy_path)
             assert original_tags.markers2 is not None
-            
+
             write_track_markers2(copy_path, original_tags.markers2)
-            
+
             reread_tags = read_track_tags(copy_path)
             assert reread_tags.markers2 is not None
-            
+
             assert len(reread_tags.markers2.cues) == len(original_tags.markers2.cues)
             for orig, reread in zip(original_tags.markers2.cues, reread_tags.markers2.cues):
                 assert orig.index == reread.index

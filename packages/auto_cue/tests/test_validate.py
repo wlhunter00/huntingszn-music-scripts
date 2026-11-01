@@ -10,15 +10,12 @@ Tests:
 
 from __future__ import annotations
 
-import pytest
-
 from auto_cue.validate import (
     CueSet,
-    ValidationResult,
-    validate_cue_set,
-    check_confidence_threshold,
     build_cues_deterministic,
+    check_confidence_threshold,
     is_valid_partial,
+    validate_cue_set,
 )
 
 
@@ -39,7 +36,7 @@ class TestBasicValidation:
             total_beats=300,
         )
         result = validate_cue_set(cues)
-        
+
         assert result.valid
         assert len(result.errors) == 0
 
@@ -47,7 +44,7 @@ class TestBasicValidation:
         """Missing cue4 should fail validation."""
         cues = CueSet(cue6=192)
         result = validate_cue_set(cues)
-        
+
         assert not result.valid
         assert "cue4" in str(result.errors)
 
@@ -55,7 +52,7 @@ class TestBasicValidation:
         """Missing cue6 should fail validation."""
         cues = CueSet(cue4=96)
         result = validate_cue_set(cues)
-        
+
         assert not result.valid
         assert "cue6" in str(result.errors)
 
@@ -63,7 +60,7 @@ class TestBasicValidation:
         """Negative cue position should fail."""
         cues = CueSet(cue1=-32, cue4=96, cue6=192)
         result = validate_cue_set(cues)
-        
+
         assert not result.valid
         assert "negative" in str(result.errors)
 
@@ -91,7 +88,7 @@ class TestLatticeConstraints:
             total_beats=300,
         )
         result = validate_cue_set(cues)
-        
+
         assert not result.valid
         assert "cue3 not on 32-beat lattice" in str(result.errors)
 
@@ -104,7 +101,7 @@ class TestLatticeConstraints:
             total_beats=300,
         )
         result = validate_cue_set(cues)
-        
+
         assert result.valid
         assert "16-offset" in str(result.warnings)
 
@@ -181,7 +178,7 @@ class TestOrderingConstraints:
             cue6=192,
         )
         result = validate_cue_set(cues)
-        
+
         assert not result.valid
         assert "cue1" in str(result.errors) and "cue2" in str(result.errors)
 
@@ -192,7 +189,7 @@ class TestOrderingConstraints:
             cue6=96,  # Wrong order
         )
         result = validate_cue_set(cues)
-        
+
         assert not result.valid
         assert "cue6" in str(result.errors) and "cue4" in str(result.errors)
 
@@ -220,7 +217,7 @@ class TestBoundsChecking:
             total_beats=300,
         )
         result = validate_cue_set(cues)
-        
+
         assert not result.valid
         assert "cue8 too close to end" in str(result.errors)
 
@@ -234,7 +231,7 @@ class TestBoundsChecking:
             total_beats=400,
         )
         result = validate_cue_set(cues)
-        
+
         assert result.valid
         assert "unusually far from end" in str(result.warnings)
 
@@ -269,7 +266,7 @@ class TestMidsongCue7:
             cue7_midsong=True,
         )
         result = validate_cue_set(cues)
-        
+
         assert not result.valid
 
 
@@ -280,9 +277,9 @@ class TestConfidenceThreshold:
         """Low cue4 confidence should cause abstain."""
         cues = CueSet(cue4=96, cue6=192)
         cues.confidences = {4: 0.3, 6: 0.9}
-        
+
         filtered, reasons = check_confidence_threshold(cues, core_threshold=0.6)
-        
+
         assert len(reasons) > 0
         assert "cue4 confidence" in str(reasons)
 
@@ -290,9 +287,9 @@ class TestConfidenceThreshold:
         """Low cue6 confidence should cause abstain."""
         cues = CueSet(cue4=96, cue6=192)
         cues.confidences = {4: 0.9, 6: 0.3}
-        
+
         filtered, reasons = check_confidence_threshold(cues, core_threshold=0.6)
-        
+
         assert len(reasons) > 0
         assert "cue6 confidence" in str(reasons)
 
@@ -300,13 +297,13 @@ class TestConfidenceThreshold:
         """Low confidence on non-core cue should drop that slot."""
         cues = CueSet(cue1=0, cue4=96, cue6=192)
         cues.confidences = {1: 0.2, 4: 0.9, 6: 0.9}
-        
+
         filtered, reasons = check_confidence_threshold(
             cues,
             core_threshold=0.6,
             other_threshold=0.4,
         )
-        
+
         assert len(reasons) == 0
         assert filtered.cue1 is None
         assert filtered.cue4 == 96
@@ -322,7 +319,7 @@ class TestBuildCuesDeterministic:
             cue6=192,
             total_beats=300,
         )
-        
+
         assert cues.cue4 == 96
         assert cues.cue6 == 192
         assert cues.cue3 == 64
@@ -335,7 +332,7 @@ class TestBuildCuesDeterministic:
         """cue2 offset should be configurable."""
         cues32 = build_cues_deterministic(cue4=128, cue6=224, total_beats=300, cue2_offset=32)
         cues64 = build_cues_deterministic(cue4=128, cue6=224, total_beats=300, cue2_offset=64)
-        
+
         assert cues32.cue2 == 64  # 96 - 32 = 64
         assert cues64.cue2 == 32  # 96 - 64 = 32
 

@@ -9,40 +9,36 @@ import argparse
 import csv
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from serato_bpm_cleanup.backup import timestamped_backup_root
-from serato_bpm_cleanup.detect import serato_is_running, default_library_roots
+from serato_bpm_cleanup.detect import default_library_roots, serato_is_running
 
 from auto_cue import __version__
-from auto_cue.tags import (
-    read_track_tags,
-    write_track_markers2,
-    Markers2Data,
-    CuePoint,
-    SERATO_DEFAULT_COLORS,
-    beats_to_ms,
-)
-from auto_cue.protection import (
-    check_protection,
-    decide_cue_write,
-    load_protected_paths,
-)
-from auto_cue.validate import (
-    CueSet,
-    validate_cue_set,
-    check_confidence_threshold,
-)
-from auto_cue.features import extract_features, check_grid_alignment
+from auto_cue.features import extract_features
 from auto_cue.llm import (
+    CueAbstainError,
+    LLMAPIError,
     predict_cues_llm,
     predict_cues_rules,
     prediction_to_cue_set,
-    LLMAPIError,
-    CueAbstainError,
 )
-
+from auto_cue.protection import (
+    decide_cue_write,
+    load_protected_paths,
+)
+from auto_cue.tags import (
+    SERATO_DEFAULT_COLORS,
+    CuePoint,
+    Markers2Data,
+    beats_to_ms,
+    read_track_tags,
+    write_track_markers2,
+)
+from auto_cue.validate import (
+    check_confidence_threshold,
+    validate_cue_set,
+)
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".wav", ".aiff", ".aif"}
 WRITABLE_EXTENSIONS = {".mp3", ".flac"}
@@ -69,7 +65,7 @@ def iter_audio_files(root: Path) -> list[Path]:
         if root.suffix.lower() in AUDIO_EXTENSIONS:
             return [root]
         return []
-    
+
     files = []
     for path in root.rglob("*"):
         if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS:
@@ -93,7 +89,7 @@ def process_track(
     explain: bool = False,
 ) -> ProcessResult:
     """Process a single track for cue prediction.
-    
+
     Args:
         path: Audio file path
         write: Actually write tags (vs dry-run)
@@ -104,74 +100,76 @@ def process_track(
         protected_paths: Paths from protected crates
         library_root: Library root for relative path calculation
         explain: Print detailed analysis
-    
+
     Returns:
         ProcessResult with action taken
     """
     result = ProcessResult(path=path, action="unknown")
-    
+
     tags = read_track_tags(path)
-    
+
     if tags.error:
-        result.action = f"skip-error"
+        result.action = "skip-error"
         result.error = tags.error
         return result
-    
+
     relative_path = None
     if library_root:
         try:
             relative_path = str(path.relative_to(library_root))
         except ValueError:
             pass
-    
+
     decision = decide_cue_write(
         tags,
         replace_mik=replace_mik,
         protected_paths=protected_paths,
         track_relative_path=relative_path,
     )
-    
+
     if not decision.should_write:
         result.action = f"skip-{decision.action}"
         result.error = "; ".join(decision.reasons)
         return result
-    
+
     if not tags.beatgrid:
         result.action = "abstain-no-grid"
         return result
-    
+
     if tags.beatgrid.is_dynamic:
         result.action = "abstain-dynamic-grid"
         return result
-    
+
     bpm = tags.beatgrid.bpm
     first_beat_s = tags.beatgrid.first_beat_s
-    
+
     if bpm is None or first_beat_s is None:
         result.action = "abstain-invalid-grid"
         return result
-    
+
     if path.suffix.lower() not in WRITABLE_EXTENSIONS:
-        result.action = f"skip-unsupported-format"
+        result.action = "skip-unsupported-format"
         result.error = f"Cannot write to {path.suffix}"
         return result
-    
+
     try:
         features = extract_features(path, bpm, first_beat_s)
     except Exception as e:
         result.action = "abstain-feature-error"
         result.error = str(e)
         return result
-    
+
     if explain:
         from auto_cue.features import format_phrase_table
         print(f"\n=== {path.name} ===")
         print(format_phrase_table(features))
-    
+
     try:
         if use_llm:
             try:
-                prediction = predict_cues_llm(features, model=model, reasoning_effort=reasoning_effort)
+                prediction = predict_cues_llm(
+                    features, model=model, reasoning_effort=reasoning_effort
+                )
             except LLMAPIError as e:
                 result.action = "error-api"
                 result.error = str(e)
@@ -198,48 +196,48 @@ def process_track(
         result.action = "abstain-prediction-error"
         result.error = str(e)
         return result
-    
+
     if explain:
         print(f"Prediction: cue4={prediction.cue4_beat}, cue6={prediction.cue6_beat}")
         print(f"Confidence: {prediction.confidence:.2f}")
         print(f"Rationale: {prediction.rationale}")
-    
+
     cues = prediction_to_cue_set(prediction, features.total_beats)
-    
+
     validation = validate_cue_set(cues)
     if not validation.valid:
         result.action = "abstain-validation-failed"
         result.error = "; ".join(validation.errors)
         return result
-    
+
     if validation.warnings and explain:
         for w in validation.warnings:
             print(f"Warning: {w}")
-    
+
     filtered_cues, abstain_reasons = check_confidence_threshold(
         cues,
         core_threshold=min_confidence,
     )
-    
+
     if abstain_reasons:
         result.action = "abstain-low-confidence"
         result.error = "; ".join(abstain_reasons)
         return result
-    
+
     cue_beats = filtered_cues.to_dict()
     result.cues_set = cue_beats
     result.confidence = prediction.confidence
-    
+
     if explain:
         print(f"Final cues (beats): {cue_beats}")
-    
+
     if not write:
         result.action = "would-write"
         return result
-    
+
     try:
         markers = tags.markers2 or Markers2Data()
-        
+
         markers.cues = []
         for index, beat in cue_beats.items():
             position_ms = beats_to_ms(beat, tags.beatgrid)
@@ -250,13 +248,13 @@ def process_track(
                 color=color,
                 name="",
             ))
-        
+
         write_track_markers2(path, markers, backup_root=backup_root, delete_v1=True)
         result.action = "write"
     except Exception as e:
         result.action = "error-write"
         result.error = str(e)
-    
+
     return result
 
 
@@ -269,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    
+
     parser.add_argument(
         "--library",
         type=Path,
@@ -349,23 +347,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"%(prog)s {__version__}",
     )
-    
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    
+
     print(CLOSE_SERATO_WARNING, file=sys.stderr)
-    
+
     if args.write and serato_is_running():
         print(
             "ERROR: Serato appears to be running. Close Serato DJ Pro before --write.",
             file=sys.stderr,
         )
         return 1
-    
+
     if args.file:
         files = [args.file]
         library_root = args.file.parent
@@ -379,11 +377,11 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         library_root = roots[0]
         files = iter_audio_files(library_root)
-    
+
     if not files:
         print("No audio files found.", file=sys.stderr)
         return 2
-    
+
     protected_paths: set[str] = set()
     if args.db:
         serato_dir = args.db.parent
@@ -396,17 +394,17 @@ def main(argv: list[str] | None = None) -> int:
             if candidate.is_dir():
                 protected_paths = load_protected_paths(candidate)
                 break
-    
+
     if args.max_tracks:
         files = files[:args.max_tracks]
-    
+
     backup_root = None
     if args.write:
         backup_base = args.backup_dir or Path("auto-cue-backups")
         backup_root = timestamped_backup_root(backup_base)
-    
+
     results: list[ProcessResult] = []
-    
+
     for path in files:
         result = process_track(
             path,
@@ -422,36 +420,37 @@ def main(argv: list[str] | None = None) -> int:
             explain=args.explain,
         )
         results.append(result)
-        
+
         prefix = "[dry-run] " if not args.write else ""
         if result.action.startswith("would-write") or result.action == "write":
             cue_str = ", ".join(f"{k+1}={v}" for k, v in sorted((result.cues_set or {}).items()))
             print(f"{prefix}{result.action}: {result.path.name} [{cue_str}]")
         elif result.action.startswith("skip") or result.action.startswith("abstain"):
             print(f"{prefix}{result.action}: {result.path.name} ({result.error or ''})")
-    
+
     action_counts: dict[str, int] = {}
     for r in results:
         action_counts[r.action] = action_counts.get(r.action, 0) + 1
-    
+
     print(f"\nSummary: {len(results)} files processed")
     for action, count in sorted(action_counts.items()):
         print(f"  {action}: {count}")
-    
+
     if backup_root:
         print(f"Backups: {backup_root}")
-    
+
     if args.csv:
         _write_csv(args.csv, results)
         print(f"CSV: {args.csv}")
-    
+
     api_errors = [r for r in results if r.is_api_error]
     if api_errors:
-        print(f"\nERROR: {len(api_errors)} API/auth error(s) - these are NOT abstentions!", file=sys.stderr)
+        msg = f"\nERROR: {len(api_errors)} API/auth error(s) - NOT abstentions!"
+        print(msg, file=sys.stderr)
         for r in api_errors[:3]:
             print(f"  {r.path.name}: {r.error}", file=sys.stderr)
         return 3  # Distinct exit code for API errors
-    
+
     write_errors = [r for r in results if r.action == "error-write"]
     return 1 if write_errors else 0
 

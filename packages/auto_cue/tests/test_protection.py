@@ -8,18 +8,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
+from auto_cue.protection import (
+    check_grid_protection,
+    check_protection,
+    decide_cue_write,
+)
 from auto_cue.tags import (
-    Markers2Data,
     CuePoint,
     Loop,
+    Markers2Data,
     TrackTags,
-)
-from auto_cue.protection import (
-    check_protection,
-    check_grid_protection,
-    decide_cue_write,
-    ProtectionStatus,
 )
 from serato_bpm_cleanup.beatgrid import BeatGrid, TerminalMarker
 
@@ -39,7 +37,7 @@ def make_track_tags(
         loops=loops or [],
         bpm_lock=bpm_lock,
     )
-    
+
     beatgrid = None
     if has_grid:
         if dynamic_grid:
@@ -54,7 +52,7 @@ def make_track_tags(
             beatgrid = BeatGrid(
                 markers=(TerminalMarker(position_s=0.1, bpm=128.0),)
             )
-    
+
     return TrackTags(
         path=Path("/test/track.mp3"),
         markers2=markers2,
@@ -72,7 +70,7 @@ class TestProtectionWithHumanCues:
             cues=[CuePoint(index=0, position_ms=0, name="Intro")]
         )
         status = check_protection(tags)
-        
+
         assert status.protected
         assert "has human cues" in status.reasons
 
@@ -82,7 +80,7 @@ class TestProtectionWithHumanCues:
             cues=[CuePoint(index=0, position_ms=0, name="")]
         )
         status = check_protection(tags)
-        
+
         assert status.protected
         assert "has human cues" in status.reasons
 
@@ -95,7 +93,7 @@ class TestProtectionWithHumanCues:
             ]
         )
         status = check_protection(tags)
-        
+
         assert not status.protected
         assert status.can_replace_mik
 
@@ -108,7 +106,7 @@ class TestProtectionWithHumanCues:
             ]
         )
         status = check_protection(tags)
-        
+
         assert status.protected
         assert "has human cues" in status.reasons
 
@@ -120,7 +118,7 @@ class TestProtectionWithBPMLock:
         """BPM-locked track should be protected."""
         tags = make_track_tags(bpm_lock=True)
         status = check_protection(tags)
-        
+
         assert status.protected
         assert "BPM locked" in status.reasons
 
@@ -134,7 +132,7 @@ class TestProtectionWithLoopsAndFlips:
             loops=[Loop(index=0, start_ms=0, end_ms=10000)]
         )
         status = check_protection(tags)
-        
+
         assert status.protected
         assert "has loops" in status.reasons
 
@@ -143,7 +141,7 @@ class TestProtectionWithLoopsAndFlips:
         tags = make_track_tags()
         tags.markers2.flip_entries = [b"\x00\x01\x02"]
         status = check_protection(tags)
-        
+
         assert status.protected
         assert "has flips" in status.reasons
 
@@ -155,7 +153,7 @@ class TestProtectionWithDynamicGrid:
         """Track with dynamic grid should be protected."""
         tags = make_track_tags(dynamic_grid=True)
         status = check_protection(tags)
-        
+
         assert status.protected
         assert "dynamic (multi-marker) grid" in status.reasons
 
@@ -167,7 +165,7 @@ class TestProtectionWithTagErrors:
         """Track with tag errors should be protected."""
         tags = make_track_tags(error="corrupted markers")
         status = check_protection(tags)
-        
+
         assert status.protected
         assert "tag error" in str(status.reasons)
 
@@ -180,10 +178,10 @@ class TestGridProtection:
         tags = make_track_tags(
             cues=[CuePoint(index=0, position_ms=0, name="Energy 1")]
         )
-        
+
         cue_status = check_protection(tags)
         assert not cue_status.protected
-        
+
         grid_status = check_grid_protection(tags)
         assert grid_status.protected
         assert "has existing cues" in str(grid_status.reasons)
@@ -191,7 +189,7 @@ class TestGridProtection:
     def test_empty_track_has_unprotected_grid(self):
         """Track with no cues should have unprotected grid."""
         tags = make_track_tags()
-        
+
         grid_status = check_grid_protection(tags)
         assert not grid_status.protected
 
@@ -203,7 +201,7 @@ class TestCueWriteDecision:
         """Empty track with grid should allow writes."""
         tags = make_track_tags()
         decision = decide_cue_write(tags)
-        
+
         assert decision.should_write
         assert decision.action == "write"
 
@@ -213,7 +211,7 @@ class TestCueWriteDecision:
             cues=[CuePoint(index=0, position_ms=0, name="")]
         )
         decision = decide_cue_write(tags)
-        
+
         assert not decision.should_write
         assert decision.action == "skip"
 
@@ -223,7 +221,7 @@ class TestCueWriteDecision:
             cues=[CuePoint(index=0, position_ms=0, name="Energy 1")]
         )
         decision = decide_cue_write(tags, replace_mik=False)
-        
+
         assert not decision.should_write
         assert decision.action == "skip"
 
@@ -233,7 +231,7 @@ class TestCueWriteDecision:
             cues=[CuePoint(index=0, position_ms=0, name="Energy 1")]
         )
         decision = decide_cue_write(tags, replace_mik=True)
-        
+
         assert decision.should_write
         assert decision.action == "replace-mik"
 
@@ -241,7 +239,7 @@ class TestCueWriteDecision:
         """Track without grid should abstain."""
         tags = make_track_tags(has_grid=False)
         decision = decide_cue_write(tags)
-        
+
         assert not decision.should_write
         assert decision.action == "abstain"
 
@@ -253,13 +251,13 @@ class TestProtectedCratePaths:
         """Track in Sets/ crate should be protected."""
         tags = make_track_tags()
         protected_paths = {"DJ Music/Spotify/track.mp3"}
-        
+
         status = check_protection(
             tags,
             protected_paths=protected_paths,
             track_relative_path="DJ Music/Spotify/track.mp3",
         )
-        
+
         assert status.protected
         assert "in protected crate" in status.reasons
 
@@ -271,24 +269,25 @@ class TestRealQAProtection:
         """Check protection status of QA songs based on cue type."""
         if qa_songs_dir is None:
             pytest.skip("QA songs not available")
-        
+
         from auto_cue.tags import read_track_tags
-        
+
         human_cue_tracks = []
         mik_cue_tracks = []
-        
+
         for mp3 in qa_songs_dir.glob("*.mp3"):
             tags = read_track_tags(mp3)
             status = check_protection(tags)
-            
+
             if tags.markers2 and tags.markers2.has_human_cues():
                 human_cue_tracks.append(mp3.name)
                 assert status.protected, f"{mp3.name} with human cues should be protected"
             elif tags.markers2 and tags.markers2.all_mik_cues():
                 mik_cue_tracks.append(mp3.name)
-                assert not status.protected, f"{mp3.name} with only MIK cues should not be protected"
+                msg = f"{mp3.name} with only MIK cues should not be protected"
+                assert not status.protected, msg
                 assert status.can_replace_mik, f"{mp3.name} should allow MIK replacement"
-        
+
         print(f"\nHuman cue tracks: {human_cue_tracks}")
         print(f"MIK cue tracks: {mik_cue_tracks}")
 
@@ -296,32 +295,34 @@ class TestRealQAProtection:
         """QA songs with any cues should have protected grids."""
         if qa_songs_dir is None:
             pytest.skip("QA songs not available")
-        
+
         from auto_cue.tags import read_track_tags
-        
+
         for mp3 in qa_songs_dir.glob("*.mp3"):
             tags = read_track_tags(mp3)
             grid_status = check_grid_protection(tags)
-            
+
             assert grid_status.protected, f"{mp3.name} grid should be protected (has cues)"
 
     def test_dry_run_writes_nothing_on_qa(self, qa_songs_dir, temp_dir):
         """Dry-run should write nothing to QA files."""
         if qa_songs_dir is None:
             pytest.skip("QA songs not available")
-        
+
         import shutil
+
         from auto_cue.cli import process_track
-        
+
         for mp3 in qa_songs_dir.glob("*.mp3"):
             copy_path = temp_dir / mp3.name
             shutil.copy2(mp3, copy_path)
-            
+
             original_bytes = copy_path.read_bytes()
-            
+
             result = process_track(copy_path, write=False, use_llm=False)
-            
-            assert result.action.startswith("skip"), f"Expected skip for {mp3.name}, got {result.action}"
-            
+
+            msg = f"Expected skip for {mp3.name}, got {result.action}"
+            assert result.action.startswith("skip"), msg
+
             new_bytes = copy_path.read_bytes()
             assert original_bytes == new_bytes, f"{mp3.name} was modified during dry-run"
