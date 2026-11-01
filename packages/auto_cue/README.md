@@ -30,6 +30,22 @@ uv run --package auto-cue auto-cue --library "H:\DJ Music" --write
 
 # Replace MIK Energy cues
 uv run --package auto-cue auto-cue --library "H:\DJ Music" --write --replace-mik
+
+# With LLM (requires OPENAI_API_KEY)
+OPENAI_API_KEY=sk-... uv run --package auto-cue auto-cue --library "H:\DJ Music" --explain
+```
+
+## Evaluation
+
+```bash
+# Rule-based blind eval (no API key needed)
+uv run --package auto-cue auto-cue-eval /path/to/gold-songs
+
+# LLM eval (requires OPENAI_API_KEY)
+OPENAI_API_KEY=sk-... uv run --package auto-cue auto-cue-eval /path/to/gold-songs --use-llm
+
+# Custom model
+OPENAI_API_KEY=sk-... uv run --package auto-cue auto-cue-eval /path/to/gold-songs --use-llm --model gpt-4o
 ```
 
 ## Will's Cue System

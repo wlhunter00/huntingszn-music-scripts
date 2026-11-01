@@ -1,6 +1,6 @@
 """LLM-based cue picker for selecting all cue positions.
 
-Uses a Haiku-class model to pick all 8 cues with model judgment on each one:
+Uses an OpenAI model to pick all 8 cues with model judgment on each one:
 - Cue 4 and 6 (drops) are primary picks
 - Cues 1, 2, 7, 8 are also model-chosen from valid candidates (not just derived)
 - Cues 3 and 5 are derived deterministically (cue4-32 and cue6-32)
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,12 +20,11 @@ import httpx
 from auto_cue.features import TrackFeatures, format_phrase_table
 from auto_cue.validate import CueSet
 
-DEFAULT_MODEL = "claude-3-5-haiku-latest"
+DEFAULT_MODEL = "gpt-4o-mini"
 
-RULE_CARD = """
+SYSTEM_PROMPT = """You are a DJ cue point assistant. You analyze audio features to place 8 hot cues for Serato DJ.
+
 # Will's Serato cue system
-
-You are helping set 8 hot cues for a DJ track. The cues mark structural points.
 
 ## Slot meanings (YOU must choose each one)
 - Cue 4: FIRST DROP (the main drop - biggest energy jump, set first)
@@ -51,23 +50,28 @@ You are helping set 8 hot cues for a DJ track. The cues mark structural points.
 - Cue 2: Where should the incoming track be fully mixed? Often right before vocals.
 - Cue 7: Where should mixing OUT start? Short outro = use mid-song point before cue5.
 - Cue 8: Final warning point. Should be 32-48 beats before audio ends.
-- If you can't confidently place a cue, set "abstain": true
+- CRITICAL: If you can't confidently place cue4 or cue6, set "abstain": true
+- A blank song is MUCH better than wrong cues
 
-## Output format (JSON only)
-{
-  "cue1_beat": <int or null if abstain>,
-  "cue2_beat": <int or null>,
-  "cue4_beat": <int>,
-  "cue6_beat": <int>,
-  "cue7_beat": <int or null>,
-  "cue8_beat": <int or null>,
-  "cue7_midsong": false,
-  "confidence": 0.0-1.0,
-  "abstain": false,
-  "rationale": "<1 line>"
+You MUST respond with valid JSON only. No markdown, no explanation."""
+
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "cue1_beat": {"type": ["integer", "null"], "description": "Beat position for cue 1, or null if uncertain"},
+        "cue2_beat": {"type": ["integer", "null"], "description": "Beat position for cue 2, or null if uncertain"},
+        "cue4_beat": {"type": ["integer", "null"], "description": "Beat position for cue 4 (first drop)"},
+        "cue6_beat": {"type": ["integer", "null"], "description": "Beat position for cue 6 (last drop)"},
+        "cue7_beat": {"type": ["integer", "null"], "description": "Beat position for cue 7, or null if uncertain"},
+        "cue8_beat": {"type": ["integer", "null"], "description": "Beat position for cue 8, or null if uncertain"},
+        "cue7_midsong": {"type": "boolean", "description": "True if cue7 is a mid-song point before cue5"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "Overall confidence 0-1"},
+        "abstain": {"type": "boolean", "description": "True if unable to confidently place drops"},
+        "rationale": {"type": "string", "description": "Brief explanation of choices"}
+    },
+    "required": ["cue4_beat", "cue6_beat", "confidence", "abstain", "rationale"],
+    "additionalProperties": False
 }
-Note: cue3 = cue4 - 32, cue5 = cue6 - 32 (derived automatically)
-"""
 
 
 @dataclass
@@ -86,11 +90,23 @@ class LLMPrediction:
     raw_response: str = ""
 
 
+@dataclass
+class AbstainDecision:
+    """Structured abstention with reasons."""
+    should_abstain: bool
+    reasons: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    
+    def add_reason(self, reason: str, penalty: float = 0.15) -> None:
+        self.reasons.append(reason)
+        self.confidence = max(0.0, self.confidence - penalty)
+
+
 def get_api_key() -> str:
-    """Get Anthropic API key from environment."""
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    """Get OpenAI API key from environment."""
+    key = os.environ.get("OPENAI_API_KEY", "")
     if not key:
-        raise ValueError("ANTHROPIC_API_KEY not set")
+        raise ValueError("OPENAI_API_KEY not set")
     return key
 
 
@@ -105,7 +121,7 @@ def predict_cues_llm(
     
     Args:
         features: Extracted audio features
-        model: Model name (default: claude-3-5-haiku-latest)
+        model: Model name (default: gpt-4o-mini)
         style: Track style hint (e.g., "dubstep", "house")
         examples: Few-shot examples from gold tracks
     
@@ -115,10 +131,9 @@ def predict_cues_llm(
     phrase_table = format_phrase_table(features)
     
     valid_cue1_options = _get_valid_cue1_options(features)
-    valid_cue7_options = _get_valid_cue7_options(features)
     valid_cue8_options = _get_valid_cue8_options(features)
     
-    prompt_parts = [RULE_CARD, "", "## This track", ""]
+    prompt_parts = ["## This track", ""]
     
     if style:
         prompt_parts.append(f"Style: {style}")
@@ -129,7 +144,6 @@ def predict_cues_llm(
     prompt_parts.append(phrase_table)
     prompt_parts.append("")
     prompt_parts.append(f"Valid cue1 options (32-beat boundaries): {valid_cue1_options[:8]}")
-    prompt_parts.append(f"Valid cue7 options (after cue6): will depend on cue6")
     prompt_parts.append(f"Valid cue8 options (near end): {valid_cue8_options}")
     
     if examples:
@@ -139,7 +153,8 @@ def predict_cues_llm(
             prompt_parts.append(f"- {ex.get('name', 'track')}: cue4={ex.get('cue4')}, cue6={ex.get('cue6')}")
     
     prompt_parts.append("")
-    prompt_parts.append("Pick all cues. cue3 = cue4-32, cue5 = cue6-32 are derived. Return JSON only.")
+    prompt_parts.append("Pick all cues. cue3 = cue4-32, cue5 = cue6-32 are derived.")
+    prompt_parts.append("Return JSON with your choices. Set abstain=true if drop positions are unclear.")
     
     user_prompt = "\n".join(prompt_parts)
     
@@ -147,25 +162,26 @@ def predict_cues_llm(
     
     with httpx.Client(timeout=60.0) as client:
         response = client.post(
-            "https://api.anthropic.com/v1/messages",
+            "https://api.openai.com/v1/chat/completions",
             headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
             },
             json={
                 "model": model,
-                "max_tokens": 512,
-                "temperature": 0,
                 "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt}
                 ],
+                "temperature": 0,
+                "max_tokens": 512,
+                "response_format": {"type": "json_object"},
             },
         )
         response.raise_for_status()
         result = response.json()
     
-    content = result["content"][0]["text"]
+    content = result["choices"][0]["message"]["content"]
     
     return _parse_llm_response(content, features)
 
@@ -177,11 +193,6 @@ def _get_valid_cue1_options(features: TrackFeatures) -> list[int]:
     for beat in range(0, max_beat + 1, 32):
         options.append(beat)
     return options
-
-
-def _get_valid_cue7_options(features: TrackFeatures) -> list[int]:
-    """Get valid cue7 beat positions."""
-    return [32, 64]
 
 
 def _get_valid_cue8_options(features: TrackFeatures) -> list[int]:
@@ -239,20 +250,103 @@ def _parse_llm_response(content: str, features: TrackFeatures) -> LLMPrediction:
     )
 
 
+def _assess_drop_confidence(features: TrackFeatures) -> AbstainDecision:
+    """Assess confidence in drop detection from audio features.
+    
+    Returns AbstainDecision with reasons and adjusted confidence.
+    """
+    decision = AbstainDecision(should_abstain=False, confidence=0.7)
+    
+    if not features.drop_candidates:
+        decision.should_abstain = True
+        decision.add_reason("no drop candidates detected", 0.5)
+        return decision
+    
+    if len(features.phrases) < 4:
+        decision.should_abstain = True
+        decision.add_reason("track too short for analysis", 0.5)
+        return decision
+    
+    drop_scores = [p.drop_score for p in features.phrases if p.is_drop_candidate]
+    
+    if not drop_scores:
+        decision.should_abstain = True
+        decision.add_reason("no phrases scored as drops", 0.5)
+        return decision
+    
+    max_score = max(drop_scores)
+    
+    if max_score < 2.0:
+        decision.add_reason(f"weak drop evidence (max_score={max_score:.1f} < 2.0)", 0.2)
+    
+    if max_score < 1.5:
+        decision.should_abstain = True
+        decision.add_reason(f"very weak drop evidence (max_score={max_score:.1f} < 1.5)", 0.3)
+        return decision
+    
+    if len(drop_scores) >= 2:
+        sorted_scores = sorted(drop_scores, reverse=True)
+        top_two_ratio = sorted_scores[1] / sorted_scores[0] if sorted_scores[0] > 0 else 0
+        
+        if top_two_ratio > 0.9:
+            decision.add_reason(f"ambiguous top drops (ratio={top_two_ratio:.2f})", 0.15)
+    
+    if len(drop_scores) >= 3:
+        sorted_scores = sorted(drop_scores, reverse=True)
+        top_three_similar = all(
+            s / sorted_scores[0] > 0.8 for s in sorted_scores[:3]
+        ) if sorted_scores[0] > 0 else False
+        
+        if top_three_similar:
+            decision.add_reason("multiple similar-strength drop candidates", 0.1)
+    
+    rms_values = [p.rms_db for p in features.phrases]
+    if rms_values:
+        rms_range = max(rms_values) - min(rms_values)
+        if rms_range < 6.0:
+            decision.add_reason(f"flat dynamics (rms_range={rms_range:.1f}dB < 6dB)", 0.15)
+    
+    candidates = features.drop_candidates
+    third = features.total_beats // 3
+    two_thirds = 2 * features.total_beats // 3
+    
+    first_third_drops = [c for c in candidates if 64 <= c <= third]
+    last_third_drops = [c for c in candidates if c > two_thirds]
+    
+    if not first_third_drops and not last_third_drops:
+        decision.add_reason("drops only in middle third - unusual structure", 0.1)
+    
+    if decision.confidence < 0.4:
+        decision.should_abstain = True
+    
+    return decision
+
+
 def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
     """Rule-based fallback when LLM is not available.
     
-    Heuristics:
-    - cue4 = first significant drop candidate (must allow room for cues 1-3)
-    - cue6 = drop candidate in second half of track
-    - cue1, cue2, cue7, cue8 = derived from lattice rules
+    Now includes proper confidence gating - will abstain when:
+    - Weak drop evidence (low scores)
+    - Ambiguous candidates (similar scores)
+    - Unusual track structure
+    - Flat dynamics
+    - Selected positions have poor scores relative to alternatives
     """
-    if not features.drop_candidates:
-        raise ValueError("No drop candidates found")
+    confidence_check = _assess_drop_confidence(features)
+    
+    if confidence_check.should_abstain:
+        reasons = "; ".join(confidence_check.reasons)
+        raise ValueError(f"Abstaining: {reasons}")
+    
+    phrase_scores = {p.beat_start: p.drop_score for p in features.phrases if p.is_drop_candidate}
+    max_score = max(phrase_scores.values()) if phrase_scores else 0
     
     candidates = [b for b in features.drop_candidates if b >= 64]
     if not candidates:
         candidates = features.drop_candidates
+    
+    if not candidates:
+        raise ValueError("Abstaining: no valid drop candidates")
     
     third = features.total_beats // 3
     two_thirds = 2 * features.total_beats // 3
@@ -285,6 +379,31 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
         if later:
             cue6 = later[0]
     
+    cue4_score = phrase_scores.get(cue4, 0)
+    cue6_score = phrase_scores.get(cue6, 0)
+    
+    if cue4_score < 1.5:
+        confidence_check.add_reason(f"cue4 has weak score ({cue4_score:.1f})", 0.15)
+    if cue6_score < 1.5:
+        confidence_check.add_reason(f"cue6 has weak score ({cue6_score:.1f})", 0.15)
+    
+    if max_score > 0:
+        cue4_relative = cue4_score / max_score
+        cue6_relative = cue6_score / max_score
+        
+        if cue4_relative < 0.5:
+            confidence_check.add_reason(
+                f"cue4 at {cue4} has {cue4_relative:.0%} of max drop score", 0.2
+            )
+        if cue6_relative < 0.5:
+            confidence_check.add_reason(
+                f"cue6 at {cue6} has {cue6_relative:.0%} of max drop score", 0.2
+            )
+    
+    if confidence_check.confidence < 0.4:
+        reasons = "; ".join(confidence_check.reasons)
+        raise ValueError(f"Abstaining: {reasons}")
+    
     is_bass_music = features.bpm < 100
     
     cue3 = cue4 - 32
@@ -312,28 +431,24 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
     
     cue7 = cue6 + 32
     
-    # cue8 must be on the 32-beat lattice from cue6 and >= cue7
-    # Short outros may have cue7 == cue8 (overlapping is valid)
-    min_end_margin = 8  # Allow cue8 closer to end
+    min_end_margin = 8
     max_cue8 = features.total_beats - min_end_margin
     
-    # Start with cue7 + 32 (= cue6 + 64)
     cue8 = cue6 + 64
     
-    # If that's past the safe zone, find the highest lattice point that fits
     if cue8 > max_cue8:
-        # Calculate highest valid lattice point: cue6 + k*32 <= max_cue8
-        k = max(1, (max_cue8 - cue6) // 32)  # k >= 1 to ensure cue8 >= cue6+32
+        k = max(1, (max_cue8 - cue6) // 32)
         cue8 = cue6 + k * 32
     
-    # cue8 must be >= cue7 (overlapping is OK for short outros)
     if cue8 < cue7:
         cue8 = cue7
     
-    # If cue8 is still past the track, allow overlap with cue7
     if cue8 > features.total_beats - min_end_margin:
-        # For very short outros, cue7 and cue8 can be the same
         cue8 = cue7
+    
+    rationale_parts = ["rule-based"]
+    if confidence_check.reasons:
+        rationale_parts.append(f"warnings: {', '.join(confidence_check.reasons)}")
     
     return LLMPrediction(
         cue1_beat=cue1,
@@ -343,9 +458,9 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
         cue7_beat=cue7,
         cue8_beat=cue8,
         cue7_midsong=False,
-        confidence=0.6,
+        confidence=confidence_check.confidence,
         abstain=False,
-        rationale="rule-based: top drop candidates by energy delta",
+        rationale="; ".join(rationale_parts),
         raw_response="",
     )
 
@@ -383,7 +498,6 @@ def prediction_to_cue_set(
     else:
         cues.cue8 = cues.cue7 + 32
         if cues.cue8 > total_beats - 16:
-            # Stay on 32-beat lattice from cue6
             max_cue8 = total_beats - 16
             k = (max_cue8 - cues.cue6) // 32
             cues.cue8 = cues.cue6 + k * 32

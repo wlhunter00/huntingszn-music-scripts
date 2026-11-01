@@ -1,7 +1,7 @@
 """Offline evaluation harness for auto-cue predictions.
 
 Run blind predictions on gold-labeled tracks and compare to hand cues.
-Can be run with rule-based fallback or with LLM (when ANTHROPIC_API_KEY is set).
+Can be run with rule-based fallback or with LLM (when OPENAI_API_KEY is set).
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ def evaluate_track(
     gold: GoldCues,
     *,
     use_llm: bool = False,
-    model: str = "claude-3-5-haiku-latest",
+    model: str = "gpt-4o-mini",
 ) -> EvalResult:
     """Run blind prediction on a single track and compare to gold."""
     result = EvalResult(
@@ -170,13 +170,17 @@ def evaluate_track(
             return result
         
         try:
-            if use_llm and os.environ.get("ANTHROPIC_API_KEY"):
+            if use_llm and os.environ.get("OPENAI_API_KEY"):
                 prediction = predict_cues_llm(features, model=model)
             else:
                 prediction = predict_cues_rules(features)
+        except ValueError as e:
+            result.abstained = True
+            result.abstain_reason = str(e)
+            return result
         except Exception as e:
             result.abstained = True
-            result.abstain_reason = f"prediction error: {e}"
+            result.abstain_reason = f"error: {e}"
             return result
         
         cues = prediction_to_cue_set(prediction, features.total_beats)
@@ -234,18 +238,22 @@ def compute_summary(results: list[EvalResult], tolerance: float = 1.0) -> EvalSu
     return summary
 
 
-def format_results_table(results: list[EvalResult]) -> str:
+def format_results_table(results: list[EvalResult], include_abstain_details: bool = True) -> str:
     """Format results as a markdown table."""
     lines = []
     lines.append("| Track | Cue 1 | Cue 2 | Cue 3 | Cue 4 | Cue 5 | Cue 6 | Cue 7 | Cue 8 | Status |")
     lines.append("|-------|-------|-------|-------|-------|-------|-------|-------|-------|--------|")
+    
+    abstain_details = []
     
     for result in results:
         row = [result.track_name[:30]]
         
         if result.abstained:
             row.extend(["—"] * 8)
-            row.append(f"ABSTAIN: {result.abstain_reason[:30]}")
+            row.append("ABSTAIN")
+            if include_abstain_details:
+                abstain_details.append((result.track_name, result.abstain_reason))
         else:
             for slot in range(8):
                 if slot in result.errors:
@@ -263,6 +271,13 @@ def format_results_table(results: list[EvalResult]) -> str:
             row.append("✓" if all_good else "partial")
         
         lines.append("| " + " | ".join(row) + " |")
+    
+    if abstain_details:
+        lines.append("")
+        lines.append("### Abstain Decisions")
+        lines.append("")
+        for track, reason in abstain_details:
+            lines.append(f"- **{track}**: {reason}")
     
     return "\n".join(lines)
 
@@ -303,7 +318,7 @@ def run_eval(
     *,
     gold_csv: Path | None = None,
     use_llm: bool = False,
-    model: str = "claude-3-5-haiku-latest",
+    model: str = "gpt-4o-mini",
     output_md: Path | None = None,
 ) -> tuple[list[EvalResult], EvalSummary]:
     """Run evaluation on all tracks in a directory.
@@ -311,7 +326,7 @@ def run_eval(
     Args:
         audio_dir: Directory containing audio files
         gold_csv: Optional CSV with gold labels (if not provided, reads from files)
-        use_llm: Use LLM for prediction (requires ANTHROPIC_API_KEY)
+        use_llm: Use LLM for prediction (requires OPENAI_API_KEY)
         model: Model to use for LLM prediction
         output_md: Optional path to write markdown report
     
@@ -376,7 +391,7 @@ def run_eval(
     if output_md:
         with open(output_md, "w") as f:
             f.write("# Blind Evaluation Results\n\n")
-            f.write(f"Mode: {'LLM' if use_llm and os.environ.get('ANTHROPIC_API_KEY') else 'Rule-based'}\n")
+            f.write(f"Mode: {'LLM' if use_llm and os.environ.get('OPENAI_API_KEY') else 'Rule-based'}\n")
             f.write(f"Model: {model}\n\n")
             f.write("## Per-Track Results\n\n")
             f.write(format_results_table(results))
@@ -407,12 +422,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--use-llm",
         action="store_true",
-        help="Use LLM for prediction (requires ANTHROPIC_API_KEY env var)",
+        help="Use LLM for prediction (requires OPENAI_API_KEY env var)",
     )
     parser.add_argument(
         "--model",
-        default="claude-3-5-haiku-latest",
-        help="Model to use for LLM prediction (default: claude-3-5-haiku-latest)",
+        default="gpt-4o-mini",
+        help="Model to use for LLM prediction (default: gpt-4o-mini)",
     )
     parser.add_argument(
         "--output",
@@ -426,8 +441,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {args.audio_dir} is not a directory", file=__import__('sys').stderr)
         return 1
     
-    if args.use_llm and not os.environ.get("ANTHROPIC_API_KEY"):
-        print("Warning: --use-llm set but ANTHROPIC_API_KEY not found, using rule-based fallback")
+    if args.use_llm and not os.environ.get("OPENAI_API_KEY"):
+        print("Warning: --use-llm set but OPENAI_API_KEY not found, using rule-based fallback")
     
     results, summary = run_eval(
         args.audio_dir,
