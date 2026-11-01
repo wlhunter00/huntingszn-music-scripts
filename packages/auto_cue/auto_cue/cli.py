@@ -35,7 +35,13 @@ from auto_cue.validate import (
     check_confidence_threshold,
 )
 from auto_cue.features import extract_features, check_grid_alignment
-from auto_cue.llm import predict_cues_llm, predict_cues_rules, prediction_to_cue_set
+from auto_cue.llm import (
+    predict_cues_llm,
+    predict_cues_rules,
+    prediction_to_cue_set,
+    LLMAPIError,
+    CueAbstainError,
+)
 
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".wav", ".aiff", ".aif"}
@@ -50,10 +56,11 @@ CLOSE_SERATO_WARNING = (
 class ProcessResult:
     """Result of processing a single track."""
     path: Path
-    action: str  # write, would-write, skip-*, abstain-*
+    action: str  # write, would-write, skip-*, abstain-*, error-*
     cues_set: dict[int, int] | None = None
     error: str | None = None
     confidence: float = 0.0
+    is_api_error: bool = False  # True for API/auth/HTTP errors that should fail fast
 
 
 def iter_audio_files(root: Path) -> list[Path]:
@@ -77,6 +84,8 @@ def process_track(
     write: bool = False,
     replace_mik: bool = False,
     use_llm: bool = True,
+    model: str = "gpt-6-luna",
+    reasoning_effort: str = "medium",
     min_confidence: float = 0.6,
     backup_root: Path | None = None,
     protected_paths: set[str] | None = None,
@@ -162,13 +171,29 @@ def process_track(
     try:
         if use_llm:
             try:
-                prediction = predict_cues_llm(features)
-            except Exception as e:
+                prediction = predict_cues_llm(features, model=model, reasoning_effort=reasoning_effort)
+            except LLMAPIError as e:
+                result.action = "error-api"
+                result.error = str(e)
+                result.is_api_error = True
+                return result
+            except CueAbstainError as e:
                 if explain:
-                    print(f"LLM failed ({e}), falling back to rules")
-                prediction = predict_cues_rules(features)
+                    print(f"LLM abstained: {e}")
+                result.action = "abstain-llm"
+                result.error = str(e)
+                return result
         else:
             prediction = predict_cues_rules(features)
+    except LLMAPIError as e:
+        result.action = "error-api"
+        result.error = str(e)
+        result.is_api_error = True
+        return result
+    except CueAbstainError as e:
+        result.action = "abstain-rules"
+        result.error = str(e)
+        return result
     except Exception as e:
         result.action = "abstain-prediction-error"
         result.error = str(e)
@@ -276,6 +301,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use rule-based prediction only (no LLM API calls).",
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default="gpt-6-luna",
+        help="LLM model to use (default: gpt-6-luna).",
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        type=str,
+        default="medium",
+        choices=["low", "medium", "high"],
+        help="Reasoning effort for reasoning models (default: medium).",
+    )
+    parser.add_argument(
         "--min-confidence",
         type=float,
         default=0.6,
@@ -375,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
             write=args.write,
             replace_mik=args.replace_mik,
             use_llm=not args.no_llm,
+            model=args.model,
+            reasoning_effort=args.reasoning_effort,
             min_confidence=args.min_confidence,
             backup_root=backup_root,
             protected_paths=protected_paths,
@@ -405,8 +445,15 @@ def main(argv: list[str] | None = None) -> int:
         _write_csv(args.csv, results)
         print(f"CSV: {args.csv}")
     
-    errors = [r for r in results if "error" in r.action]
-    return 1 if errors else 0
+    api_errors = [r for r in results if r.is_api_error]
+    if api_errors:
+        print(f"\nERROR: {len(api_errors)} API/auth error(s) - these are NOT abstentions!", file=sys.stderr)
+        for r in api_errors[:3]:
+            print(f"  {r.path.name}: {r.error}", file=sys.stderr)
+        return 3  # Distinct exit code for API errors
+    
+    write_errors = [r for r in results if r.action == "error-write"]
+    return 1 if write_errors else 0
 
 
 def _write_csv(path: Path, results: list[ProcessResult]) -> None:

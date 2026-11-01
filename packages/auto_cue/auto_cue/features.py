@@ -178,8 +178,8 @@ def extract_features(
 
 
 def _bandpass(y: np.ndarray, sr: int, low: float, high: float) -> np.ndarray:
-    """Apply bandpass filter."""
-    from scipy.signal import butter, filtfilt
+    """Apply bandpass filter using SOS form for numerical stability."""
+    from scipy.signal import butter, sosfiltfilt
     
     nyq = sr / 2
     low_norm = low / nyq
@@ -191,20 +191,20 @@ def _bandpass(y: np.ndarray, sr: int, low: float, high: float) -> np.ndarray:
     if low_norm >= high_norm:
         return y
     
-    b, a = butter(4, [low_norm, high_norm], btype='band')
-    return filtfilt(b, a, y)
+    sos = butter(4, [low_norm, high_norm], btype='band', output='sos')
+    return sosfiltfilt(sos, y)
 
 
 def _highpass(y: np.ndarray, sr: int, cutoff: float) -> np.ndarray:
-    """Apply highpass filter."""
-    from scipy.signal import butter, filtfilt
+    """Apply highpass filter using SOS form for numerical stability."""
+    from scipy.signal import butter, sosfiltfilt
     
     nyq = sr / 2
     norm = cutoff / nyq
     norm = max(0.001, min(0.999, norm))
     
-    b, a = butter(4, norm, btype='high')
-    return filtfilt(b, a, y)
+    sos = butter(4, norm, btype='high', output='sos')
+    return sosfiltfilt(sos, y)
 
 
 def _identify_drop_candidates(features: TrackFeatures) -> None:
