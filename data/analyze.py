@@ -1,0 +1,18 @@
+import pandas as pd, numpy as np, unicodedata as U, re
+N=lambda s:U.normalize('NFC',s)
+t=pd.read_csv('tracks.csv'); c=pd.read_csv('cues.csv'); m=pd.read_csv('crate_membership.csv')
+t['key']=t.path.map(N); c['key']=c.path.map(N)
+m['key']=m.serato_path.map(N).str.replace('^DJ Music/','',regex=True)
+gold=set(m[m.crate.str.match(r'^(Sets|Perma Playlists)(/|$)')].key)
+prod=set(m[m.crate=='Produced by me'].key)
+own=lambda k: k in prod or k.split('/')[0] in('HuntingSzn','My Songs') or 'huntingszn' in k.lower()
+t['group']=np.where(t.key.map(own),'own',np.where(t.key.isin(gold),'gold','other'))
+t['in_any_crate']=t.key.isin(set(m.key))
+cc=c[c.kind=='CUE'].copy()
+# pivot beats per slot (1-indexed)
+cc['slot']=cc['index']+1
+P=cc.pivot_table(index='key',columns='slot',values='beat',aggfunc='first')
+NM=cc.pivot_table(index='key',columns='slot',values='name',aggfunc='first')
+T=t.set_index('key').join(P)
+T['mik_named']=cc.groupby('key').mik_like.mean().reindex(T.index)
+T.to_pickle('/tmp/T.pkl')

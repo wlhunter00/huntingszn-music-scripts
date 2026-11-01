@@ -1,69 +1,71 @@
-# Environment and secrets
-.env
-.env.local
-*.pem
 
-# Python / uv
-.venv/
-venv/
-**/__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
+._*
+# Audio and large binaries (not source)
 build/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-
-# Package / tool outputs
-recon-output/
-matches.csv
-**/output/
 **/.cache/
 cookies.txt
-
-# Generated catalogs and logs
-*.csv
-*.log
-*.sqlite
-*.sqlite-wal
-*.sqlite-shm
-!docs/**/*.csv
-
-# Audio and large binaries (not source)
-*.m4a
-*.mp3
-*.wav
-*.flac
-*.zip
-
-# GPT trainer data (recreate locally; do not commit)
-**/transcripts/
-**/master_transcripts/
-**/old_transcripts/
-**/final_folder/
-**/reports/
-repeated_content_flags.json
+.coverage
 creator_weights.json
+*.csv
+dist/
+!docs/**/*.csv
+.DS_Store
+*.egg-info/
+.env
+# Environment and secrets
+.env.local
+**/final_folder/
+*.flac
+# Generated catalogs and logs
+# GPT trainer data (recreate locally; do not commit)
+htmlcov/
+.idea/
+key_correction/.venv/
+*.log
+*.m4a
+**/master_transcripts/
+matches.csv
+*.mp3
+.mypy_cache/
+# Nested package venvs (legacy)
+**/old_transcripts/
+# OS / editor
+**/output/
+# Package / tool outputs
 patreon_urls.txt
-youtube_urls.txt
-
-# Stem pipeline runtime data (lives on drive, not in git)
-stem-output/
+*.pem
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+# Python / uv
+recon-output/
+repeated_content_flags.json
+**/reports/
+.ruff_cache/
+serato-bpm-cleanup-backups/
+# serato-bpm-cleanup write backups (created next to cwd)
 songs-to-split/
 Source Files/
-
-# OS / editor
-.DS_Store
-._*
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+stem-output/
+# Stem pipeline runtime data (lives on drive, not in git)
+test-data/
 Thumbs.db
-.idea/
+**/transcripts/
+.venv/
+venv/
 .vscode/
+*.wav
+youtube_urls.txt
+*.zip
 
-# Nested package venvs (legacy)
-key_correction/.venv/
+# Analysis data (contains paths from Will's library)
+data/*.csv
 
-# serato-bpm-cleanup write backups (created next to cwd)
-serato-bpm-cleanup-backups/
+# Test output
+tag-dumps/
+
+# QA audio files (copyrighted)
+test-data/
