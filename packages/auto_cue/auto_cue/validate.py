@@ -133,9 +133,11 @@ def validate_cue_set(cues: CueSet, *, tolerance: float = 0.5) -> ValidationResul
     
     if cues.total_beats > 0 and cues.cue8 is not None:
         beats_before_end = cues.total_beats - cues.cue8
-        if beats_before_end < 16:
+        if beats_before_end < 8:
             errors.append(f"cue8 too close to end ({beats_before_end} beats before end)")
-        elif beats_before_end > 64:
+        elif beats_before_end < 16:
+            warnings.append(f"cue8 close to end ({beats_before_end} beats)")
+        elif beats_before_end > 80:
             warnings.append(f"cue8 unusually far from end ({beats_before_end} beats)")
     
     return ValidationResult(valid=len(errors) == 0, errors=errors, warnings=warnings)
@@ -176,8 +178,8 @@ def _check_order(cues: CueSet, errors: list[str]) -> None:
                 errors.append(f"mid-song cue7 ({cues.cue7}) must be < cue5 ({cues.cue5})")
     
     if cues.cue7 is not None and cues.cue8 is not None:
-        if cues.cue7 >= cues.cue8:
-            errors.append(f"cue7 ({cues.cue7}) must be < cue8 ({cues.cue8})")
+        if cues.cue7 > cues.cue8:
+            errors.append(f"cue7 ({cues.cue7}) must be <= cue8 ({cues.cue8})")
 
 
 def check_confidence_threshold(
@@ -301,10 +303,18 @@ def build_cues_deterministic(
         cues.cue8 = None
     else:
         cues.cue7 = cue6 + 32
-        cues.cue8 = cues.cue7 + 32
+        cues.cue8 = cue6 + 64
         
-        if cues.cue8 > total_beats - 16:
-            cues.cue8 = total_beats - 32
+        # cue8 must stay on 32-beat lattice from cue6
+        min_end_margin = 16
+        max_cue8 = total_beats - min_end_margin
+        
+        if cues.cue8 > max_cue8:
+            # Find highest valid lattice point: cue6 + k*32 <= max_cue8
+            k = (max_cue8 - cue6) // 32
+            cues.cue8 = cue6 + k * 32
+        
+        # cue8 must be > cue7
         if cues.cue8 <= cues.cue7:
             cues.cue8 = cues.cue7 + 32
     

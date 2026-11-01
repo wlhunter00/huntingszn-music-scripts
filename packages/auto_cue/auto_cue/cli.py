@@ -176,7 +176,7 @@ def process_track(
     
     if explain:
         print(f"Prediction: cue4={prediction.cue4_beat}, cue6={prediction.cue6_beat}")
-        print(f"Confidence: cue4={prediction.confidence_cue4:.2f}, cue6={prediction.confidence_cue6:.2f}")
+        print(f"Confidence: {prediction.confidence:.2f}")
         print(f"Rationale: {prediction.rationale}")
     
     cues = prediction_to_cue_set(prediction, features.total_beats)
@@ -203,7 +203,7 @@ def process_track(
     
     cue_beats = filtered_cues.to_dict()
     result.cues_set = cue_beats
-    result.confidence = min(prediction.confidence_cue4, prediction.confidence_cue6)
+    result.confidence = prediction.confidence
     
     if explain:
         print(f"Final cues (beats): {cue_beats}")
