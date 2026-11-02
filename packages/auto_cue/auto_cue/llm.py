@@ -48,8 +48,8 @@ STATIC_RULES = """# Will's Hot Cue System for Serato DJ
 You are placing 8 hot cues on a DJ track. Cues must be on the 32-beat phrase grid.
 
 ## DROP DETECTION (PRIMARY TASK)
-- **Cue 4** = FIRST DROP: Biggest energy jump. Look for highest Δrms + Δlow after \
-a buildup. Usually beat 64-128.
+- **Cue 4** = FIRST DROP: Biggest energy jump. Look for highest kick density jump \
+(Δkick) and contrast score. Usually beat 64-128.
 - **Cue 6** = LAST DROP: Final big energy moment. Often the last high-scoring drop, \
 96-192 beats after cue4. Single-drop tracks: cue6=cue4.
 
@@ -60,29 +60,41 @@ a buildup. Usually beat 64-128.
 ## LATTICE RULES (CRITICAL)
 - Cues 1,2,3 must be on cue4's 32-beat lattice: (cue4 - cueN) mod 32 == 0
 - Cues 5,7,8 must be on cue6's 32-beat lattice: (cueN - cue6) mod 32 == 0
-- Cue 2: Pre-vocal entry at cue4-64, cue4-96, or cue4-128 (must be < cue3)
+- Cue 2: Pre-vocal entry at cue4-64, cue4-96, or cue4-128 (must be < cue3). Look for \
+vocal activity starting.
 - Cue 1: Intro at 0 or cue4 - k*32 where result < cue2
-- Cue 7 = cue6 + 32 (preferred) or cue6 + 64
+- Cue 7 = cue6 + 32 (preferred) or cue6 + 64. Look for outro/vocal fade.
 - Cue 8 = cue6 + 64 or cue6 + 96 (must be 32+ beats before track end)
 
 ## READING THE PHRASE TABLE
-Each row is a phrase boundary. Key columns:
+Each row is a 16-beat phrase. Key columns:
 - **beat**: Starting beat of phrase
 - **32?**: "▶" marks 32-beat boundaries (where cues should go)
-- **rms_db**: Overall loudness (higher = louder)
-- **low_db**: Bass energy 20-150Hz (drops have HIGH low_db)
-- **Δrms, Δlow**: Change from previous phrase (BIG POSITIVE = likely drop)
-- **vocal**: Vocal activity indicator (higher = more vocals/harmonics)
-- **build**: Build/riser indicator (onset acceleration + high-freq rise)
+- **rms/low**: Overall loudness and bass energy (<150Hz)
+- **Δlow**: Bass change from previous phrase (BIG POSITIVE = kick coming in = DROP)
+- **kick/Δkick**: Kick onset density and its change (KEY DROP SIGNAL)
+- **vocal**: Vocal activity from isolated stem (use for cue2 entry, cue7/8 outro)
+- **build**: Rising spectral centroid/highband/flatness (riser/buildup before drop)
+- **snare**: Snare-roll detection (1-5kHz onset acceleration before drop)
+- **contr**: Multi-scale before/after contrast (section boundary detection)
+- **novel**: Self-similarity novelty (new section, not repeating)
+- **gap**: Pre-drop gap (quiet moment right before the drop)
 - **drop**: Combined drop score (higher = more likely drop point)
 
-## GENRE PATTERNS
-- **dubstep/bass** (70-80 BPM): cue1 at 0, drops ~64-96 beats apart, heavy bass
-- **dnb** (85-90 BPM): cue1 at 0, drops ~96 beats apart, fast breaks
-- **house/dance** (120-130 BPM): longer intros (64+ beats), drops ~192 beats apart
+## DROP DETECTION STRATEGY
+1. Look for high **Δkick** (kick drums coming back in after dropout)
+2. High **contr** and **novel** = section change = potential drop
+3. High **build** or **snare** in the phrase BEFORE = buildup into drop
+4. High **gap** = quiet moment right before the drop
+
+## BPM-BASED PATTERNS
+- **bass (<80 BPM)**: cue1 at 0, drops ~64-96 beats apart, heavy kick patterns
+- **dnb (80-100 BPM)**: cue1 at 0, drops ~96 beats apart, fast breaks
+- **midtempo (100-115 BPM)**: mixed styles
+- **house (115+ BPM)**: longer intros (64+ beats), drops ~192 beats apart
 
 ## ABSTENTION
-Set abstain=true ONLY if drops are genuinely unclear (flat dynamics, no energy jumps)."""
+Set abstain=true ONLY if drops are genuinely unclear (flat dynamics, no clear kicks)."""
 
 OPENAI_JSON_SCHEMA = {
     "name": "cue_prediction",
