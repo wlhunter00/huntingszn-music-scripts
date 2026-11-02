@@ -1,8 +1,10 @@
 """Deterministic validator for cue point placement.
 
 Enforces Will's cue system constraints:
-- Cues 1-4 on a 32-beat lattice anchored at cue 4
-- Cues 5-8 on a 32-beat lattice anchored at cue 6
+- Cue 3 is 16 or 32 beats before cue 4 (run-up)
+- Cue 5 is 16 or 32 beats before cue 6 (run-up)
+- Cues 1, 2 on 16-beat lattice anchored at cue 4; cue 1 can equal cue 2
+- Cues 7, 8 on 32-beat lattice anchored at cue 6
 - Proper ordering and bounds
 """
 
@@ -101,28 +103,32 @@ def validate_cue_set(cues: CueSet, *, tolerance: float = 0.5) -> ValidationResul
             errors.append(f"cue{i} is negative ({beat})")
 
     if cues.cue4 is not None:
-        for slot in [1, 2, 3]:
+        if cues.cue3 is not None:
+            gap = cues.cue4 - cues.cue3
+            if gap not in (16, 32):
+                errors.append(f"cue3 must be 16 or 32 beats before cue4 (gap={gap})")
+
+        for slot in [1, 2]:
             beat = cues.get(slot)
             if beat is not None:
-                offset = (cues.cue4 - beat) % 32
+                offset = (cues.cue4 - beat) % 16
                 if offset != 0:
-                    if slot == 3 and offset == 16:
-                        warnings.append(f"cue{slot} is 16-offset from cue4 (allowed)")
-                    else:
-                        msg = f"cue{slot} not on 32-lattice from cue4 (off={offset})"
-                        errors.append(msg)
+                    msg = f"cue{slot} not on 16-lattice from cue4 (off={offset})"
+                    errors.append(msg)
 
     if cues.cue6 is not None:
-        for slot in [5, 7, 8]:
+        if cues.cue5 is not None:
+            gap = cues.cue6 - cues.cue5
+            if gap not in (16, 32):
+                errors.append(f"cue5 must be 16 or 32 beats before cue6 (gap={gap})")
+
+        for slot in [7, 8]:
             beat = cues.get(slot)
             if beat is not None:
                 offset = (beat - cues.cue6) % 32
                 if offset != 0:
-                    if slot == 5 and offset == 16:
-                        warnings.append(f"cue{slot} is 16-offset from cue6 (allowed)")
-                    else:
-                        msg = f"cue{slot} not on 32-lattice from cue6 (off={offset})"
-                        errors.append(msg)
+                    msg = f"cue{slot} not on 32-lattice from cue6 (off={offset})"
+                    errors.append(msg)
 
     _check_order(cues, errors)
 
@@ -148,8 +154,8 @@ def validate_cue_set(cues: CueSet, *, tolerance: float = 0.5) -> ValidationResul
 def _check_order(cues: CueSet, errors: list[str]) -> None:
     """Check cue ordering constraints."""
     if cues.cue1 is not None and cues.cue2 is not None:
-        if cues.cue1 >= cues.cue2:
-            errors.append(f"cue1 ({cues.cue1}) must be < cue2 ({cues.cue2})")
+        if cues.cue1 > cues.cue2:
+            errors.append(f"cue1 ({cues.cue1}) must be <= cue2 ({cues.cue2})")
 
     if cues.cue2 is not None and cues.cue3 is not None:
         if cues.cue2 > cues.cue3:
@@ -247,6 +253,8 @@ def build_cues_deterministic(
     total_beats: int,
     cue1_at_start: bool = True,
     cue2_offset: int = 32,
+    cue3_gap: int = 32,
+    cue5_gap: int = 32,
     cue7_midsong: bool = False,
 ) -> CueSet:
     """Build a complete cue set deterministically from cue4 and cue6.
@@ -256,7 +264,9 @@ def build_cues_deterministic(
         cue6: Beat position of last drop
         total_beats: Total beats in track
         cue1_at_start: If True, place cue1 at beat 0
-        cue2_offset: Offset from cue3 (32, 64, or 96)
+        cue2_offset: Offset from cue3 (any multiple of 16)
+        cue3_gap: Gap from cue3 to cue4 (16 or 32 beats)
+        cue5_gap: Gap from cue5 to cue6 (16 or 32 beats)
         cue7_midsong: If True, cue7 is between cue4 and cue5
 
     Returns:
@@ -267,8 +277,8 @@ def build_cues_deterministic(
     cues.cue4 = cue4
     cues.cue6 = cue6
 
-    cues.cue3 = max(0, cue4 - 32)
-    cues.cue5 = max(0, cue6 - 32)
+    cues.cue3 = max(0, cue4 - cue3_gap)
+    cues.cue5 = max(0, cue6 - cue5_gap)
 
     cues.cue2 = cues.cue3 - cue2_offset
     if cues.cue2 < 0:
@@ -282,23 +292,20 @@ def build_cues_deterministic(
         cues.cue1 = 0
     else:
         candidate = cue4 - 96
-        while candidate > 0 and (cue4 - candidate) % 32 == 0:
-            candidate -= 32
-        cues.cue1 = max(0, candidate + 32)
+        while candidate > 0 and (cue4 - candidate) % 16 == 0:
+            candidate -= 16
+        cues.cue1 = max(0, candidate + 16)
 
-    if cues.cue1 >= cues.cue2 and cues.cue2 > 0:
-        cues.cue1 = max(0, cues.cue2 - 32)
+    if cues.cue1 > cues.cue2 and cues.cue2 >= 0:
+        cues.cue1 = max(0, cues.cue2 - 16)
         if cues.cue1 < 0:
             cues.cue1 = 0
 
-    if cues.cue1 >= cues.cue2:
+    if cues.cue1 > cues.cue2:
         if cues.cue2 > 16:
             cues.cue1 = cues.cue2 - 16
-        elif cues.cue2 > 0:
-            cues.cue1 = 0
-        else:
-            cues.cue2 = 16
-            cues.cue1 = 0
+        elif cues.cue2 >= 0:
+            cues.cue1 = cues.cue2
 
     if cue7_midsong:
         cues.cue7 = cue4 + 32
@@ -307,16 +314,13 @@ def build_cues_deterministic(
         cues.cue7 = cue6 + 32
         cues.cue8 = cue6 + 64
 
-        # cue8 must stay on 32-beat lattice from cue6
         min_end_margin = 16
         max_cue8 = total_beats - min_end_margin
 
         if cues.cue8 > max_cue8:
-            # Find highest valid lattice point: cue6 + k*32 <= max_cue8
             k = (max_cue8 - cue6) // 32
             cues.cue8 = cue6 + k * 32
 
-        # cue8 must be > cue7
         if cues.cue8 <= cues.cue7:
             cues.cue8 = cues.cue7 + 32
 

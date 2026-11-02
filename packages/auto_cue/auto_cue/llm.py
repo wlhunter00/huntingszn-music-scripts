@@ -3,8 +3,8 @@
 Uses an OpenAI model to pick all 8 cues with model judgment on each one:
 - Cue 4 and 6 (drops) are primary picks
 - Cues 1, 2, 7, 8 are also model-chosen from valid candidates (not just derived)
-- Cues 3 and 5 are derived deterministically (cue4-32 and cue6-32)
-- Validator still enforces 32-beat lattice constraints
+- Cues 3 and 5 are 16 or 32 beats before cue4/cue6 (run-up marker)
+- Cue 4 anchors the intro lattice (16-beat); cue 6 anchors the outro lattice (32-beat)
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ MODEL_PRICING = {
 
 STATIC_RULES = """# Will's Hot Cue System for Serato DJ
 
-You are placing 8 hot cues on a DJ track. Cues must be on the 32-beat phrase grid.
+You are placing 8 hot cues on a DJ track.
 
 ## DROP DETECTION (PRIMARY TASK)
 - **Cue 4** = FIRST DROP: Biggest energy jump. Look for highest kick density jump \
@@ -53,18 +53,18 @@ You are placing 8 hot cues on a DJ track. Cues must be on the 32-beat phrase gri
 - **Cue 6** = LAST DROP: Final big energy moment. Often the last high-scoring drop, \
 96-192 beats after cue4. Single-drop tracks: cue6=cue4.
 
-## DERIVED CUES (automatic from drops)
-- Cue 3 = cue4 - 32 (buildup before first drop)
-- Cue 5 = cue6 - 32 (buildup before last drop)
+## RUN-UP CUES (16 or 32 beats before drop)
+- **Cue 3** = cue4 - 16 OR cue4 - 32 (run-up before first drop). Use 16 for short \
+buildups, 32 for longer ones.
+- **Cue 5** = cue6 - 16 OR cue6 - 32 (run-up before last drop). Same logic.
 
 ## LATTICE RULES (CRITICAL)
-- Cues 1,2,3 must be on cue4's 32-beat lattice: (cue4 - cueN) mod 32 == 0
-- Cues 5,7,8 must be on cue6's 32-beat lattice: (cueN - cue6) mod 32 == 0
-- Cue 2: Pre-vocal entry at cue4-64, cue4-96, or cue4-128 (must be < cue3). Look for \
-vocal activity starting.
-- Cue 1: Intro at 0 or cue4 - k*32 where result < cue2
-- Cue 7 = cue6 + 32 (preferred) or cue6 + 64. Look for outro/vocal fade.
-- Cue 8 = cue6 + 64 or cue6 + 96 (must be 32+ beats before track end)
+- Cue 4 anchors the INTRO lattice (16-beat grid for cues 1, 2)
+- Cue 6 anchors the OUTRO lattice (32-beat grid for cues 7, 8)
+- **Cue 2**: Any multiple of 16 beats before cue3. Look for vocal entry or section start.
+- **Cue 1**: At 0 OR same position as cue2 OR any 16-beat point before cue2. cue1 <= cue2.
+- **Cue 7** = cue6 + 32 (preferred) or cue6 + 64. Look for outro/vocal fade.
+- **Cue 8** = cue6 + 64 or cue6 + 96 (must be 32+ beats before track end)
 
 ## READING THE PHRASE TABLE
 Each row is a 16-beat phrase. Key columns:
@@ -542,36 +542,33 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
     is_bass_music = features.bpm < 100
 
     cue3 = cue4 - 32
-    cue6 - 32
+    cue5 = cue6 - 32
 
     if is_bass_music:
-        cue2 = cue3 - 32
+        cue2 = cue3 - 16
         cue1 = 0
     else:
-        cue2 = cue3 - 64
-        if cue2 < 32:
-            cue2 = cue3 - 32
+        cue2 = cue3 - 48
+        if cue2 < 16:
+            cue2 = cue3 - 16
         cue1 = cue4 - 128
         if cue1 < 0:
-            cue1 = cue4 - 96
+            cue1 = cue4 - 64
         if cue1 < 0:
             cue1 = 0
 
-    if cue1 >= cue2:
-        cue1 = max(0, cue2 - 32)
-    if cue1 >= cue2:
-        cue1 = 0
-        if cue2 <= 0:
-            cue2 = 32
+    if cue1 > cue2:
+        cue1 = max(0, cue2 - 16)
+    if cue1 > cue2:
+        cue1 = cue2
+    if cue2 <= 0:
+        cue2 = cue3
+        cue1 = cue2
 
-    if cue2 >= cue3:
-        if cue3 > 32:
-            cue2 = cue3 - 32
-        else:
-            cue2 = 0
-            cue1 = 0
-
-    # Note: duplicates are allowed in 18% of tracks (e.g., cue2=cue3, cue7=cue8)
+    if cue2 > cue3:
+        cue2 = cue3
+        if cue1 > cue2:
+            cue1 = cue2
 
     cue7 = cue6 + 32
     cue8 = cue6 + 64
@@ -616,49 +613,55 @@ def prediction_to_cue_set(
 ) -> CueSet:
     """Convert LLM prediction to a complete CueSet.
 
-    Ensures all cues respect 32-beat lattice constraints:
-    - Cues 1,2,3 on cue4's lattice: (cue4 - cueN) % 32 == 0
-    - Cues 5,7,8 on cue6's lattice: (cueN - cue6) % 32 == 0
+    Lattice rules:
+    - Cue 3: 16 or 32 beats before cue4 (run-up)
+    - Cue 5: 16 or 32 beats before cue6 (run-up)
+    - Cues 1, 2: on 16-beat lattice from cue4; cue1 can equal cue2
+    - Cues 7, 8: on 32-beat lattice from cue6
     """
     cues = CueSet(total_beats=total_beats, cue7_midsong=prediction.cue7_midsong)
 
     cues.cue4 = prediction.cue4_beat
     cues.cue6 = prediction.cue6_beat
 
-    if prediction.cue4_beat < 64:
+    if prediction.cue4_beat < 32:
         cues.cue3 = prediction.cue4_beat
         cues.cue2 = prediction.cue4_beat
         cues.cue1 = 0
+    elif prediction.cue4_beat < 48:
+        cues.cue3 = prediction.cue4_beat - 16
     else:
         cues.cue3 = prediction.cue4_beat - 32
 
-    if prediction.cue6_beat < 64:
+    if prediction.cue6_beat < 32:
         cues.cue5 = prediction.cue6_beat
+    elif prediction.cue6_beat < 48:
+        cues.cue5 = prediction.cue6_beat - 16
     else:
         cues.cue5 = prediction.cue6_beat - 32
 
-    if prediction.cue4_beat >= 64:
+    if prediction.cue4_beat >= 32:
         if prediction.cue2_beat is not None:
-            offset = (prediction.cue4_beat - prediction.cue2_beat) % 32
+            offset = (prediction.cue4_beat - prediction.cue2_beat) % 16
             if offset != 0:
-                k = round((prediction.cue4_beat - prediction.cue2_beat) / 32)
-                cues.cue2 = prediction.cue4_beat - k * 32
+                k = round((prediction.cue4_beat - prediction.cue2_beat) / 16)
+                cues.cue2 = prediction.cue4_beat - k * 16
             else:
                 cues.cue2 = prediction.cue2_beat
         else:
-            cues.cue2 = max(0, cues.cue3 - 32)
+            cues.cue2 = max(0, cues.cue3 - 16)
 
         if cues.cue2 < 0:
             cues.cue2 = 0
         if cues.cue2 > cues.cue3:
             cues.cue2 = cues.cue3
 
-    if prediction.cue4_beat >= 64:
+    if prediction.cue4_beat >= 32:
         if prediction.cue1_beat is not None:
-            offset = (prediction.cue4_beat - prediction.cue1_beat) % 32
+            offset = (prediction.cue4_beat - prediction.cue1_beat) % 16
             if offset != 0:
-                k = round((prediction.cue4_beat - prediction.cue1_beat) / 32)
-                cues.cue1 = prediction.cue4_beat - k * 32
+                k = round((prediction.cue4_beat - prediction.cue1_beat) / 16)
+                cues.cue1 = prediction.cue4_beat - k * 16
             else:
                 cues.cue1 = prediction.cue1_beat
         else:
@@ -667,23 +670,12 @@ def prediction_to_cue_set(
         if cues.cue1 < 0:
             cues.cue1 = 0
 
-    if prediction.cue4_beat >= 64:
-        if cues.cue2 <= 0:
+    if prediction.cue4_beat >= 32:
+        if cues.cue2 is None or cues.cue2 <= 0:
             cues.cue2 = cues.cue3
 
-        if cues.cue1 >= cues.cue2:
-            cues.cue1 = max(0, cues.cue2 - 32)
-
-        if cues.cue1 >= cues.cue2 and cues.cue2 > 0:
-            cues.cue1 = 0
-
-        if cues.cue1 >= cues.cue2:
-            if cues.cue3 > 32:
-                cues.cue2 = cues.cue3
-                cues.cue1 = cues.cue3 - 32
-            else:
-                cues.cue2 = cues.cue3
-                cues.cue1 = 0
+        if cues.cue1 > cues.cue2:
+            cues.cue1 = cues.cue2
 
     if prediction.cue7_beat is not None:
         cue7_offset = prediction.cue7_beat - prediction.cue6_beat

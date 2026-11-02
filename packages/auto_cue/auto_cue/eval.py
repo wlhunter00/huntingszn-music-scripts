@@ -782,6 +782,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Disable few-shot examples (for ablation study)",
     )
     parser.add_argument(
+        "--use-demucs",
+        action="store_true",
+        help="Use demucs vocal separation for vocal activity feature",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="Output markdown file for results",
@@ -803,6 +808,7 @@ def main(argv: list[str] | None = None) -> int:
         model=args.model,
         reasoning_effort=args.reasoning_effort,
         use_fewshot=not args.no_fewshot,
+        use_demucs=args.use_demucs,
         output_md=args.output,
     )
 
