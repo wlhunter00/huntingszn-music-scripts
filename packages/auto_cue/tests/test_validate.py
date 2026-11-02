@@ -1,7 +1,9 @@
-"""Tests for the deterministic 32-grid validator.
+"""Tests for the deterministic cue validator.
 
 Tests:
-- 32-beat lattice constraints for cues 1-4 and 5-8
+- Cue 3/5 can be 16 or 32 beats before cue 4/6 (run-up)
+- Cues 1, 2 on 16-beat lattice from cue4; cue1 can equal cue2
+- Cues 7, 8 on 32-beat lattice from cue6
 - Ordering constraints
 - Bounds checking
 - Confidence thresholds
@@ -66,12 +68,12 @@ class TestBasicValidation:
 
 
 class TestLatticeConstraints:
-    """Test 32-beat lattice constraints."""
+    """Test lattice constraints."""
 
-    def test_cue3_on_cue4_lattice(self):
-        """cue3 must be on 32-beat lattice from cue4."""
+    def test_cue3_32_before_cue4(self):
+        """cue3 can be 32 beats before cue4."""
         cues = CueSet(
-            cue3=64,  # 96 - 32 = 64, on lattice
+            cue3=64,  # 96 - 32 = 64
             cue4=96,
             cue6=192,
             total_beats=300,
@@ -79,10 +81,21 @@ class TestLatticeConstraints:
         result = validate_cue_set(cues)
         assert result.valid
 
-    def test_cue3_off_lattice_fails(self):
-        """cue3 off 32-beat lattice should fail (unless 16-offset)."""
+    def test_cue3_16_before_cue4(self):
+        """cue3 can be 16 beats before cue4 (run-up)."""
         cues = CueSet(
-            cue3=70,  # Not on lattice
+            cue3=80,  # 96 - 16 = 80
+            cue4=96,
+            cue6=192,
+            total_beats=300,
+        )
+        result = validate_cue_set(cues)
+        assert result.valid
+
+    def test_cue3_wrong_gap_fails(self):
+        """cue3 with wrong gap (not 16 or 32) should fail."""
+        cues = CueSet(
+            cue3=70,  # Not 16 or 32 before cue4
             cue4=96,
             cue6=192,
             total_beats=300,
@@ -90,24 +103,37 @@ class TestLatticeConstraints:
         result = validate_cue_set(cues)
 
         assert not result.valid
-        assert "cue3 not on 32-beat lattice" in str(result.errors)
+        assert "cue3 must be 16 or 32 beats before cue4" in str(result.errors)
 
-    def test_cue3_16_offset_warns(self):
-        """cue3 at 16-offset should warn but pass."""
+    def test_cue2_on_16_lattice(self):
+        """cue2 must be on 16-beat lattice from cue4."""
         cues = CueSet(
-            cue3=80,  # 96 - 16 = 80, 16-offset
+            cue2=32,  # 96 - 64 = 32, on 16-lattice
+            cue3=64,
             cue4=96,
             cue6=192,
             total_beats=300,
         )
         result = validate_cue_set(cues)
-
         assert result.valid
-        assert "16-offset" in str(result.warnings)
 
-    def test_cue2_on_lattice(self):
-        """cue2 must be on 32-beat lattice from cue4."""
+    def test_cue2_16_beat_positions(self):
+        """cue2 can be any multiple of 16 before cue3."""
+        for offset in [16, 32, 48, 64, 80]:
+            cues = CueSet(
+                cue2=96 - offset,  # Various 16-beat positions
+                cue3=64,
+                cue4=96,
+                cue6=192,
+                total_beats=300,
+            )
+            result = validate_cue_set(cues)
+            assert result.valid, f"cue2 at {96 - offset} should be valid"
+
+    def test_cue1_on_16_lattice(self):
+        """cue1 must be on 16-beat lattice from cue4."""
         cues = CueSet(
+            cue1=0,  # 96 - 96 = 0, on 16-lattice
             cue2=32,
             cue3=64,
             cue4=96,
@@ -117,24 +143,22 @@ class TestLatticeConstraints:
         result = validate_cue_set(cues)
         assert result.valid
 
-    def test_cue1_on_lattice(self):
-        """cue1 must be on 32-beat lattice from cue4."""
+    def test_cue5_32_before_cue6(self):
+        """cue5 can be 32 beats before cue6."""
         cues = CueSet(
-            cue1=0,  # 96 - 96 = 0, on lattice
-            cue2=32,
-            cue3=64,
             cue4=96,
+            cue5=160,  # 192 - 32 = 160
             cue6=192,
             total_beats=300,
         )
         result = validate_cue_set(cues)
         assert result.valid
 
-    def test_cue5_on_cue6_lattice(self):
-        """cue5 must be on 32-beat lattice from cue6."""
+    def test_cue5_16_before_cue6(self):
+        """cue5 can be 16 beats before cue6 (run-up)."""
         cues = CueSet(
             cue4=96,
-            cue5=160,  # 192 - 32 = 160, on lattice
+            cue5=176,  # 192 - 16 = 176
             cue6=192,
             total_beats=300,
         )
@@ -169,10 +193,10 @@ class TestOrderingConstraints:
     """Test cue ordering constraints."""
 
     def test_cue1_before_cue2(self):
-        """cue1 must be < cue2."""
+        """cue1 must be <= cue2."""
         cues = CueSet(
             cue1=64,
-            cue2=32,  # Wrong order
+            cue2=32,  # Wrong order (cue1 > cue2)
             cue3=64,
             cue4=96,
             cue6=192,
@@ -181,6 +205,19 @@ class TestOrderingConstraints:
 
         assert not result.valid
         assert "cue1" in str(result.errors) and "cue2" in str(result.errors)
+
+    def test_cue1_equals_cue2_allowed(self):
+        """cue1 == cue2 should be allowed."""
+        cues = CueSet(
+            cue1=32,
+            cue2=32,  # Same position
+            cue3=64,
+            cue4=96,
+            cue6=192,
+            total_beats=300,
+        )
+        result = validate_cue_set(cues)
+        assert result.valid
 
     def test_cue6_gte_cue4(self):
         """cue6 must be >= cue4."""
