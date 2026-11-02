@@ -483,10 +483,19 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
 
     Uses post_sustain to penalize fake-out drops (energy drops off after).
     Real drops have sustained energy for 32+ beats after.
+
+    BPM-aware thresholds:
+    - Bass/DnB (<100 BPM): Higher threshold, more strict on sustain
+    - House (115+ BPM): Standard threshold
     """
     phrases = features.phrases_32
     if len(phrases) < 2:
         return
+
+    is_bass_dnb = features.bpm < 100
+    score_threshold = 2.5 if is_bass_dnb else 2.0
+    sustain_bonus = 0.8 if is_bass_dnb else 0.5
+    sustain_penalty = -1.5 if is_bass_dnb else -1.0
 
     for phrase in phrases:
         score = 0.0
@@ -499,11 +508,11 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
             score += 1.0
 
         if phrase.post_sustain >= -2.0:
-            score += 0.5
+            score += sustain_bonus
         elif phrase.post_sustain < -4.0:
-            score -= 1.0
+            score += sustain_penalty
 
-        if score > 2.0:
+        if score > score_threshold:
             phrase.is_drop_candidate = True
             phrase.drop_score = score
 
