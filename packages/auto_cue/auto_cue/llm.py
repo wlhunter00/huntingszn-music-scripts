@@ -30,50 +30,59 @@ class CueAbstainError(Exception):
 from auto_cue.features import TrackFeatures, format_phrase_table  # noqa: E402
 from auto_cue.validate import CueSet  # noqa: E402
 
-DEFAULT_MODEL = "gpt-6-luna"
+DEFAULT_MODEL = "gpt-6.1-terra"
 DEFAULT_REASONING_EFFORT = "medium"
 
-REASONING_MODELS = {"o1", "o1-mini", "o1-preview", "o3", "o3-mini", "gpt-6-luna"}
+REASONING_MODELS = {
+    "o1", "o1-mini", "o1-preview", "o3", "o3-mini",
+    "gpt-6-luna", "gpt-6.1-terra",
+}
 
 MODEL_PRICING = {
     "gpt-6-luna": {"input": 0.10, "output": 0.50, "cached_input": 0.01},
+    "gpt-6.1-terra": {"input": 1.00, "output": 5.00, "cached_input": 0.05},
 }
 
-SYSTEM_PROMPT = """You are a DJ cue point assistant. \
-Analyze audio phrase table to place 8 hot cues for Serato DJ.
+STATIC_RULES = """# Will's Hot Cue System for Serato DJ
 
-# Will's cue system
+You are placing 8 hot cues on a DJ track. Cues must be on the 32-beat phrase grid.
 
-## DROP DETECTION (most important)
-- Cue 4: FIRST DROP - the BIGGEST energy jump. Look for highest positive Δrms + Δlow \
-after a quieter buildup section. Usually beat 64-128.
-- Cue 6: LAST DROP - the final big energy moment. Often the last high-scoring drop candidate, \
-usually 96-192 beats after cue4. For single-drop tracks, cue6 = cue4.
+## DROP DETECTION (PRIMARY TASK)
+- **Cue 4** = FIRST DROP: Biggest energy jump. Look for highest Δrms + Δlow after \
+a buildup. Usually beat 64-128.
+- **Cue 6** = LAST DROP: Final big energy moment. Often the last high-scoring drop, \
+96-192 beats after cue4. Single-drop tracks: cue6=cue4.
 
-## Other cues (derived from drops)
-- Cue 3 = cue4 - 32 (automatic, buildup)
-- Cue 5 = cue6 - 32 (automatic, buildup)
-- Cue 2: Pre-vocal entry. Pick cue4 - 64, cue4 - 96, or cue4 - 128 (must be < cue3)
-- Cue 1: Intro. Usually beat 0, or cue4 - k*32 where k gives you < cue2
+## DERIVED CUES (automatic from drops)
+- Cue 3 = cue4 - 32 (buildup before first drop)
+- Cue 5 = cue6 - 32 (buildup before last drop)
 
-## CRITICAL: Cue 7 and Cue 8 LATTICE RULE
-Cues 7 and 8 MUST be on cue6's 32-beat lattice:
+## LATTICE RULES (CRITICAL)
+- Cues 1,2,3 must be on cue4's 32-beat lattice: (cue4 - cueN) mod 32 == 0
+- Cues 5,7,8 must be on cue6's 32-beat lattice: (cueN - cue6) mod 32 == 0
+- Cue 2: Pre-vocal entry at cue4-64, cue4-96, or cue4-128 (must be < cue3)
+- Cue 1: Intro at 0 or cue4 - k*32 where result < cue2
 - Cue 7 = cue6 + 32 (preferred) or cue6 + 64
-- Cue 8 = cue6 + 64 (if cue7=cue6+32) or cue6 + 96 (if cue7=cue6+64)
-- cue8 should be ~32-48 beats before track ends, BUT must be cue6 + k*32
+- Cue 8 = cue6 + 64 or cue6 + 96 (must be 32+ beats before track end)
 
-## How to read the phrase table
-- "beat": starting beat of 32-beat phrase
-- "rms_db": overall loudness (higher = louder)
-- "low_db": bass energy 20-150Hz (drops have HIGH low_db)
-- "Δrms", "Δlow": change vs previous phrase (BIG POSITIVE = likely drop)
-- "drop": drop candidate score (higher = more likely)
+## READING THE PHRASE TABLE
+Each row is a phrase boundary. Key columns:
+- **beat**: Starting beat of phrase
+- **32?**: "▶" marks 32-beat boundaries (where cues should go)
+- **rms_db**: Overall loudness (higher = louder)
+- **low_db**: Bass energy 20-150Hz (drops have HIGH low_db)
+- **Δrms, Δlow**: Change from previous phrase (BIG POSITIVE = likely drop)
+- **vocal**: Vocal activity indicator (higher = more vocals/harmonics)
+- **build**: Build/riser indicator (onset acceleration + high-freq rise)
+- **drop**: Combined drop score (higher = more likely drop point)
 
-## Genre hints
-- Bass/DnB (70-90 BPM): cue1 at 0, drops ~96 beats apart
-- House (120-130 BPM): longer intros, drops ~192 beats apart
+## GENRE PATTERNS
+- **dubstep/bass** (70-80 BPM): cue1 at 0, drops ~64-96 beats apart, heavy bass
+- **dnb** (85-90 BPM): cue1 at 0, drops ~96 beats apart, fast breaks
+- **house/dance** (120-130 BPM): longer intros (64+ beats), drops ~192 beats apart
 
-Set abstain=true ONLY if you genuinely cannot identify where the drops are."""
+## ABSTENTION
+Set abstain=true ONLY if drops are genuinely unclear (flat dynamics, no energy jumps)."""
 
 OPENAI_JSON_SCHEMA = {
     "name": "cue_prediction",
@@ -167,21 +176,33 @@ def get_api_key() -> str:
     return key
 
 
+@dataclass
+class FewShotExample:
+    """A gold-labeled example for few-shot learning."""
+    name: str
+    genre_bucket: str
+    bpm: float
+    total_beats: int
+    phrase_table: str  # Full phrase table text
+    cues: dict[int, int]  # slot (0-7) -> beat
+
+
 def predict_cues_llm(
     features: TrackFeatures,
     *,
     model: str = DEFAULT_MODEL,
     reasoning_effort: str = DEFAULT_REASONING_EFFORT,
-    style: str | None = None,
-    examples: list[dict[str, Any]] | None = None,
+    genre_bucket: str | None = None,
+    examples: list[FewShotExample] | None = None,
 ) -> LLMPrediction:
     """Use LLM to predict all cue positions with model judgment.
 
     Args:
         features: Extracted audio features
-        model: Model name (default: gpt-4o-mini)
-        style: Track style hint (e.g., "dubstep", "house")
-        examples: Few-shot examples from gold tracks
+        model: Model name
+        reasoning_effort: Reasoning effort for reasoning models
+        genre_bucket: Genre hint (e.g., "dubstep/bass", "dnb", "house/dance")
+        examples: Few-shot examples with full phrase tables (leave-one-out)
 
     Returns:
         LLMPrediction with all cue positions
@@ -192,47 +213,45 @@ def predict_cues_llm(
     """
     phrase_table = format_phrase_table(features)
 
-    prompt_parts = [
-        "## Track Info",
-        f"Total beats: {features.total_beats}",
-        f"BPM: {features.bpm:.1f}",
-    ]
+    messages: list[dict[str, str]] = []
 
-    if style:
-        prompt_parts.append(f"Style: {style}")
-
-    prompt_parts.append("")
-    prompt_parts.append("## Phrase Table (32-beat phrases)")
-    prompt_parts.append(phrase_table)
-
-    prompt_parts.append("")
-    prompt_parts.append("## Instructions")
-    prompt_parts.append(
-        "1. Find cue4 (first drop): Look for phrase with highest Δrms + Δlow."
-    )
-    prompt_parts.append(
-        "2. Find cue6 (last drop): Usually last high-scoring drop, 96-192 beats after."
-    )
-    prompt_parts.append("3. Derive: cue3 = cue4-32, cue5 = cue6-32")
-    prompt_parts.append(
-        "4. Set cue7 = cue6+32 and cue8 = cue6+64 (on cue6's 32-beat lattice)"
-    )
-    prompt_parts.append("5. Set cue2 and cue1 on cue4's 32-beat lattice")
-    prompt_parts.append("")
-    end_beat = features.total_beats
-    prompt_parts.append(
-        f"Track ends at beat {end_beat}. cue8 ~{end_beat - 40} but MUST be cue6+k*32."
-    )
-
+    static_content = STATIC_RULES
     if examples:
-        prompt_parts.append("")
-        prompt_parts.append("## Similar tracks (for reference)")
-        for ex in examples[:3]:
-            name = ex.get("name", "track")
-            c4, c6 = ex.get("cue4"), ex.get("cue6")
-            prompt_parts.append(f"- {name}: cue4={c4}, cue6={c6}")
+        static_content += "\n\n# FEW-SHOT EXAMPLES\n"
+        static_content += "Here are correctly-labeled tracks from the same genre:\n"
+        for i, ex in enumerate(examples[:5], 1):
+            static_content += f"\n## Example {i}: {ex.name}\n"
+            static_content += f"Genre: {ex.genre_bucket}, BPM: {ex.bpm:.1f}, "
+            static_content += f"Total beats: {ex.total_beats}\n\n"
+            static_content += "### Phrase Table\n"
+            static_content += ex.phrase_table + "\n\n"
+            static_content += "### Gold Cues (beats)\n"
+            cue_strs = [f"cue{s+1}={b}" for s, b in sorted(ex.cues.items())]
+            static_content += ", ".join(cue_strs) + "\n"
 
-    user_prompt = "\n".join(prompt_parts)
+    messages.append({"role": "system", "content": static_content})
+
+    user_parts = ["# Track to Analyze\n"]
+
+    if genre_bucket:
+        user_parts.append(f"**Genre**: {genre_bucket}")
+
+    user_parts.append(f"**BPM**: {features.bpm:.1f}")
+    user_parts.append(f"**First beat**: {features.first_beat_s:.3f}s")
+    user_parts.append(f"**Total beats**: {features.total_beats}")
+    user_parts.append("")
+    user_parts.append("## Phrase Table")
+    user_parts.append(phrase_table)
+    user_parts.append("")
+    end_beat = features.total_beats
+    user_parts.append(
+        f"Track ends at beat {end_beat}. Place cue8 ~32-48 beats before end, "
+        f"on cue6's 32-beat lattice."
+    )
+    user_parts.append("")
+    user_parts.append("Return your cue predictions in JSON format.")
+
+    messages.append({"role": "user", "content": "\n".join(user_parts)})
 
     try:
         api_key = get_api_key()
@@ -243,10 +262,7 @@ def predict_cues_llm(
 
     request_body: dict[str, Any] = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ],
+        "messages": messages,
         "response_format": {
             "type": "json_schema",
             "json_schema": OPENAI_JSON_SCHEMA,
@@ -254,12 +270,12 @@ def predict_cues_llm(
     }
 
     if is_reasoning_model:
-        request_body["max_completion_tokens"] = 2048
+        request_body["max_completion_tokens"] = 4096
         if reasoning_effort in ("low", "medium", "high"):
             request_body["reasoning_effort"] = reasoning_effort
     else:
         request_body["temperature"] = 0
-        request_body["max_tokens"] = 1024
+        request_body["max_tokens"] = 2048
 
     try:
         with httpx.Client(timeout=120.0) as client:

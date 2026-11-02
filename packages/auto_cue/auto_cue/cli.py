@@ -301,8 +301,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         type=str,
-        default="gpt-6-luna",
-        help="LLM model to use (default: gpt-6-luna).",
+        default="gpt-6.1-terra",
+        help="LLM model to use (default: gpt-6.1-terra).",
     )
     parser.add_argument(
         "--reasoning-effort",

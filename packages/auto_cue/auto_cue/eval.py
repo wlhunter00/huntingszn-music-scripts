@@ -2,6 +2,7 @@
 
 Run blind predictions on gold-labeled tracks and compare to hand cues.
 Can be run with rule-based fallback or with LLM (when OPENAI_API_KEY is set).
+Supports few-shot learning with leave-one-out cross-validation.
 """
 
 from __future__ import annotations
@@ -9,26 +10,28 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import shutil
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from auto_cue.features import extract_features
+from auto_cue.gold import GoldTrack, get_fewshot_examples, load_gold_csv
 from auto_cue.llm import (
     CueAbstainError,
+    FewShotExample,
     LLMAPIError,
     predict_cues_llm,
     predict_cues_rules,
     prediction_to_cue_set,
 )
 from auto_cue.tags import (
-    Markers2Data,
     cues_to_beats,
     read_track_tags,
-    write_track_markers2,
 )
 from auto_cue.validate import validate_cue_set
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass
@@ -55,6 +58,8 @@ class EvalResult:
     output_tokens: int = 0
     model: str = ""
     reasoning_effort: str = ""
+    genre_bucket: str = ""
+    quirks: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -166,83 +171,113 @@ def load_gold_from_files(audio_dir: Path) -> dict[str, GoldCues]:
 
 def evaluate_track(
     audio_path: Path,
-    gold: GoldCues,
+    gold: GoldCues | GoldTrack,
     *,
     use_llm: bool = False,
-    model: str = "gpt-6-luna",
+    model: str = "gpt-6.1-terra",
     reasoning_effort: str = "medium",
+    fewshot_examples: list[FewShotExample] | None = None,
+    genre_bucket: str = "",
 ) -> EvalResult:
-    """Run blind prediction on a single track and compare to gold."""
+    """Run blind prediction on a single track and compare to gold.
+
+    Args:
+        audio_path: Path to audio file
+        gold: Gold cue labels (GoldCues or GoldTrack)
+        use_llm: Use LLM for prediction
+        model: Model name
+        reasoning_effort: Reasoning effort for reasoning models
+        fewshot_examples: Few-shot examples (leave-one-out)
+        genre_bucket: Genre hint
+    """
+    if isinstance(gold, GoldTrack):
+        gold_cues = {s: b for s, b in gold.cues.items()}
+        bpm = gold.bpm
+        first_beat_s = gold.first_beat_s
+        genre = gold.genre_bucket or genre_bucket
+        quirks = gold.quirks
+    else:
+        gold_cues = gold.cues
+        bpm = gold.bpm
+        first_beat_s = None
+        genre = genre_bucket
+        quirks = []
+
     result = EvalResult(
         track_name=audio_path.name,
-        gold_cues=gold.cues,
+        gold_cues=gold_cues,
         predicted_cues={},
+        genre_bucket=genre,
+        quirks=quirks,
     )
 
-    with tempfile.TemporaryDirectory() as td:
-        copy_path = Path(td) / audio_path.name
-        shutil.copy2(audio_path, copy_path)
-
-        original_tags = read_track_tags(copy_path)
-        if not original_tags.beatgrid:
-            result.abstained = True
-            result.abstain_reason = "no beatgrid"
-            return result
-
-        write_track_markers2(copy_path, Markers2Data())
-
-        try:
+    try:
+        if first_beat_s is not None:
             features = extract_features(
-                copy_path,
-                original_tags.beatgrid.bpm,
-                original_tags.beatgrid.first_beat_s,
+                audio_path, bpm, first_beat_s, genre_bucket=genre
             )
-        except Exception as e:
-            result.abstained = True
-            result.abstain_reason = f"feature extraction error: {e}"
-            return result
+        else:
+            tags = read_track_tags(audio_path)
+            if not tags.beatgrid:
+                result.abstained = True
+                result.abstain_reason = "no beatgrid"
+                return result
+            features = extract_features(
+                audio_path,
+                tags.beatgrid.bpm,
+                tags.beatgrid.first_beat_s,
+                genre_bucket=genre,
+            )
+    except Exception as e:
+        result.abstained = True
+        result.abstain_reason = f"feature extraction error: {e}"
+        return result
 
-        try:
-            if use_llm and os.environ.get("OPENAI_API_KEY"):
-                prediction = predict_cues_llm(
-                    features, model=model, reasoning_effort=reasoning_effort
-                )
-                result.cost_usd = prediction.cost_usd
-                result.input_tokens = prediction.input_tokens
-                result.output_tokens = prediction.output_tokens
-                result.model = prediction.model
-                result.reasoning_effort = reasoning_effort
-            else:
-                prediction = predict_cues_rules(features)
-        except LLMAPIError as e:
-            result.abstained = True
-            result.is_api_error = True
-            result.abstain_reason = f"API error: {e}"
-            return result
-        except CueAbstainError as e:
-            result.abstained = True
-            result.abstain_reason = str(e)
-            return result
-        except Exception as e:
-            result.abstained = True
-            result.abstain_reason = f"error: {e}"
-            return result
+    try:
+        if use_llm and os.environ.get("OPENAI_API_KEY"):
+            prediction = predict_cues_llm(
+                features,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                genre_bucket=genre,
+                examples=fewshot_examples,
+            )
+            result.cost_usd = prediction.cost_usd
+            result.input_tokens = prediction.input_tokens
+            result.output_tokens = prediction.output_tokens
+            result.model = prediction.model
+            result.reasoning_effort = reasoning_effort
+        else:
+            prediction = predict_cues_rules(features)
+    except LLMAPIError as e:
+        result.abstained = True
+        result.is_api_error = True
+        result.abstain_reason = f"API error: {e}"
+        return result
+    except CueAbstainError as e:
+        result.abstained = True
+        result.abstain_reason = str(e)
+        return result
+    except Exception as e:
+        result.abstained = True
+        result.abstain_reason = f"error: {e}"
+        return result
 
-        cues = prediction_to_cue_set(prediction, features.total_beats)
+    cues = prediction_to_cue_set(prediction, features.total_beats)
 
-        validation = validate_cue_set(cues)
-        if not validation.valid:
-            result.abstained = True
-            result.abstain_reason = f"validation failed: {'; '.join(validation.errors)}"
-            result.validation_errors = validation.errors
-            return result
+    validation = validate_cue_set(cues)
+    if not validation.valid:
+        result.abstained = True
+        result.abstain_reason = f"validation: {'; '.join(validation.errors)}"
+        result.validation_errors = validation.errors
+        return result
 
-        result.predicted_cues = cues.to_dict()
+    result.predicted_cues = cues.to_dict()
 
-        for slot, pred_beat in result.predicted_cues.items():
-            if slot in gold.cues:
-                error = abs(pred_beat - gold.cues[slot])
-                result.errors[slot] = error
+    for slot, pred_beat in result.predicted_cues.items():
+        if slot in gold_cues:
+            error = abs(pred_beat - gold_cues[slot])
+            result.errors[slot] = error
 
     return result
 
@@ -438,77 +473,105 @@ def run_eval(
     *,
     gold_csv: Path | None = None,
     use_llm: bool = False,
-    model: str = "gpt-6-luna",
+    model: str = "gpt-6.1-terra",
     reasoning_effort: str = "medium",
+    use_fewshot: bool = True,
     output_md: Path | None = None,
 ) -> tuple[list[EvalResult], EvalSummary]:
     """Run evaluation on all tracks in a directory.
 
     Args:
         audio_dir: Directory containing audio files
-        gold_csv: Optional CSV with gold labels (if not provided, reads from files)
+        gold_csv: CSV with gold labels (required for new QA format)
         use_llm: Use LLM for prediction (requires OPENAI_API_KEY)
         model: Model to use for LLM prediction
+        reasoning_effort: Reasoning effort for reasoning models
+        use_fewshot: Use few-shot examples (leave-one-out)
         output_md: Optional path to write markdown report
 
     Returns:
         (results, summary)
     """
+    gold_tracks: dict[str, GoldTrack] = {}
+    gold_cues_data: dict[str, GoldCues] = {}
+
     if gold_csv and gold_csv.exists():
-        gold_data = load_gold_cues_csv(gold_csv)
+        gold_tracks = load_gold_csv(gold_csv)
     else:
-        gold_data = load_gold_from_files(audio_dir)
+        gold_cues_data = load_gold_from_files(audio_dir)
 
     results = []
 
     for audio_file in sorted(audio_dir.glob("*.mp3")):
-        gold = None
-        for key, g in gold_data.items():
-            if audio_file.name in key or key.endswith(audio_file.name) or audio_file.stem in key:
-                gold = g
-                break
+        gold: GoldCues | GoldTrack | None = None
+        fewshot: list[FewShotExample] | None = None
 
-        if gold is None:
-            gold = gold_data.get(audio_file.name)
+        if audio_file.name in gold_tracks:
+            gold = gold_tracks[audio_file.name]
+            if use_fewshot and use_llm:
+                fewshot = get_fewshot_examples(
+                    gold_tracks,
+                    exclude_filename=audio_file.name,
+                    genre_bucket=gold.genre_bucket,
+                    audio_dir=audio_dir,
+                    max_examples=5,
+                )
+        else:
+            for key, g in gold_cues_data.items():
+                if audio_file.name in key or key.endswith(audio_file.name):
+                    gold = g
+                    break
+            if gold is None:
+                gold = gold_cues_data.get(audio_file.name)
 
-        if gold is None:
-            tags = read_track_tags(audio_file)
-            if tags.markers2 and tags.beatgrid:
-                cue_beats = cues_to_beats(tags.markers2, tags.beatgrid)
-                if len(cue_beats) >= 4:
-                    gold = GoldCues(
-                        path=str(audio_file),
-                        bpm=tags.bpm or 0.0,
-                        cues=cue_beats,
-                    )
+            if gold is None:
+                tags = read_track_tags(audio_file)
+                if tags.markers2 and tags.beatgrid:
+                    cue_beats = cues_to_beats(tags.markers2, tags.beatgrid)
+                    if len(cue_beats) >= 4:
+                        gold = GoldCues(
+                            path=str(audio_file),
+                            bpm=tags.bpm or 0.0,
+                            cues=cue_beats,
+                        )
 
         if gold is None:
             continue
 
         result = evaluate_track(
             audio_file, gold,
-            use_llm=use_llm, model=model, reasoning_effort=reasoning_effort,
+            use_llm=use_llm,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            fewshot_examples=fewshot,
+            genre_bucket=gold.genre_bucket if isinstance(gold, GoldTrack) else "",
         )
         results.append(result)
 
         print(f"\n=== {audio_file.name} ===")
+        if result.genre_bucket:
+            print(f"Genre: {result.genre_bucket}")
+        if result.quirks:
+            print(f"Quirks: {', '.join(result.quirks)}")
+
         if result.abstained:
             status = "API ERROR" if result.is_api_error else "ABSTAINED"
             print(f"{status}: {result.abstain_reason}")
         else:
-            gold_1indexed = {k+1: v for k, v in sorted(gold.cues.items())}
+            gold_cues = gold.cues if isinstance(gold, GoldTrack) else gold.cues
+            gold_1indexed = {k+1: v for k, v in sorted(gold_cues.items())}
             pred_1indexed = {k+1: v for k, v in sorted(result.predicted_cues.items())}
             print(f"Gold:      {gold_1indexed}")
             print(f"Predicted: {pred_1indexed}")
             print("Errors (beats):")
-            for slot in sorted(result.errors.keys()):  # slot is 0-indexed internally
+            for slot in sorted(result.errors.keys()):
                 err = result.errors[slot]
                 status = "✓" if err <= 1.0 else "✗"
-                gold_beat = gold.cues.get(slot, 0)
+                gold_beat = gold_cues.get(slot, 0)
                 pred_beat = result.predicted_cues.get(slot, 0)
                 print(
-                    f"  Cue {slot+1}: gold={gold_beat:.0f}, pred={pred_beat}, "
-                    f"error={err:.1f} {status}"
+                    f"  Cue {slot+1}: gold={gold_beat:.1f}, pred={pred_beat}, "
+                    f"err={err:.1f} {status}"
                 )
 
     summary = compute_summary(results)
@@ -523,7 +586,8 @@ def run_eval(
             f.write("# Blind Evaluation Results\n\n")
             mode = "LLM" if use_llm and os.environ.get("OPENAI_API_KEY") else "Rule-based"
             f.write(f"Mode: {mode}\n")
-            f.write(f"Model: {model}\n\n")
+            f.write(f"Model: {model}\n")
+            f.write(f"Few-shot: {'Yes' if use_fewshot else 'No'}\n\n")
             f.write("## Per-Track Results\n\n")
             f.write(format_results_table(results))
             f.write("\n\n## Summary\n\n```\n")
@@ -548,7 +612,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--gold-csv",
         type=Path,
-        help="CSV file with gold labels (optional, reads from files if not provided)",
+        help="CSV file with gold labels (required for new QA format)",
     )
     parser.add_argument(
         "--use-llm",
@@ -557,14 +621,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--model",
-        default="gpt-6-luna",
-        help="Model to use for LLM prediction (default: gpt-6-luna)",
+        default="gpt-6.1-terra",
+        help="Model to use for LLM prediction (default: gpt-6.1-terra)",
     )
     parser.add_argument(
         "--reasoning-effort",
         default="medium",
         choices=["low", "medium", "high"],
         help="Reasoning effort for reasoning models (default: medium)",
+    )
+    parser.add_argument(
+        "--no-fewshot",
+        action="store_true",
+        help="Disable few-shot examples (for ablation study)",
     )
     parser.add_argument(
         "--output",
@@ -587,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
         use_llm=args.use_llm,
         model=args.model,
         reasoning_effort=args.reasoning_effort,
+        use_fewshot=not args.no_fewshot,
         output_md=args.output,
     )
 
