@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from auto_cue.features import TrackFeatures, extract_features
-from auto_cue.gold import GoldTrack, get_fewshot_examples, load_gold_csv
+from auto_cue.gold import (
+    GoldPool,
+    GoldTrack,
+    get_fewshot_examples,
+    get_pool_fewshot_examples,
+    load_gold_csv,
+    load_gold_pool,
+)
 from auto_cue.llm import (
     CueAbstainError,
     FewShotExample,
@@ -557,18 +564,20 @@ def run_eval(
     use_fewshot: bool = True,
     use_demucs: bool = False,
     output_md: Path | None = None,
+    pool_dir: Path | None = None,
 ) -> tuple[list[EvalResult], EvalSummary]:
     """Run evaluation on all tracks in a directory.
 
     Args:
-        audio_dir: Directory containing audio files
+        audio_dir: Directory containing audio files to evaluate
         gold_csv: CSV with gold labels (required for new QA format)
         use_llm: Use LLM for prediction (requires OPENAI_API_KEY)
         model: Model to use for LLM prediction
         reasoning_effort: Reasoning effort for reasoning models
-        use_fewshot: Use few-shot examples (leave-one-out)
+        use_fewshot: Use few-shot examples from pool
         use_demucs: Use demucs for vocal separation
         output_md: Optional path to write markdown report
+        pool_dir: Directory with gold pool (gold_pool.csv, audio_sel.csv, gpNNN.mp3)
 
     Returns:
         (results, summary)
@@ -582,6 +591,15 @@ def run_eval(
     else:
         gold_cues_data = load_gold_from_files(audio_dir)
 
+    gold_pool: GoldPool | None = None
+    if use_fewshot and pool_dir and pool_dir.exists():
+        pool_csv = pool_dir / "gold_pool.csv"
+        audio_sel = pool_dir / "audio_sel.csv"
+        if pool_csv.exists():
+            gold_pool = load_gold_pool(pool_csv, audio_sel)
+            print(f"Loaded gold pool: {len(gold_pool.tracks)} tracks, "
+                  f"{len(gold_pool.get_tracks_with_audio())} with audio mapping")
+
     results = []
 
     for audio_file in sorted(audio_dir.glob("*.mp3")):
@@ -591,15 +609,25 @@ def run_eval(
         if audio_file.name in gold_tracks:
             gold = gold_tracks[audio_file.name]
             if use_fewshot and use_llm:
-                fewshot = get_fewshot_examples(
-                    gold_tracks,
-                    exclude_filename=audio_file.name,
-                    target_bpm=gold.bpm,
-                    target_beats=gold.total_beats,
-                    audio_dir=audio_dir,
-                    max_examples=5,
-                    features_cache=features_cache,
-                )
+                if gold_pool:
+                    fewshot = get_pool_fewshot_examples(
+                        gold_pool,
+                        target_bpm=gold.bpm,
+                        target_beats=gold.total_beats,
+                        audio_dir=pool_dir,
+                        max_examples=5,
+                        features_cache=features_cache,
+                    )
+                else:
+                    fewshot = get_fewshot_examples(
+                        gold_tracks,
+                        exclude_filename=audio_file.name,
+                        target_bpm=gold.bpm,
+                        target_beats=gold.total_beats,
+                        audio_dir=audio_dir,
+                        max_examples=5,
+                        features_cache=features_cache,
+                    )
         else:
             for key, g in gold_cues_data.items():
                 if audio_file.name in key or key.endswith(audio_file.name):
