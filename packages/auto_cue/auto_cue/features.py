@@ -56,6 +56,7 @@ class PhraseFeatures:
     novelty_score: float = 0.0  # Self-similarity novelty
     pre_drop_gap: float = 0.0  # Min RMS in last 1-2 beats vs phrase mean
     post_sustain: float = 0.0  # Energy sustain in next 32 beats (fake-out detector)
+    track_pct: float = 0.0  # Position as % of track (0.0=start, 1.0=end)
     is_drop_candidate: bool = False
     drop_score: float = 0.0
 
@@ -441,6 +442,8 @@ def _aggregate_phrases(
             next_low = np.mean([b.low_db for b in next_beats])
             post_sustain = next_low - low_db
 
+        track_pct = start / total_beats if total_beats > 0 else 0.0
+
         delta_rms = rms_db - prev_rms if prev_rms is not None else 0.0
         delta_low = low_db - prev_low if prev_low is not None else 0.0
         delta_kick = kick_density - prev_kick if prev_kick is not None else 0.0
@@ -464,6 +467,7 @@ def _aggregate_phrases(
             novelty_score=float(novelty_score),
             pre_drop_gap=float(pre_drop_gap),
             post_sustain=float(post_sustain),
+            track_pct=float(track_pct),
         )
         phrases.append(phrase)
 
@@ -527,11 +531,11 @@ def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> 
     lines.append("")
 
     header = (
-        "beat |32?| rms  | low  |Δlow |kick |Δkick|vocal|build|snare|"
+        "beat |32?| pct | rms  | low  |Δlow |kick |Δkick|vocal|build|snare|"
         "contr|novel| gap |sust |drop"
     )
     sep = (
-        "-----|---|------|------|-----|-----|-----|-----|-----|-----|"
+        "-----|---|-----|------|------|-----|-----|-----|-----|-----|-----|"
         "-----|-----|-----|-----|----"
     )
     lines.append(header)
@@ -543,12 +547,13 @@ def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> 
 
         is_32 = "▶" if p.beat_start % 32 == 0 else ""
         drop = f"{p.drop_score:.1f}" if p.is_drop_candidate else ""
+        pct_str = f"{p.track_pct*100:3.0f}%"
 
         def fmt(v: float, thresh: float = 0.1) -> str:
             return f"{v:5.1f}" if abs(v) > thresh else "     "
 
         lines.append(
-            f"{p.beat_start:4d} | {is_32:1s} |{p.rms_db:5.1f} |{p.low_db:5.1f} |"
+            f"{p.beat_start:4d} | {is_32:1s} |{pct_str}|{p.rms_db:5.1f} |{p.low_db:5.1f} |"
             f"{fmt(p.delta_low)}|{fmt(p.kick_density)}|{fmt(p.delta_kick)}|"
             f"{fmt(p.vocal_activity)}|{fmt(p.build_score)}|{fmt(p.snare_roll)}|"
             f"{fmt(p.contrast_score)}|{fmt(p.novelty_score)}|{fmt(p.pre_drop_gap)}|"

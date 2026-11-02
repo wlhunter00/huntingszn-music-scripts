@@ -70,6 +70,7 @@ vocal activity starting.
 Each row is a 16-beat phrase. Key columns:
 - **beat**: Starting beat of phrase
 - **32?**: "▶" marks 32-beat boundaries (where cues should go)
+- **pct**: Position as % of track (cue4 typically 20-45%, cue6 typically 55-85%)
 - **rms/low**: Overall loudness and bass energy (<150Hz)
 - **Δlow**: Bass change from previous phrase (BIG POSITIVE = kick coming in = DROP)
 - **kick/Δkick**: Kick onset density and its change (KEY DROP SIGNAL)
