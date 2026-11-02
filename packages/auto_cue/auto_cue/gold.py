@@ -13,8 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 if TYPE_CHECKING:
     from auto_cue.features import TrackFeatures
     from auto_cue.llm import FewShotExample
@@ -144,8 +142,8 @@ def get_fewshot_examples_by_similarity(
     target_beats: int,
     audio_dir: Path,
     max_examples: int = 5,
-    features_cache: dict[str, "TrackFeatures"] | None = None,
-) -> list["FewShotExample"]:
+    features_cache: dict[str, TrackFeatures] | None = None,
+) -> list[FewShotExample]:
     """Get k-nearest few-shot examples by BPM/length similarity.
 
     Args:
@@ -219,8 +217,8 @@ def get_fewshot_examples(
     target_beats: int,
     audio_dir: Path,
     max_examples: int = 5,
-    features_cache: dict[str, "TrackFeatures"] | None = None,
-) -> list["FewShotExample"]:
+    features_cache: dict[str, TrackFeatures] | None = None,
+) -> list[FewShotExample]:
     """Alias for get_fewshot_examples_by_similarity."""
     return get_fewshot_examples_by_similarity(
         gold_tracks=gold_tracks,

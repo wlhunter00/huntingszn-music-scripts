@@ -12,9 +12,9 @@ import csv
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from auto_cue.features import extract_features
+from auto_cue.features import TrackFeatures, extract_features
 from auto_cue.gold import GoldTrack, get_fewshot_examples, load_gold_csv
 from auto_cue.llm import (
     CueAbstainError,
@@ -32,6 +32,83 @@ from auto_cue.validate import validate_cue_set
 
 if TYPE_CHECKING:
     pass
+
+
+def analyze_errors(results: list[EvalResult]) -> dict[str, Any]:
+    """Analyze error patterns: ±16 and ±32 beat errors."""
+    analysis: dict[str, Any] = {
+        "total_errors": 0,
+        "errors_16": 0,  # Exactly 16 beats off
+        "errors_32": 0,  # Exactly 32 beats off
+        "errors_other": 0,
+        "cue4_errors_16": 0,
+        "cue4_errors_32": 0,
+        "cue6_errors_16": 0,
+        "cue6_errors_32": 0,
+    }
+
+    for result in results:
+        if result.abstained:
+            continue
+
+        for slot, error in result.errors.items():
+            if error <= 1.0:
+                continue
+
+            analysis["total_errors"] += 1
+
+            if 15 <= error <= 17:
+                analysis["errors_16"] += 1
+                if slot == 3:
+                    analysis["cue4_errors_16"] += 1
+                elif slot == 5:
+                    analysis["cue6_errors_16"] += 1
+            elif 31 <= error <= 33:
+                analysis["errors_32"] += 1
+                if slot == 3:
+                    analysis["cue4_errors_32"] += 1
+                elif slot == 5:
+                    analysis["cue6_errors_32"] += 1
+            else:
+                analysis["errors_other"] += 1
+
+    return analysis
+
+
+def results_by_bpm_band(results: list[EvalResult]) -> dict[str, dict[str, Any]]:
+    """Group results by BPM band."""
+    bands: dict[str, list[EvalResult]] = {}
+
+    for result in results:
+        band = result.genre_bucket or "unknown"
+        if band not in bands:
+            bands[band] = []
+        bands[band].append(result)
+
+    stats: dict[str, dict[str, Any]] = {}
+    for band, band_results in bands.items():
+        total = len(band_results)
+        processed = sum(1 for r in band_results if not r.abstained)
+        cue4_hits = sum(
+            1 for r in band_results
+            if not r.abstained and r.errors.get(3, 999) <= 1
+        )
+        cue6_hits = sum(
+            1 for r in band_results
+            if not r.abstained and r.errors.get(5, 999) <= 1
+        )
+
+        stats[band] = {
+            "total": total,
+            "processed": processed,
+            "abstained": total - processed,
+            "cue4_hits": cue4_hits,
+            "cue6_hits": cue6_hits,
+            "cue4_all": cue4_hits / total * 100 if total else 0,
+            "cue6_all": cue6_hits / total * 100 if total else 0,
+        }
+
+    return stats
 
 
 @dataclass
@@ -177,7 +254,8 @@ def evaluate_track(
     model: str = "gpt-6.1-terra",
     reasoning_effort: str = "medium",
     fewshot_examples: list[FewShotExample] | None = None,
-    genre_bucket: str = "",
+    bpm_band: str = "",
+    use_demucs: bool = False,
 ) -> EvalResult:
     """Run blind prediction on a single track and compare to gold.
 
@@ -188,33 +266,34 @@ def evaluate_track(
         model: Model name
         reasoning_effort: Reasoning effort for reasoning models
         fewshot_examples: Few-shot examples (leave-one-out)
-        genre_bucket: Genre hint
+        bpm_band: BPM band hint
+        use_demucs: Whether to use demucs for vocal separation
     """
     if isinstance(gold, GoldTrack):
         gold_cues = {s: b for s, b in gold.cues.items()}
         bpm = gold.bpm
         first_beat_s = gold.first_beat_s
-        genre = gold.genre_bucket or genre_bucket
+        band = gold.bpm_band or bpm_band
         quirks = gold.quirks
     else:
         gold_cues = gold.cues
         bpm = gold.bpm
         first_beat_s = None
-        genre = genre_bucket
+        band = bpm_band
         quirks = []
 
     result = EvalResult(
         track_name=audio_path.name,
         gold_cues=gold_cues,
         predicted_cues={},
-        genre_bucket=genre,
+        genre_bucket=band,
         quirks=quirks,
     )
 
     try:
         if first_beat_s is not None:
             features = extract_features(
-                audio_path, bpm, first_beat_s, genre_bucket=genre
+                audio_path, bpm, first_beat_s, use_demucs=use_demucs
             )
         else:
             tags = read_track_tags(audio_path)
@@ -226,7 +305,7 @@ def evaluate_track(
                 audio_path,
                 tags.beatgrid.bpm,
                 tags.beatgrid.first_beat_s,
-                genre_bucket=genre,
+                use_demucs=use_demucs,
             )
     except Exception as e:
         result.abstained = True
@@ -239,7 +318,7 @@ def evaluate_track(
                 features,
                 model=model,
                 reasoning_effort=reasoning_effort,
-                genre_bucket=genre,
+                genre_bucket=band,
                 examples=fewshot_examples,
             )
             result.cost_usd = prediction.cost_usd
@@ -476,6 +555,7 @@ def run_eval(
     model: str = "gpt-6.1-terra",
     reasoning_effort: str = "medium",
     use_fewshot: bool = True,
+    use_demucs: bool = False,
     output_md: Path | None = None,
 ) -> tuple[list[EvalResult], EvalSummary]:
     """Run evaluation on all tracks in a directory.
@@ -487,6 +567,7 @@ def run_eval(
         model: Model to use for LLM prediction
         reasoning_effort: Reasoning effort for reasoning models
         use_fewshot: Use few-shot examples (leave-one-out)
+        use_demucs: Use demucs for vocal separation
         output_md: Optional path to write markdown report
 
     Returns:
@@ -494,6 +575,7 @@ def run_eval(
     """
     gold_tracks: dict[str, GoldTrack] = {}
     gold_cues_data: dict[str, GoldCues] = {}
+    features_cache: dict[str, TrackFeatures] = {}
 
     if gold_csv and gold_csv.exists():
         gold_tracks = load_gold_csv(gold_csv)
@@ -512,9 +594,11 @@ def run_eval(
                 fewshot = get_fewshot_examples(
                     gold_tracks,
                     exclude_filename=audio_file.name,
-                    genre_bucket=gold.genre_bucket,
+                    target_bpm=gold.bpm,
+                    target_beats=gold.total_beats,
                     audio_dir=audio_dir,
                     max_examples=5,
+                    features_cache=features_cache,
                 )
         else:
             for key, g in gold_cues_data.items():
@@ -544,7 +628,8 @@ def run_eval(
             model=model,
             reasoning_effort=reasoning_effort,
             fewshot_examples=fewshot,
-            genre_bucket=gold.genre_bucket if isinstance(gold, GoldTrack) else "",
+            bpm_band=gold.bpm_band if isinstance(gold, GoldTrack) else "",
+            use_demucs=use_demucs,
         )
         results.append(result)
 
@@ -575,11 +660,31 @@ def run_eval(
                 )
 
     summary = compute_summary(results)
+    error_analysis = analyze_errors(results)
+    bpm_stats = results_by_bpm_band(results)
 
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
     print(format_summary(summary))
+
+    print("\n" + "=" * 60)
+    print("ERROR ANALYSIS")
+    print("=" * 60)
+    print(f"Total errors (>1 beat): {error_analysis['total_errors']}")
+    print(f"  ±16 beat errors: {error_analysis['errors_16']}")
+    print(f"  ±32 beat errors: {error_analysis['errors_32']}")
+    print(f"  Other errors: {error_analysis['errors_other']}")
+    print(f"Cue4 ±16: {error_analysis['cue4_errors_16']}, ±32: {error_analysis['cue4_errors_32']}")
+    print(f"Cue6 ±16: {error_analysis['cue6_errors_16']}, ±32: {error_analysis['cue6_errors_32']}")
+
+    print("\n" + "=" * 60)
+    print("PER-BPM BAND")
+    print("=" * 60)
+    for band, stats in sorted(bpm_stats.items()):
+        print(f"{band}: {stats['total']} tracks, {stats['processed']} processed")
+        print(f"  Cue4: {stats['cue4_hits']}/{stats['total']} = {stats['cue4_all']:.0f}%")
+        print(f"  Cue6: {stats['cue6_hits']}/{stats['total']} = {stats['cue6_all']:.0f}%")
 
     if output_md:
         with open(output_md, "w") as f:
@@ -593,6 +698,19 @@ def run_eval(
             f.write("\n\n## Summary\n\n```\n")
             f.write(format_summary(summary))
             f.write("\n```\n")
+            f.write("\n## Error Analysis\n\n")
+            f.write(f"- Total errors (>1 beat): {error_analysis['total_errors']}\n")
+            f.write(f"- ±16 beat errors: {error_analysis['errors_16']}\n")
+            f.write(f"- ±32 beat errors: {error_analysis['errors_32']}\n")
+            f.write(f"- Other errors: {error_analysis['errors_other']}\n")
+            f.write("\n## Per-BPM Band\n\n")
+            f.write("| BPM Band | Tracks | Cue4 | Cue6 |\n")
+            f.write("|----------|--------|------|------|\n")
+            for band, stats in sorted(bpm_stats.items()):
+                f.write(
+                    f"| {band} | {stats['total']} | "
+                    f"{stats['cue4_all']:.0f}% | {stats['cue6_all']:.0f}% |\n"
+                )
         print(f"\nResults written to: {output_md}")
 
     return results, summary
