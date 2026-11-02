@@ -91,11 +91,14 @@ def load_gold_pool(
     pool_csv: Path,
     audio_sel_csv: Path | None = None,
 ) -> GoldPool:
-    """Load the gold example pool (827 tracks).
+    """Load the gold example pool.
+
+    Supports both v1 format (gold_pool.csv + audio_sel.csv mapping)
+    and v2 format (gold_pool_clean.csv + audio_sel.csv with small_file).
 
     Args:
-        pool_csv: Path to gold_pool.csv
-        audio_sel_csv: Path to audio_sel.csv (maps paths to gpNNN.mp3)
+        pool_csv: Path to gold_pool.csv or gold_pool_clean.csv
+        audio_sel_csv: Path to audio_sel.csv (maps paths to g2_NNN.mp3)
 
     Returns:
         GoldPool with all tracks and audio mapping

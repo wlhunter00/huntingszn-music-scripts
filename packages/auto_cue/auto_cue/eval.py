@@ -577,7 +577,7 @@ def run_eval(
         use_fewshot: Use few-shot examples from pool
         use_demucs: Use demucs for vocal separation
         output_md: Optional path to write markdown report
-        pool_dir: Directory with gold pool (gold_pool.csv, audio_sel.csv, gpNNN.mp3)
+        pool_dir: Directory with gold pool (gold_pool_clean.csv, audio_sel.csv, g2_NNN.mp3)
 
     Returns:
         (results, summary)
@@ -593,7 +593,9 @@ def run_eval(
 
     gold_pool: GoldPool | None = None
     if use_fewshot and pool_dir and pool_dir.exists():
-        pool_csv = pool_dir / "gold_pool.csv"
+        pool_csv = pool_dir / "gold_pool_clean.csv"
+        if not pool_csv.exists():
+            pool_csv = pool_dir / "gold_pool.csv"
         audio_sel = pool_dir / "audio_sel.csv"
         if pool_csv.exists():
             gold_pool = load_gold_pool(pool_csv, audio_sel)
