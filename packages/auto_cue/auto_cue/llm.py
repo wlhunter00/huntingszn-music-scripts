@@ -79,6 +79,7 @@ Each row is a 16-beat phrase. Key columns:
 - **contr**: Multi-scale before/after contrast (section boundary detection)
 - **novel**: Self-similarity novelty (new section, not repeating)
 - **gap**: Pre-drop gap (quiet moment right before the drop)
+- **sust**: Post-drop sustain (CRITICAL: real drops stay loud, fake-outs drop off)
 - **drop**: Combined drop score (higher = more likely drop point)
 
 ## DROP DETECTION STRATEGY
@@ -86,6 +87,8 @@ Each row is a 16-beat phrase. Key columns:
 2. High **contr** and **novel** = section change = potential drop
 3. High **build** or **snare** in the phrase BEFORE = buildup into drop
 4. High **gap** = quiet moment right before the drop
+5. **FAKE-OUT CHECK**: Real drops have **sust >= -2** (energy stays high). \
+If sust < -4, it's likely a fake-out (build peak, not the actual drop)
 
 ## BPM-BASED PATTERNS
 - **bass (<80 BPM)**: cue1 at 0, drops ~64-96 beats apart, heavy kick patterns

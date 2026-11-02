@@ -55,6 +55,7 @@ class PhraseFeatures:
     contrast_score: float = 0.0  # Multi-scale contrast
     novelty_score: float = 0.0  # Self-similarity novelty
     pre_drop_gap: float = 0.0  # Min RMS in last 1-2 beats vs phrase mean
+    post_sustain: float = 0.0  # Energy sustain in next 32 beats (fake-out detector)
     is_drop_candidate: bool = False
     drop_score: float = 0.0
 
@@ -432,6 +433,14 @@ def _aggregate_phrases(
             phrase_mean_rms = rms_db
             pre_drop_gap = phrase_mean_rms - last_2_rms
 
+        post_sustain = 0.0
+        next_start = end
+        next_end = min(end + 32, len(beat_features))
+        if next_end > next_start:
+            next_beats = beat_features[next_start:next_end]
+            next_low = np.mean([b.low_db for b in next_beats])
+            post_sustain = next_low - low_db
+
         delta_rms = rms_db - prev_rms if prev_rms is not None else 0.0
         delta_low = low_db - prev_low if prev_low is not None else 0.0
         delta_kick = kick_density - prev_kick if prev_kick is not None else 0.0
@@ -454,6 +463,7 @@ def _aggregate_phrases(
             contrast_score=float(contrast_score),
             novelty_score=float(novelty_score),
             pre_drop_gap=float(pre_drop_gap),
+            post_sustain=float(post_sustain),
         )
         phrases.append(phrase)
 
@@ -465,7 +475,11 @@ def _aggregate_phrases(
 
 
 def _identify_drop_candidates(features: TrackFeatures) -> None:
-    """Identify drop candidates using multi-feature scoring."""
+    """Identify drop candidates using multi-feature scoring.
+
+    Uses post_sustain to penalize fake-out drops (energy drops off after).
+    Real drops have sustained energy for 32+ beats after.
+    """
     phrases = features.phrases_32
     if len(phrases) < 2:
         return
@@ -479,6 +493,11 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
 
         if phrase.pre_drop_gap > 3.0:
             score += 1.0
+
+        if phrase.post_sustain >= -2.0:
+            score += 0.5
+        elif phrase.post_sustain < -4.0:
+            score -= 1.0
 
         if score > 2.0:
             phrase.is_drop_candidate = True
@@ -508,9 +527,13 @@ def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> 
     lines.append("")
 
     header = (
-        "beat |32?| rms  | low  |Δlow |kick |Δkick|vocal|build|snare|contr|novel| gap |drop"
+        "beat |32?| rms  | low  |Δlow |kick |Δkick|vocal|build|snare|"
+        "contr|novel| gap |sust |drop"
     )
-    sep = "-----|---|------|------|-----|-----|-----|-----|-----|-----|-----|-----|-----|----"
+    sep = (
+        "-----|---|------|------|-----|-----|-----|-----|-----|-----|"
+        "-----|-----|-----|-----|----"
+    )
     lines.append(header)
     lines.append(sep)
 
@@ -528,7 +551,8 @@ def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> 
             f"{p.beat_start:4d} | {is_32:1s} |{p.rms_db:5.1f} |{p.low_db:5.1f} |"
             f"{fmt(p.delta_low)}|{fmt(p.kick_density)}|{fmt(p.delta_kick)}|"
             f"{fmt(p.vocal_activity)}|{fmt(p.build_score)}|{fmt(p.snare_roll)}|"
-            f"{fmt(p.contrast_score)}|{fmt(p.novelty_score)}|{fmt(p.pre_drop_gap)}|{drop:4s}"
+            f"{fmt(p.contrast_score)}|{fmt(p.novelty_score)}|{fmt(p.pre_drop_gap)}|"
+            f"{fmt(p.post_sustain)}|{drop:4s}"
         )
 
     lines.append("")
