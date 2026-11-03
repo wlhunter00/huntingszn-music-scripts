@@ -36,7 +36,9 @@ class CueConfidenceSignals:
     kick_slam_strength: float = 0.0  # Kick onset strength at predicted beat
     on_lattice: bool = True  # Whether pick is on 16-beat grid
     code_agreement: bool = True  # Whether model pick matches code's best candidate
+    code_rank_score: float = 1.0  # How good is predicted vs best candidate (0-1)
     rival_16_strength: float = 0.0  # Strength of candidate exactly ±16 beats away
+    is_candidate: bool = True  # Whether predicted beat is in code's candidate list
     
     # Derived calibrated confidence
     calibrated_confidence: float = 0.0
@@ -218,13 +220,17 @@ def _check_code_agreement(
     features: "TrackFeatures",
     predicted_beat: int | None,
     is_cue6: bool = False,
-) -> bool:
-    """Check if model's pick matches the strongest code-detected candidate."""
+) -> tuple[bool, float]:
+    """Check if model's pick matches the strongest code-detected candidate.
+    
+    Returns:
+        (agrees, rank_score) where rank_score is 1.0 if best, <1.0 if not
+    """
     if predicted_beat is None:
-        return True  # N/A
+        return False, 0.0  # No prediction = no agreement
     
     if not features.drop_candidates:
-        return False
+        return False, 0.0
     
     # Get candidate scores in relevant region
     half_track = features.total_beats // 2
@@ -232,19 +238,40 @@ def _check_code_agreement(
     candidate_scores: list[tuple[int, float]] = []
     for p in features.phrases_32:
         if p.is_drop_candidate:
-            if is_cue6 and p.beat_start >= half_track * 0.6:
+            if is_cue6 and p.beat_start >= half_track * 0.5:
                 candidate_scores.append((p.beat_start, p.drop_score))
-            elif not is_cue6 and p.beat_start < half_track * 1.4:
+            elif not is_cue6 and p.beat_start < half_track * 1.5:
                 candidate_scores.append((p.beat_start, p.drop_score))
     
     if not candidate_scores:
-        return False
+        return False, 0.0
     
-    # Find best candidate
+    # Find best candidate and predicted candidate's score
     best_beat, best_score = max(candidate_scores, key=lambda x: x[1])
     
-    # Check if model's pick is within 16 beats of code's best
-    return abs(predicted_beat - best_beat) <= 16
+    # Find the predicted beat's score (if it's a candidate)
+    pred_score = 0.0
+    pred_is_candidate = False
+    for beat, score in candidate_scores:
+        if abs(beat - predicted_beat) <= 8:  # Allow some tolerance
+            pred_score = score
+            pred_is_candidate = True
+            break
+    
+    # If predicted beat isn't even a candidate, that's bad
+    if not pred_is_candidate:
+        return False, 0.0
+    
+    # Check if model's pick is the best or close to it
+    agrees = abs(predicted_beat - best_beat) <= 16
+    
+    # Rank score: how close is predicted score to best score
+    if best_score > 0:
+        rank_score = pred_score / best_score
+    else:
+        rank_score = 0.5
+    
+    return agrees, float(np.clip(rank_score, 0.0, 1.0))
 
 
 def _compute_rival_16_strength(
@@ -317,10 +344,17 @@ def compute_cue_confidence_signals(
     signals.zoom_agreement = _compute_zoom_agreement(features, predicted_beat)
     signals.kick_slam_strength = _compute_kick_slam_strength(features, predicted_beat)
     signals.on_lattice = _check_lattice_alignment(predicted_beat, 32 if is_cue6 else 16)
-    signals.code_agreement = _check_code_agreement(features, predicted_beat, is_cue6)
+    code_agrees, code_rank = _check_code_agreement(features, predicted_beat, is_cue6)
+    signals.code_agreement = code_agrees
+    signals.code_rank_score = code_rank
+    signals.is_candidate = code_rank > 0  # Predicted beat is in candidate list
     signals.rival_16_strength = _compute_rival_16_strength(features, predicted_beat)
     
-    # Build abstain reasons
+    # Build abstain reasons (CRITICAL signals first)
+    if not signals.is_candidate:
+        signals.abstain_reasons.append("prediction not in candidate list")
+    if signals.code_rank_score < 0.5:
+        signals.abstain_reasons.append(f"weak candidate rank ({signals.code_rank_score:.2f})")
     if signals.margin < 0.15:
         signals.abstain_reasons.append(f"low margin ({signals.margin:.2f})")
     if signals.zoom_agreement < 0.3:
@@ -347,6 +381,10 @@ def compute_calibrated_confidence(
 ) -> float:
     """Compute calibrated confidence from signals.
     
+    CRITICAL: If prediction isn't even a code candidate, confidence is very low.
+    This is the key to calibration - wrong predictions typically aren't in the
+    candidate list, while correct ones usually are.
+    
     Default weights are tuned on gold pool.
     
     Args:
@@ -356,33 +394,39 @@ def compute_calibrated_confidence(
     Returns:
         Calibrated confidence 0-1
     """
+    # CRITICAL CHECK: If prediction isn't in candidate list, very low confidence
+    if not signals.is_candidate:
+        return 0.15  # Almost certainly wrong
+    
     if weights is None:
-        # Default weights (to be tuned on gold pool)
+        # Default weights (conservative, prefer false negatives over false positives)
         weights = {
-            "margin": 0.25,
-            "zoom_agreement": 0.15,
-            "kick_slam": 0.20,
-            "on_lattice": 0.10,
-            "code_agreement": 0.20,
-            "rival_16_penalty": -0.30,
+            "code_rank": 0.35,  # How good is this candidate vs the best?
+            "margin": 0.20,    # Gap to second-best
+            "zoom_agreement": 0.10,
+            "kick_slam": 0.15,
+            "on_lattice": 0.05,
+            "code_agreement": 0.15,  # Is this the code's #1 pick?
+            "rival_16_penalty": -0.25,
         }
     
     score = 0.0
     
-    # Positive signals
+    # Code rank is critical - measures if this is a good candidate
+    score += signals.code_rank_score * weights["code_rank"]
+    
+    # Other positive signals
     score += signals.margin * weights["margin"]
     score += signals.zoom_agreement * weights["zoom_agreement"]
     score += signals.kick_slam_strength * weights["kick_slam"]
     score += (1.0 if signals.on_lattice else 0.0) * weights["on_lattice"]
     score += (1.0 if signals.code_agreement else 0.0) * weights["code_agreement"]
     
-    # Penalty for ±16 ambiguity
+    # Penalty for ±16 ambiguity (strong rival = uncertain)
     score += signals.rival_16_strength * weights["rival_16_penalty"]
     
-    # Base confidence (assume some competence)
-    base = 0.3
-    
-    confidence = base + score
+    # No base confidence - must be earned from signals
+    confidence = score
     return float(np.clip(confidence, 0.0, 1.0))
 
 

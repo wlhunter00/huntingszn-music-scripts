@@ -29,7 +29,7 @@ from auto_cue.calibrated_confidence import (
 POOL_DIR = Path("/workspace/gold-pool")
 MODEL = "gpt-6.1-terra"
 REASONING = "medium"
-MAX_TRACKS = 100  # Limit for cost control
+MAX_TRACKS = 50  # Limit for cost control (fits thresholds reasonably)
 
 
 def main():
@@ -49,10 +49,11 @@ def main():
     
     # Filter to tracks with audio available
     tracks_with_audio = []
-    for track in pool.tracks[:MAX_TRACKS]:
-        audio_path = Path(track.audio_path)
-        if audio_path.exists():
+    for track in list(pool.tracks.values())[:MAX_TRACKS * 2]:  # Check more, take MAX
+        if track.audio_path and Path(track.audio_path).exists():
             tracks_with_audio.append(track)
+            if len(tracks_with_audio) >= MAX_TRACKS:
+                break
     
     print(f"Tracks with audio: {len(tracks_with_audio)}")
     
