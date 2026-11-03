@@ -56,6 +56,13 @@ class PoolTrack:
     def has_audio(self) -> bool:
         return self.small_file is not None
 
+    @property
+    def audio_path(self) -> str | None:
+        """Path to audio file in gold-pool directory."""
+        if self.small_file:
+            return f"/workspace/gold-pool/{self.small_file}"
+        return None
+
 
 @dataclass
 class GoldPool:
