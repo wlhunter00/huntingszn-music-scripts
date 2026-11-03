@@ -568,9 +568,40 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
         if p.is_drop_candidate and p.beat_start % 32 != 0:
             all_candidates.append((p.beat_start, p.drop_score))
 
-    # Sort by score and take more candidates (15 instead of 10)
+    # FIX FOR ±16 ERRORS: Add +16 "sustained" versions of transition candidates
+    # Analysis showed model detects DROP ENTRY (transition) but gold marks DROP SUSTAIN (+16)
+    # So for each transition candidate, also add the +16 sustained position
+    sustained_candidates: list[tuple[int, float]] = []
+    for beat, score in all_candidates:
+        # Check if +16 position has sustained high energy (not a false positive)
+        sustained_beat = beat + 16
+        if sustained_beat < features.total_beats:
+            # Find phrase at sustained position
+            sustained_phrase = None
+            for p in phrases_16:
+                if p.beat_start == sustained_beat or (p.beat_start <= sustained_beat < p.beat_end):
+                    sustained_phrase = p
+                    break
+            
+            if sustained_phrase:
+                # Sustained position should have high energy but lower delta (already in drop)
+                if sustained_phrase.low_db > -30 and abs(sustained_phrase.delta_low) < 8:
+                    # Give sustained position slightly lower score (prefer if transition is ambiguous)
+                    sustained_candidates.append((sustained_beat, score * 0.9))
+    
+    # Combine transition and sustained candidates
+    all_candidates.extend(sustained_candidates)
+
+    # Sort by score and take more candidates (20 to include both transition and sustained)
     all_candidates.sort(key=lambda x: -x[1])
-    features.drop_candidates = [beat for beat, _ in all_candidates[:15]]
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_candidates = []
+    for beat, score in all_candidates:
+        if beat not in seen:
+            seen.add(beat)
+            unique_candidates.append((beat, score))
+    features.drop_candidates = [beat for beat, _ in unique_candidates[:20]]
 
     # SEPARATE PASS FOR LAST DROP (cue6 recall was only 10%)
     # Look in the second half of the track for the LAST strong drop
