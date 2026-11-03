@@ -118,17 +118,19 @@ class TestLatticeConstraints:
         assert result.valid
 
     def test_cue2_16_beat_positions(self):
-        """cue2 can be any multiple of 16 before cue3."""
-        for offset in [16, 32, 48, 64, 80]:
+        """cue2 can be any multiple of 16 before cue3 (on 16-beat lattice)."""
+        # cue2 must be <= cue3, and on 16-beat lattice from cue4
+        # With cue3=64 and cue4=96, valid cue2 values are: 0, 16, 32, 48, 64
+        for cue2_beat in [0, 16, 32, 48, 64]:
             cues = CueSet(
-                cue2=96 - offset,  # Various 16-beat positions
+                cue2=cue2_beat,  # Various 16-beat positions <= cue3
                 cue3=64,
                 cue4=96,
                 cue6=192,
                 total_beats=300,
             )
             result = validate_cue_set(cues)
-            assert result.valid, f"cue2 at {96 - offset} should be valid"
+            assert result.valid, f"cue2 at {cue2_beat} should be valid"
 
     def test_cue1_on_16_lattice(self):
         """cue1 must be on 16-beat lattice from cue4."""
