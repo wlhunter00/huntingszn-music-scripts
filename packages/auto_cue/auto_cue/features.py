@@ -507,8 +507,15 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
         """Compute drop score for a phrase."""
         score = 0.0
 
-        # Bass jump (key signal)
-        score += phrase.delta_low * 0.4
+        # Bass energy (high absolute low_db = loud)
+        # Bonus for sustained high energy
+        if phrase.low_db > -15:
+            score += 0.8  # Very loud bass
+        elif phrase.low_db > -20:
+            score += 0.4  # Loud bass
+        
+        # Transition bonus (reduced from 0.4 to 0.2)
+        score += max(0, phrase.delta_low) * 0.2
 
         # Kick slam-in (CRITICAL for drop detection)
         kick_slam = max(0, phrase.delta_kick)
@@ -527,10 +534,13 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
         # Build-up in previous section
         score += max(0, phrase.build_score) * 0.3
 
-        # Sustain check (real drops stay loud)
+        # Sustain check (real drops stay loud, fake-outs drop off)
+        # Only apply penalty if current phrase ISN'T already loud
+        # (loud phrases followed by breakdown are still real drops)
         if phrase.post_sustain >= -2.0:
             score += sustain_bonus
-        elif phrase.post_sustain < -5.0:
+        elif phrase.post_sustain < -5.0 and phrase.low_db < -20:
+            # Only penalize if current phrase is quiet (likely fake-out)
             score += sustain_penalty
 
         return score
@@ -542,20 +552,18 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
         if score > score_threshold:
             phrase.is_drop_candidate = True
 
-    # Also check 16-beat phrases for kick slam-in (off-lattice drops)
+    # Also check 16-beat phrases that aren't on 32-beat boundaries
+    # Be more liberal - include any 16-beat phrase with reasonable score
     for phrase in phrases_16:
         # Skip if already covered by 32-beat phrase
         if phrase.beat_start % 32 == 0:
             continue
 
-        # Strong kick slam-in evidence allows off-lattice
-        kick_slam = max(0, phrase.delta_kick)
-        if kick_slam > 0.15 and phrase.delta_low > 8.0:
-            score = compute_drop_score(phrase)
-            phrase.drop_score = score
-            # Higher threshold for off-lattice
-            if score > score_threshold + 1.0:
-                phrase.is_drop_candidate = True
+        score = compute_drop_score(phrase)
+        phrase.drop_score = score
+        # Lower threshold for 16-beat candidates (they're common in DnB)
+        if score > score_threshold * 0.7:
+            phrase.is_drop_candidate = True
 
     # Collect all candidates from both 32-beat and 16-beat phrases
     all_candidates: list[tuple[int, float]] = []
@@ -568,40 +576,9 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
         if p.is_drop_candidate and p.beat_start % 32 != 0:
             all_candidates.append((p.beat_start, p.drop_score))
 
-    # FIX FOR ±16 ERRORS: Add +16 "sustained" versions of transition candidates
-    # Analysis showed model detects DROP ENTRY (transition) but gold marks DROP SUSTAIN (+16)
-    # So for each transition candidate, also add the +16 sustained position
-    sustained_candidates: list[tuple[int, float]] = []
-    for beat, score in all_candidates:
-        # Check if +16 position has sustained high energy (not a false positive)
-        sustained_beat = beat + 16
-        if sustained_beat < features.total_beats:
-            # Find phrase at sustained position
-            sustained_phrase = None
-            for p in phrases_16:
-                if p.beat_start == sustained_beat or (p.beat_start <= sustained_beat < p.beat_end):
-                    sustained_phrase = p
-                    break
-            
-            if sustained_phrase:
-                # Sustained position should have high energy but lower delta (already in drop)
-                if sustained_phrase.low_db > -30 and abs(sustained_phrase.delta_low) < 8:
-                    # Give sustained position slightly lower score (prefer if transition is ambiguous)
-                    sustained_candidates.append((sustained_beat, score * 0.9))
-    
-    # Combine transition and sustained candidates
-    all_candidates.extend(sustained_candidates)
-
-    # Sort by score and take more candidates (20 to include both transition and sustained)
+    # Sort by score and take top candidates
     all_candidates.sort(key=lambda x: -x[1])
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_candidates = []
-    for beat, score in all_candidates:
-        if beat not in seen:
-            seen.add(beat)
-            unique_candidates.append((beat, score))
-    features.drop_candidates = [beat for beat, _ in unique_candidates[:20]]
+    features.drop_candidates = [beat for beat, _ in all_candidates[:15]]
 
     # SEPARATE PASS FOR LAST DROP (cue6 recall was only 10%)
     # Look in the second half of the track for the LAST strong drop
