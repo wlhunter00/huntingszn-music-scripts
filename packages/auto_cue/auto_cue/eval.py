@@ -35,7 +35,7 @@ from auto_cue.tags import (
     cues_to_beats,
     read_track_tags,
 )
-from auto_cue.validate import validate_cue_set
+from auto_cue.validate import validate_cue_set, validate_and_repair
 
 if TYPE_CHECKING:
     pass
@@ -131,8 +131,10 @@ class EvalResult:
     """Evaluation result for a single track."""
     track_name: str
     gold_cues: dict[int, float] = field(default_factory=dict)
-    predicted_cues: dict[int, int] = field(default_factory=dict)
+    predicted_cues: dict[int, int] = field(default_factory=dict)  # Only emitted cues
     errors: dict[int, float] = field(default_factory=dict)
+    emitted_slots: list[int] = field(default_factory=list)  # Slots where we emitted a cue
+    nulled_slots: list[int] = field(default_factory=list)  # Slots nulled due to low confidence
     abstained: bool = False
     abstain_reason: str = ""
     validation_errors: list[str] = field(default_factory=list)
@@ -148,17 +150,26 @@ class EvalResult:
 
 @dataclass
 class EvalSummary:
-    """Summary metrics across all evaluated tracks."""
+    """Summary metrics across all evaluated tracks.
+
+    Per-cue metrics:
+    - Precision: correct / emitted (accuracy among cues we emit)
+    - Coverage: emitted / gold_total (% of cues we emit)
+    - Accuracy: correct / gold_total (traditional accuracy)
+
+    A wrong emitted cue is far worse than unknown.
+    """
     total: int = 0
     processed: int = 0
     abstained: int = 0
     api_errors: int = 0
 
     per_cue_errors: dict[int, list[float]] = field(default_factory=dict)
-    per_cue_correct: dict[int, int] = field(default_factory=dict)
-    per_cue_total: dict[int, int] = field(default_factory=dict)
+    per_cue_correct: dict[int, int] = field(default_factory=dict)  # Correct emitted cues
+    per_cue_emitted: dict[int, int] = field(default_factory=dict)  # Total emitted cues
+    per_cue_total: dict[int, int] = field(default_factory=dict)   # Legacy (same as emitted)
 
-    gold_cue_totals: dict[int, int] = field(default_factory=dict)
+    gold_cue_totals: dict[int, int] = field(default_factory=dict)  # Tracks with gold for this slot
 
     all_8_correct: int = 0
 
@@ -175,6 +186,20 @@ class EvalSummary:
     @property
     def api_error_rate(self) -> float:
         return self.api_errors / self.total if self.total > 0 else 0.0
+
+    def cue_precision(self, slot: int, tolerance: float = 1.0) -> float:
+        """Precision: correct / emitted (accuracy among cues we emit)."""
+        emitted = self.per_cue_emitted.get(slot, 0)
+        if emitted == 0:
+            return 0.0
+        return self.per_cue_correct.get(slot, 0) / emitted
+
+    def cue_coverage(self, slot: int) -> float:
+        """Coverage: emitted / gold_total (% of cues we emit)."""
+        gold_total = self.gold_cue_totals.get(slot, 0)
+        if gold_total == 0:
+            return 0.0
+        return self.per_cue_emitted.get(slot, 0) / gold_total
 
     def cue_accuracy_processed(self, slot: int, tolerance: float = 1.0) -> float:
         """Accuracy over processed (non-abstained) songs only."""
@@ -351,15 +376,22 @@ def evaluate_track(
 
     cues = prediction_to_cue_set(prediction, features.total_beats)
 
-    validation = validate_cue_set(cues)
+    # Use validate_and_repair to fix ordering conflicts instead of rejecting
+    cues, validation = validate_and_repair(cues)
+
     if not validation.valid:
+        # Only hard errors (negative beats, lattice violations) cause rejection
         result.abstained = True
         result.abstain_reason = f"validation: {'; '.join(validation.errors)}"
         result.validation_errors = validation.errors
         return result
 
+    # Track which slots were emitted and which were nulled
+    result.nulled_slots = validation.nulled_slots
     result.predicted_cues = cues.to_dict()
+    result.emitted_slots = [slot + 1 for slot in result.predicted_cues.keys()]  # Convert to 1-indexed
 
+    # Calculate errors only for emitted slots
     for slot, pred_beat in result.predicted_cues.items():
         if slot in gold_cues:
             error = abs(pred_beat - gold_cues[slot])
@@ -369,7 +401,13 @@ def evaluate_track(
 
 
 def compute_summary(results: list[EvalResult], tolerance: float = 1.0) -> EvalSummary:
-    """Compute summary metrics from evaluation results."""
+    """Compute summary metrics from evaluation results.
+
+    Per-cue metrics:
+    - Precision: correct / emitted (accuracy among cues we emit)
+    - Coverage: emitted / gold_total (% of cues we emit)
+    - Accuracy: correct / gold_total (traditional accuracy)
+    """
     summary = EvalSummary()
     summary.total = len(results)
 
@@ -382,6 +420,7 @@ def compute_summary(results: list[EvalResult], tolerance: float = 1.0) -> EvalSu
         if result.reasoning_effort:
             summary.reasoning_effort = result.reasoning_effort
 
+        # Count gold cues for all tracks (including abstained)
         for slot in range(8):
             if slot in result.gold_cues:
                 summary.gold_cue_totals[slot] = summary.gold_cue_totals.get(slot, 0) + 1
@@ -394,6 +433,10 @@ def compute_summary(results: list[EvalResult], tolerance: float = 1.0) -> EvalSu
 
         summary.processed += 1
         all_correct = True
+
+        # Track emitted cues for precision/coverage
+        for slot in result.predicted_cues.keys():
+            summary.per_cue_emitted[slot] = summary.per_cue_emitted.get(slot, 0) + 1
 
         for slot in range(8):
             if slot in result.errors:
@@ -484,7 +527,11 @@ def format_results_table(results: list[EvalResult], include_abstain_details: boo
 def format_summary(summary: EvalSummary, tolerance: float = 1.0) -> str:
     """Format summary as text.
 
-    Reports accuracy both over processed songs and over ALL songs.
+    Reports per-cue metrics:
+    - Precision: correct / emitted (accuracy among cues we emit)
+    - Coverage: emitted / gold_total (% of cues we emit)
+    - Accuracy: correct / gold_total (traditional accuracy)
+
     Uses 1-indexed cue labels (Cue 1-8).
     """
     lines = []
@@ -510,27 +557,23 @@ def format_summary(summary: EvalSummary, tolerance: float = 1.0) -> str:
         lines.append(f"Tokens: {in_tok:,} in, {out_tok:,} out")
         lines.append("")
 
-    lines.append(f"Per-cue accuracy OVER PROCESSED (within {tolerance} beat):")
-    for slot in range(8):  # slot 0-7 = Cue 1-8
-        acc = summary.cue_accuracy_processed(slot, tolerance)
-        mean_err = summary.mean_cue_error(slot)
-        total = summary.per_cue_total.get(slot, 0)
-        correct = summary.per_cue_correct.get(slot, 0)
-        if total > 0:
-            lines.append(
-                f"  Cue {slot+1}: {correct}/{total} = {acc:.1%} (mean: {mean_err:.1f})"
-            )
-        else:
-            lines.append(f"  Cue {slot+1}: no data")
-
+    # Per-cue precision/coverage/accuracy
+    lines.append("Per-cue PRECISION/COVERAGE/ACCURACY:")
+    lines.append("  (Precision=correct/emitted, Coverage=emitted/gold, Accuracy=correct/gold)")
     lines.append("")
-    lines.append("Per-cue accuracy OVER ALL SONGS (abstains count as misses):")
     for slot in range(8):  # slot 0-7 = Cue 1-8
+        prec = summary.cue_precision(slot, tolerance)
+        cov = summary.cue_coverage(slot)
         acc = summary.cue_accuracy_all(slot, tolerance)
-        gold_total = summary.gold_cue_totals.get(slot, 0)
+        emitted = summary.per_cue_emitted.get(slot, 0)
         correct = summary.per_cue_correct.get(slot, 0)
+        gold_total = summary.gold_cue_totals.get(slot, 0)
         if gold_total > 0:
-            lines.append(f"  Cue {slot+1}: {correct}/{gold_total} = {acc:.1%}")
+            lines.append(
+                f"  Cue {slot+1}: P={prec:.0%} ({correct}/{emitted}) | "
+                f"C={cov:.0%} ({emitted}/{gold_total}) | "
+                f"A={acc:.0%} ({correct}/{gold_total})"
+            )
         else:
             lines.append(f"  Cue {slot+1}: no gold labels")
 

@@ -5,6 +5,9 @@ Uses an OpenAI model to pick all 8 cues with model judgment on each one:
 - Cues 1, 2, 7, 8 are also model-chosen from valid candidates (not just derived)
 - Cues 3 and 5 are 16 or 32 beats before cue4/cue6 (run-up marker)
 - Cue 4 anchors the intro lattice (16-beat); cue 6 anchors the outro lattice (32-beat)
+
+Per-cue abstention: model may return null/unknown for any cue with confidence.
+Dependencies: cue4 unknown -> cues 1-3 unknown; cue6 unknown -> cue5/7/8 unknown.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ class LLMAPIError(Exception):
 
 
 class CueAbstainError(Exception):
-    """Raised when the predictor decides to abstain (legitimate abstention)."""
+    """Raised when the predictor decides to abstain entirely (grid uncertainty only)."""
     pass
 
 
@@ -45,7 +48,8 @@ MODEL_PRICING = {
 
 STATIC_RULES = """# Will's Hot Cue System for Serato DJ
 
-You are placing 8 hot cues on a DJ track.
+You are placing 8 hot cues on a DJ track. You may leave any cue as null/unknown 
+if you're not confident - Will would rather have 3 good cues than 8 questionable ones.
 
 ## DROP DETECTION (PRIMARY TASK)
 - **Cue 4** = FIRST DROP: Biggest energy jump. Look for highest kick density jump \
@@ -97,8 +101,15 @@ If sust < -4, it's likely a fake-out (build peak, not the actual drop)
 - **midtempo (100-115 BPM)**: mixed styles
 - **house (115+ BPM)**: longer intros (64+ beats), drops ~192 beats apart
 
-## ABSTENTION
-Set abstain=true ONLY if drops are genuinely unclear (flat dynamics, no clear kicks)."""
+## PER-CUE CONFIDENCE
+For each cue, report a confidence score (0.0-1.0):
+- 0.9+ = very confident
+- 0.7-0.9 = reasonably confident
+- 0.5-0.7 = uncertain
+- <0.5 = return null instead
+
+If cue4 is null/unknown, cues 1-3 should also be null (they depend on cue4's lattice).
+If cue6 is null/unknown, cue5 should also be null (and cue7/8 if anchored on cue6)."""
 
 OPENAI_JSON_SCHEMA = {
     "name": "cue_prediction",
@@ -108,44 +119,69 @@ OPENAI_JSON_SCHEMA = {
         "properties": {
             "cue1_beat": {
                 "type": ["integer", "null"],
-                "description": "Beat for cue 1 (intro), or null",
+                "description": "Beat for cue 1 (intro), or null if uncertain",
+            },
+            "cue1_confidence": {
+                "type": "number",
+                "description": "Confidence for cue1 (0.0-1.0)",
             },
             "cue2_beat": {
                 "type": ["integer", "null"],
-                "description": "Beat for cue 2 (pre-vocal), or null",
+                "description": "Beat for cue 2 (pre-vocal), or null if uncertain",
+            },
+            "cue2_confidence": {
+                "type": "number",
+                "description": "Confidence for cue2 (0.0-1.0)",
             },
             "cue4_beat": {
                 "type": ["integer", "null"],
-                "description": "Beat for cue 4 (FIRST DROP), or null",
+                "description": "Beat for cue 4 (FIRST DROP), or null if uncertain",
+            },
+            "cue4_confidence": {
+                "type": "number",
+                "description": "Confidence for cue4 (0.0-1.0)",
             },
             "cue6_beat": {
                 "type": ["integer", "null"],
-                "description": "Beat for cue 6 (LAST DROP), or null",
+                "description": "Beat for cue 6 (LAST DROP), or null if uncertain",
+            },
+            "cue6_confidence": {
+                "type": "number",
+                "description": "Confidence for cue6 (0.0-1.0)",
             },
             "cue7_beat": {
                 "type": ["integer", "null"],
-                "description": "Beat for cue 7 (mix-out cue6+32/64), or null",
+                "description": "Beat for cue 7 (mix-out cue6+32/64), or null if uncertain",
+            },
+            "cue7_confidence": {
+                "type": "number",
+                "description": "Confidence for cue7 (0.0-1.0)",
             },
             "cue8_beat": {
                 "type": ["integer", "null"],
-                "description": "Beat for cue 8 (last call cue6+64/96), or null",
+                "description": "Beat for cue 8 (last call cue6+64/96), or null if uncertain",
+            },
+            "cue8_confidence": {
+                "type": "number",
+                "description": "Confidence for cue8 (0.0-1.0)",
             },
             "cue7_midsong": {
                 "type": "boolean",
                 "description": "True if cue7 is mid-song (rare)",
             },
-            "abstain": {
-                "type": "boolean",
-                "description": "True if drops are unclear",
-            },
             "rationale": {
                 "type": "string",
-                "description": "Brief reasoning",
+                "description": "Brief reasoning for cue placement and any null cues",
             },
         },
         "required": [
-            "cue1_beat", "cue2_beat", "cue4_beat", "cue6_beat",
-            "cue7_beat", "cue8_beat", "cue7_midsong", "abstain", "rationale",
+            "cue1_beat", "cue1_confidence",
+            "cue2_beat", "cue2_confidence",
+            "cue4_beat", "cue4_confidence",
+            "cue6_beat", "cue6_confidence",
+            "cue7_beat", "cue7_confidence",
+            "cue8_beat", "cue8_confidence",
+            "cue7_midsong", "rationale",
         ],
         "additionalProperties": False,
     },
@@ -153,23 +189,61 @@ OPENAI_JSON_SCHEMA = {
 
 
 @dataclass
-class LLMPrediction:
-    """Result from LLM cue prediction."""
-    cue1_beat: int | None
-    cue2_beat: int | None
-    cue4_beat: int
-    cue6_beat: int
-    cue7_beat: int | None
-    cue8_beat: int | None
-    cue7_midsong: bool
+class CueConfidence:
+    """Per-cue confidence and reason if unknown."""
+    beat: int | None
     confidence: float
-    abstain: bool
+    reason: str = ""
+
+
+@dataclass
+class LLMPrediction:
+    """Result from LLM cue prediction with per-cue confidence."""
+    cue1: CueConfidence
+    cue2: CueConfidence
+    cue4: CueConfidence
+    cue6: CueConfidence
+    cue7: CueConfidence
+    cue8: CueConfidence
+    cue7_midsong: bool
     rationale: str
     raw_response: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
     cost_usd: float = 0.0
+
+    @property
+    def cue1_beat(self) -> int | None:
+        return self.cue1.beat
+
+    @property
+    def cue2_beat(self) -> int | None:
+        return self.cue2.beat
+
+    @property
+    def cue4_beat(self) -> int | None:
+        return self.cue4.beat
+
+    @property
+    def cue6_beat(self) -> int | None:
+        return self.cue6.beat
+
+    @property
+    def cue7_beat(self) -> int | None:
+        return self.cue7.beat
+
+    @property
+    def cue8_beat(self) -> int | None:
+        return self.cue8.beat
+
+    @property
+    def has_cue4(self) -> bool:
+        return self.cue4.beat is not None
+
+    @property
+    def has_cue6(self) -> bool:
+        return self.cue6.beat is not None
 
 
 @dataclass
@@ -221,11 +295,10 @@ def predict_cues_llm(
         examples: Few-shot examples with full phrase tables (leave-one-out)
 
     Returns:
-        LLMPrediction with all cue positions
+        LLMPrediction with all cue positions and per-cue confidence
 
     Raises:
         LLMAPIError: For API/auth/HTTP errors (should cause immediate failure)
-        CueAbstainError: When model abstains (legitimate abstention)
     """
     phrase_table = format_phrase_table(features)
 
@@ -265,7 +338,7 @@ def predict_cues_llm(
         f"on cue6's 32-beat lattice."
     )
     user_parts.append("")
-    user_parts.append("Return your cue predictions in JSON format.")
+    user_parts.append("Return your cue predictions in JSON format with per-cue confidence scores.")
 
     messages.append({"role": "user", "content": "\n".join(user_parts)})
 
@@ -347,10 +420,9 @@ def predict_cues_llm(
 
 
 def _parse_llm_response(content: str, features: TrackFeatures) -> LLMPrediction:
-    """Parse LLM JSON response.
+    """Parse LLM JSON response with per-cue confidence.
 
     Raises:
-        CueAbstainError: If model chose to abstain
         LLMAPIError: If response is malformed
     """
     content = content.strip()
@@ -368,31 +440,25 @@ def _parse_llm_response(content: str, features: TrackFeatures) -> LLMPrediction:
         msg = f"Failed to parse LLM response as JSON: {e}"
         raise LLMAPIError(f"{msg}\nResponse: {content[:200]}") from e
 
-    if data.get("abstain", False):
-        raise CueAbstainError(f"LLM abstained: {data.get('rationale', 'no reason given')}")
-
-    cue4 = data.get("cue4_beat")
-    cue6 = data.get("cue6_beat")
-
-    if cue4 is None or cue6 is None:
-        rationale = data.get("rationale", "")
-        raise CueAbstainError(f"LLM null cue4/cue6 (abstain): {rationale}")
-
-    cue1 = data.get("cue1_beat")
-    cue2 = data.get("cue2_beat")
-    cue7 = data.get("cue7_beat")
-    cue8 = data.get("cue8_beat")
+    def parse_cue(slot: int) -> CueConfidence:
+        beat_key = f"cue{slot}_beat"
+        conf_key = f"cue{slot}_confidence"
+        beat = data.get(beat_key)
+        conf = float(data.get(conf_key, 0.5))
+        return CueConfidence(
+            beat=int(beat) if beat is not None else None,
+            confidence=conf,
+            reason="" if beat is not None else "model returned null",
+        )
 
     return LLMPrediction(
-        cue1_beat=int(cue1) if cue1 is not None else None,
-        cue2_beat=int(cue2) if cue2 is not None else None,
-        cue4_beat=int(cue4),
-        cue6_beat=int(cue6),
-        cue7_beat=int(cue7) if cue7 is not None else None,
-        cue8_beat=int(cue8) if cue8 is not None else None,
+        cue1=parse_cue(1),
+        cue2=parse_cue(2),
+        cue4=parse_cue(4),
+        cue6=parse_cue(6),
+        cue7=parse_cue(7),
+        cue8=parse_cue(8),
         cue7_midsong=bool(data.get("cue7_midsong", False)),
-        confidence=0.8,  # Fixed confidence; don't trust model self-report
-        abstain=False,
         rationale=str(data.get("rationale", "")),
         raw_response=content,
     )
@@ -401,6 +467,7 @@ def _parse_llm_response(content: str, features: TrackFeatures) -> LLMPrediction:
 def _assess_drop_confidence(features: TrackFeatures) -> AbstainDecision:
     """Assess confidence in drop detection from audio features.
 
+    Only used for GRID uncertainty (whole-song skip).
     Returns AbstainDecision with reasons and adjusted confidence.
     """
     decision = AbstainDecision(should_abstain=False, confidence=0.7)
@@ -424,48 +491,10 @@ def _assess_drop_confidence(features: TrackFeatures) -> AbstainDecision:
 
     max_score = max(drop_scores)
 
-    if max_score < 2.0:
-        decision.add_reason(f"weak drop evidence (max_score={max_score:.1f} < 2.0)", 0.2)
-
-    if max_score < 1.5:
+    if max_score < 1.0:
         decision.should_abstain = True
-        decision.add_reason(f"very weak drop evidence (max_score={max_score:.1f} < 1.5)", 0.3)
+        decision.add_reason(f"very weak drop evidence (max_score={max_score:.1f} < 1.0)", 0.3)
         return decision
-
-    if len(drop_scores) >= 2:
-        sorted_scores = sorted(drop_scores, reverse=True)
-        top_two_ratio = sorted_scores[1] / sorted_scores[0] if sorted_scores[0] > 0 else 0
-
-        if top_two_ratio > 0.9:
-            decision.add_reason(f"ambiguous top drops (ratio={top_two_ratio:.2f})", 0.15)
-
-    if len(drop_scores) >= 3:
-        sorted_scores = sorted(drop_scores, reverse=True)
-        top_three_similar = all(
-            s / sorted_scores[0] > 0.8 for s in sorted_scores[:3]
-        ) if sorted_scores[0] > 0 else False
-
-        if top_three_similar:
-            decision.add_reason("multiple similar-strength drop candidates", 0.1)
-
-    rms_values = [p.rms_db for p in features.phrases]
-    if rms_values:
-        rms_range = max(rms_values) - min(rms_values)
-        if rms_range < 6.0:
-            decision.add_reason(f"flat dynamics (rms_range={rms_range:.1f}dB < 6dB)", 0.15)
-
-    candidates = features.drop_candidates
-    third = features.total_beats // 3
-    two_thirds = 2 * features.total_beats // 3
-
-    first_third_drops = [c for c in candidates if 64 <= c <= third]
-    last_third_drops = [c for c in candidates if c > two_thirds]
-
-    if not first_third_drops and not last_third_drops:
-        decision.add_reason("drops only in middle third - unusual structure", 0.1)
-
-    if decision.confidence < 0.4:
-        decision.should_abstain = True
 
     return decision
 
@@ -473,14 +502,22 @@ def _assess_drop_confidence(features: TrackFeatures) -> AbstainDecision:
 def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
     """Rule-based fallback when LLM is not available.
 
-    Raises:
-        CueAbstainError: When confidence is too low or no valid candidates
+    Returns prediction with per-cue confidence.
     """
     confidence_check = _assess_drop_confidence(features)
 
     if confidence_check.should_abstain:
         reasons = "; ".join(confidence_check.reasons)
-        raise CueAbstainError(f"Abstaining: {reasons}")
+        return LLMPrediction(
+            cue1=CueConfidence(None, 0.0, reasons),
+            cue2=CueConfidence(None, 0.0, reasons),
+            cue4=CueConfidence(None, 0.0, reasons),
+            cue6=CueConfidence(None, 0.0, reasons),
+            cue7=CueConfidence(None, 0.0, reasons),
+            cue8=CueConfidence(None, 0.0, reasons),
+            cue7_midsong=False,
+            rationale=f"abstained: {reasons}",
+        )
 
     phrase_scores = {p.beat_start: p.drop_score for p in features.phrases if p.is_drop_candidate}
     max_score = max(phrase_scores.values()) if phrase_scores else 0
@@ -490,12 +527,18 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
         candidates = features.drop_candidates
 
     if not candidates:
-        raise CueAbstainError("Abstaining: no valid drop candidates")
+        return LLMPrediction(
+            cue1=CueConfidence(None, 0.0, "no candidates"),
+            cue2=CueConfidence(None, 0.0, "no candidates"),
+            cue4=CueConfidence(None, 0.0, "no candidates"),
+            cue6=CueConfidence(None, 0.0, "no candidates"),
+            cue7=CueConfidence(None, 0.0, "no candidates"),
+            cue8=CueConfidence(None, 0.0, "no candidates"),
+            cue7_midsong=False,
+            rationale="no valid drop candidates",
+        )
 
     sorted_by_score = sorted(candidates, key=lambda b: phrase_scores.get(b, 0), reverse=True)
-
-    features.total_beats // 3
-    2 * features.total_beats // 3
 
     half = features.total_beats // 2
     first_half_candidates = [b for b in sorted_by_score if b < half and b >= 64]
@@ -506,43 +549,41 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
     elif sorted_by_score:
         cue4 = sorted_by_score[0]
     else:
-        raise CueAbstainError("Abstaining: cannot find credible first drop candidate")
+        cue4 = None
 
     if second_half_candidates:
         cue6 = second_half_candidates[0]
-    else:
+    elif cue4:
         later_candidates = [b for b in sorted_by_score if b > cue4]
-        if later_candidates:
-            cue6 = later_candidates[0]
-        else:
-            cue6 = cue4
+        cue6 = later_candidates[0] if later_candidates else cue4
+    else:
+        cue6 = None
 
-    if cue6 < cue4:
+    cue4_score = phrase_scores.get(cue4, 0) if cue4 else 0
+    cue6_score = phrase_scores.get(cue6, 0) if cue6 else 0
+
+    cue4_conf = min(0.9, cue4_score / max_score) if max_score > 0 and cue4 else 0.3
+    cue6_conf = min(0.9, cue6_score / max_score) if max_score > 0 and cue6 else 0.3
+
+    if cue4 is None:
+        return LLMPrediction(
+            cue1=CueConfidence(None, 0.0, "no cue4"),
+            cue2=CueConfidence(None, 0.0, "no cue4"),
+            cue4=CueConfidence(None, 0.0, "no first drop candidate"),
+            cue6=CueConfidence(cue6, cue6_conf) if cue6 else CueConfidence(None, 0.0, "no drop"),
+            cue7=CueConfidence(None, 0.0, "no cue6") if not cue6 else CueConfidence(cue6 + 32, 0.6),
+            cue8=CueConfidence(None, 0.0, "no cue6") if not cue6 else CueConfidence(cue6 + 64, 0.6),
+            cue7_midsong=False,
+            rationale="no first drop candidate",
+        )
+
+    if cue6 is not None and cue6 < cue4:
         cue6 = cue4
-
-    cue4_score = phrase_scores.get(cue4, 0)
-    cue6_score = phrase_scores.get(cue6, 0)
-
-    if cue4_score < 1.5:
-        confidence_check.add_reason(f"cue4 has weak score ({cue4_score:.1f})", 0.15)
-    if cue6_score < 1.5 and cue6 != cue4:
-        confidence_check.add_reason(f"cue6 has weak score ({cue6_score:.1f})", 0.15)
-
-    if max_score > 0:
-        cue4_relative = cue4_score / max_score
-        if cue4_relative < 0.5:
-            confidence_check.add_reason(
-                f"cue4 at {cue4} has {cue4_relative:.0%} of max drop score", 0.2
-            )
-
-    if confidence_check.confidence < 0.4:
-        reasons = "; ".join(confidence_check.reasons)
-        raise CueAbstainError(f"Abstaining: {reasons}")
 
     is_bass_music = features.bpm < 100
 
     cue3 = cue4 - 32
-    cue5 = cue6 - 32
+    cue5 = cue6 - 32 if cue6 else None
 
     if is_bass_music:
         cue2 = cue3 - 16
@@ -570,150 +611,167 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
         if cue1 > cue2:
             cue1 = cue2
 
-    cue7 = cue6 + 32
-    cue8 = cue6 + 64
+    cue7 = cue6 + 32 if cue6 else None
+    cue8 = cue6 + 64 if cue6 else None
 
-    min_end_margin = 8
-    max_cue8 = features.total_beats - min_end_margin
-
-    if cue8 > max_cue8:
-        k = max(1, (max_cue8 - cue6) // 32)
-        cue8 = cue6 + k * 32
-
-    if cue8 <= cue7:
-        cue8 = cue7
-
-    if cue8 > features.total_beats - min_end_margin:
-        cue8 = cue7
-
-    # Note: duplicates like cue7=cue8 are allowed near track end
-
-    rationale_parts = ["rule-based"]
-    if confidence_check.reasons:
-        rationale_parts.append(f"warnings: {', '.join(confidence_check.reasons)}")
+    if cue8 and cue8 > features.total_beats - 8:
+        cue8 = cue6 + 32 if cue6 else None
 
     return LLMPrediction(
-        cue1_beat=cue1,
-        cue2_beat=cue2,
-        cue4_beat=cue4,
-        cue6_beat=cue6,
-        cue7_beat=cue7,
-        cue8_beat=cue8,
+        cue1=CueConfidence(cue1, 0.7),
+        cue2=CueConfidence(cue2, 0.7),
+        cue4=CueConfidence(cue4, cue4_conf),
+        cue6=CueConfidence(cue6, cue6_conf) if cue6 else CueConfidence(None, 0.0, "single drop"),
+        cue7=CueConfidence(cue7, 0.6) if cue7 else CueConfidence(None, 0.0, "no cue6"),
+        cue8=CueConfidence(cue8, 0.6) if cue8 else CueConfidence(None, 0.0, "no cue6"),
         cue7_midsong=False,
-        confidence=confidence_check.confidence,
-        abstain=False,
-        rationale="; ".join(rationale_parts),
-        raw_response="",
+        rationale="rule-based",
     )
 
 
 def prediction_to_cue_set(
     prediction: LLMPrediction,
     total_beats: int,
+    *,
+    cue4_threshold: float = 0.5,
+    cue6_threshold: float = 0.5,
+    other_threshold: float = 0.4,
 ) -> CueSet:
-    """Convert LLM prediction to a complete CueSet.
+    """Convert LLM prediction to a CueSet, applying confidence thresholds.
 
-    Lattice rules:
-    - Cue 3: 16 or 32 beats before cue4 (run-up)
-    - Cue 5: 16 or 32 beats before cue6 (run-up)
-    - Cues 1, 2: on 16-beat lattice from cue4; cue1 can equal cue2
-    - Cues 7, 8: on 32-beat lattice from cue6
+    Per-cue abstention:
+    - If cue4 is below threshold or null, cues 1-3 also become null
+    - If cue6 is below threshold or null, cue5 becomes null; cue7/8 if anchored on cue6
+
+    Lattice rules applied for derived cues (cue3, cue5).
+
+    Args:
+        prediction: LLM prediction with per-cue confidence
+        total_beats: Total beats in track
+        cue4_threshold: Confidence threshold for cue4 (default 0.5)
+        cue6_threshold: Confidence threshold for cue6 (default 0.5)
+        other_threshold: Confidence threshold for other cues (default 0.4)
+
+    Returns:
+        CueSet with only confident cues filled, others None
     """
     cues = CueSet(total_beats=total_beats, cue7_midsong=prediction.cue7_midsong)
+    cues.confidences = {}
 
-    cues.cue4 = prediction.cue4_beat
-    cues.cue6 = prediction.cue6_beat
+    # Process cue4 first (anchor for cues 1-3)
+    cue4_valid = (
+        prediction.cue4.beat is not None
+        and prediction.cue4.confidence >= cue4_threshold
+    )
 
-    if prediction.cue4_beat < 32:
-        cues.cue3 = prediction.cue4_beat
-        cues.cue2 = prediction.cue4_beat
-        cues.cue1 = 0
-    elif prediction.cue4_beat < 48:
-        cues.cue3 = prediction.cue4_beat - 16
-    else:
-        cues.cue3 = prediction.cue4_beat - 32
+    if cue4_valid:
+        cues.cue4 = prediction.cue4.beat
+        cues.confidences[4] = prediction.cue4.confidence
 
-    if prediction.cue6_beat < 32:
-        cues.cue5 = prediction.cue6_beat
-    elif prediction.cue6_beat < 48:
-        cues.cue5 = prediction.cue6_beat - 16
-    else:
-        cues.cue5 = prediction.cue6_beat - 32
+        # Derive cue3 from cue4
+        if prediction.cue4.beat >= 32:
+            cues.cue3 = prediction.cue4.beat - 32
+        elif prediction.cue4.beat >= 16:
+            cues.cue3 = prediction.cue4.beat - 16
+        else:
+            cues.cue3 = prediction.cue4.beat
+        cues.confidences[3] = prediction.cue4.confidence * 0.95
 
-    if prediction.cue4_beat >= 32:
-        if prediction.cue2_beat is not None:
-            offset = (prediction.cue4_beat - prediction.cue2_beat) % 16
+        # Process cue2
+        if prediction.cue2.beat is not None and prediction.cue2.confidence >= other_threshold:
+            offset = (prediction.cue4.beat - prediction.cue2.beat) % 16
             if offset != 0:
-                k = round((prediction.cue4_beat - prediction.cue2_beat) / 16)
-                cues.cue2 = prediction.cue4_beat - k * 16
+                k = round((prediction.cue4.beat - prediction.cue2.beat) / 16)
+                cues.cue2 = prediction.cue4.beat - k * 16
             else:
-                cues.cue2 = prediction.cue2_beat
-        else:
-            cues.cue2 = max(0, cues.cue3 - 16)
+                cues.cue2 = prediction.cue2.beat
+            if cues.cue2 < 0:
+                cues.cue2 = 0
+            if cues.cue2 > cues.cue3:
+                cues.cue2 = cues.cue3
+            cues.confidences[2] = prediction.cue2.confidence
 
-        if cues.cue2 < 0:
-            cues.cue2 = 0
-        if cues.cue2 > cues.cue3:
-            cues.cue2 = cues.cue3
-
-    if prediction.cue4_beat >= 32:
-        if prediction.cue1_beat is not None:
-            offset = (prediction.cue4_beat - prediction.cue1_beat) % 16
+        # Process cue1
+        if prediction.cue1.beat is not None and prediction.cue1.confidence >= other_threshold:
+            offset = (prediction.cue4.beat - prediction.cue1.beat) % 16
             if offset != 0:
-                k = round((prediction.cue4_beat - prediction.cue1_beat) / 16)
-                cues.cue1 = prediction.cue4_beat - k * 16
+                k = round((prediction.cue4.beat - prediction.cue1.beat) / 16)
+                cues.cue1 = prediction.cue4.beat - k * 16
             else:
-                cues.cue1 = prediction.cue1_beat
+                cues.cue1 = prediction.cue1.beat
+            if cues.cue1 < 0:
+                cues.cue1 = 0
+            if cues.cue2 is not None and cues.cue1 > cues.cue2:
+                cues.cue1 = cues.cue2
+            cues.confidences[1] = prediction.cue1.confidence
+
+    # Process cue6 (anchor for cue5, and optionally cue7/8)
+    cue6_valid = (
+        prediction.cue6.beat is not None
+        and prediction.cue6.confidence >= cue6_threshold
+    )
+
+    if cue6_valid:
+        cues.cue6 = prediction.cue6.beat
+        cues.confidences[6] = prediction.cue6.confidence
+
+        # Ensure cue6 >= cue4
+        if cues.cue4 is not None and cues.cue6 < cues.cue4:
+            cues.cue6 = cues.cue4
+
+        # Derive cue5 from cue6
+        if prediction.cue6.beat >= 32:
+            cues.cue5 = prediction.cue6.beat - 32
+        elif prediction.cue6.beat >= 16:
+            cues.cue5 = prediction.cue6.beat - 16
         else:
-            cues.cue1 = 0
+            cues.cue5 = prediction.cue6.beat
+        cues.confidences[5] = prediction.cue6.confidence * 0.95
 
-        if cues.cue1 < 0:
-            cues.cue1 = 0
+        # Check cue5 ordering: cue5 must be >= cue4
+        if cues.cue4 is not None and cues.cue5 is not None and cues.cue5 < cues.cue4:
+            # Try 16-beat gap instead
+            if prediction.cue6.beat - 16 >= cues.cue4:
+                cues.cue5 = prediction.cue6.beat - 16
+            else:
+                # Single drop - cue5 at same position or null
+                cues.cue5 = None
 
-    if prediction.cue4_beat >= 32:
-        if cues.cue2 is None or cues.cue2 <= 0:
-            cues.cue2 = cues.cue3
-
-        if cues.cue1 > cues.cue2:
-            cues.cue1 = cues.cue2
-
-    if prediction.cue7_beat is not None:
-        cue7_offset = prediction.cue7_beat - prediction.cue6_beat
-        if cue7_offset % 32 != 0:
-            k = max(1, round(cue7_offset / 32))
-            cues.cue7 = prediction.cue6_beat + k * 32
+        # Process cue7 (on cue6's lattice)
+        if prediction.cue7.beat is not None and prediction.cue7.confidence >= other_threshold:
+            cue7_offset = prediction.cue7.beat - prediction.cue6.beat
+            if cue7_offset % 32 != 0:
+                k = max(1, round(cue7_offset / 32))
+                cues.cue7 = prediction.cue6.beat + k * 32
+            else:
+                cues.cue7 = prediction.cue7.beat
+            cues.confidences[7] = prediction.cue7.confidence
         else:
-            cues.cue7 = prediction.cue7_beat
-    else:
-        cues.cue7 = cues.cue6 + 32
+            # Default: cue6 + 32
+            cues.cue7 = cues.cue6 + 32
+            cues.confidences[7] = prediction.cue6.confidence * 0.8
 
-    if prediction.cue8_beat is not None:
-        cue8_offset = prediction.cue8_beat - prediction.cue6_beat
-        if cue8_offset % 32 != 0:
-            k = max(1, round(cue8_offset / 32))
-            cues.cue8 = prediction.cue6_beat + k * 32
+        # Process cue8 (on cue6's lattice)
+        if prediction.cue8.beat is not None and prediction.cue8.confidence >= other_threshold:
+            cue8_offset = prediction.cue8.beat - prediction.cue6.beat
+            if cue8_offset % 32 != 0:
+                k = max(1, round(cue8_offset / 32))
+                cues.cue8 = prediction.cue6.beat + k * 32
+            else:
+                cues.cue8 = prediction.cue8.beat
+            cues.confidences[8] = prediction.cue8.confidence
         else:
-            cues.cue8 = prediction.cue8_beat
-    else:
-        cues.cue8 = cues.cue6 + 64
+            # Default: cue6 + 64
+            cues.cue8 = cues.cue6 + 64
+            cues.confidences[8] = prediction.cue6.confidence * 0.7
 
-    if cues.cue8 > total_beats - 8:
-        max_cue8 = total_beats - 8
-        k = max(1, (max_cue8 - cues.cue6) // 32)
-        cues.cue8 = cues.cue6 + k * 32
+        # Ensure cue8 not too close to end
+        if cues.cue8 > total_beats - 8:
+            max_cue8 = total_beats - 8
+            k = max(1, (max_cue8 - cues.cue6) // 32)
+            cues.cue8 = cues.cue6 + k * 32
 
-    if cues.cue8 <= cues.cue7:
-        cues.cue8 = cues.cue7
-
-    cues.confidences = {
-        1: 0.8,
-        2: 0.8,
-        3: 0.95,
-        4: 0.9,
-        5: 0.95,
-        6: 0.9,
-        7: 0.8,
-        8: 0.8,
-    }
+        if cues.cue8 <= cues.cue7:
+            cues.cue8 = cues.cue7
 
     return cues

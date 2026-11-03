@@ -6,6 +6,9 @@ Enforces Will's cue system constraints:
 - Cues 1, 2 on 16-beat lattice anchored at cue 4; cue 1 can equal cue 2
 - Cues 7, 8 on 32-beat lattice anchored at cue 6
 - Proper ordering and bounds
+
+Per-cue abstention: ordering conflicts are repaired by nulling low-confidence cues
+rather than rejecting the entire set. Only whole-song skip for grid uncertainty.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ class ValidationResult:
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    nulled_slots: list[int] = field(default_factory=list)  # Slots nulled due to conflicts
 
     def __bool__(self) -> bool:
         return self.valid
@@ -188,6 +192,117 @@ def _check_order(cues: CueSet, errors: list[str]) -> None:
     if cues.cue7 is not None and cues.cue8 is not None:
         if cues.cue7 > cues.cue8:
             errors.append(f"cue7 ({cues.cue7}) must be <= cue8 ({cues.cue8})")
+
+
+def repair_ordering_conflicts(cues: CueSet) -> tuple[CueSet, list[int]]:
+    """Repair ordering conflicts by nulling low-confidence/conflicting cues.
+
+    Instead of rejecting the entire cue set, we null out the problematic cues
+    and keep the good ones. Will prefers 3 good cues over 8 questionable ones.
+
+    Args:
+        cues: Input CueSet with potential conflicts
+
+    Returns:
+        (repaired_cues, nulled_slots) - repaired CueSet and list of slots that were nulled
+    """
+    result = CueSet(
+        cue1=cues.cue1,
+        cue2=cues.cue2,
+        cue3=cues.cue3,
+        cue4=cues.cue4,
+        cue5=cues.cue5,
+        cue6=cues.cue6,
+        cue7=cues.cue7,
+        cue8=cues.cue8,
+        total_beats=cues.total_beats,
+        cue7_midsong=cues.cue7_midsong,
+        confidences=cues.confidences.copy(),
+    )
+    nulled: list[int] = []
+
+    # Fix cue1 > cue2 by nulling cue1 (cue2 is more important as pre-vocal entry)
+    if result.cue1 is not None and result.cue2 is not None and result.cue1 > result.cue2:
+        result.cue1 = None
+        nulled.append(1)
+
+    # Fix cue2 > cue3 by nulling cue2 (cue3 is derived from cue4)
+    if result.cue2 is not None and result.cue3 is not None and result.cue2 > result.cue3:
+        result.cue2 = None
+        nulled.append(2)
+
+    # Fix cue3 >= cue4 by nulling cue3 (keep cue4, it's the anchor)
+    if result.cue3 is not None and result.cue4 is not None and result.cue3 >= result.cue4:
+        result.cue3 = None
+        nulled.append(3)
+
+    # Handle cue4 > cue5 conflict
+    if not result.cue7_midsong:
+        if result.cue4 is not None and result.cue5 is not None and result.cue4 > result.cue5:
+            # This usually means single-drop track - null cue5
+            result.cue5 = None
+            nulled.append(5)
+
+        # Fix cue5 >= cue6 by nulling cue5
+        if result.cue5 is not None and result.cue6 is not None and result.cue5 >= result.cue6:
+            result.cue5 = None
+            if 5 not in nulled:
+                nulled.append(5)
+
+        # Fix cue6 >= cue7 by nulling cue7
+        if result.cue6 is not None and result.cue7 is not None and result.cue6 >= result.cue7:
+            result.cue7 = None
+            nulled.append(7)
+    else:
+        # Mid-song cue7 conflicts
+        if result.cue4 is not None and result.cue7 is not None and result.cue7 <= result.cue4:
+            result.cue7 = None
+            nulled.append(7)
+        if result.cue7 is not None and result.cue5 is not None and result.cue7 >= result.cue5:
+            result.cue7 = None
+            if 7 not in nulled:
+                nulled.append(7)
+
+    # Fix cue7 > cue8 by nulling cue8
+    if result.cue7 is not None and result.cue8 is not None and result.cue7 > result.cue8:
+        result.cue8 = None
+        nulled.append(8)
+
+    return result, nulled
+
+
+def validate_and_repair(cues: CueSet) -> tuple[CueSet, ValidationResult]:
+    """Validate and repair a cue set, nulling conflicting cues instead of rejecting.
+
+    This is the main entry point for per-cue abstention. It:
+    1. Repairs ordering conflicts by nulling the lower-priority cue
+    2. Validates the repaired set
+    3. Returns the repaired set with a ValidationResult
+
+    Hard errors (that still cause validation failure):
+    - Negative beat positions
+    - Lattice violations (cue not on expected grid)
+
+    Soft errors (repaired by nulling):
+    - Ordering conflicts (cue4 > cue5, cue7 > cue8, etc.)
+
+    Args:
+        cues: Input CueSet
+
+    Returns:
+        (repaired_cues, validation_result)
+    """
+    repaired, nulled = repair_ordering_conflicts(cues)
+
+    # Now validate the repaired set
+    result = validate_cue_set(repaired)
+    result.nulled_slots = nulled
+
+    # Add warnings for nulled slots
+    for slot in nulled:
+        result.warnings.append(f"cue{slot} nulled due to ordering conflict")
+
+    return repaired, result
 
 
 def check_confidence_threshold(
