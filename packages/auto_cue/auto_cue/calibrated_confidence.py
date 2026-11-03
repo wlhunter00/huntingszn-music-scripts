@@ -229,19 +229,36 @@ def _check_code_agreement(
     if predicted_beat is None:
         return False, 0.0  # No prediction = no agreement
     
+    # Check against drop_candidates list (includes both 32-beat and 16-beat)
     if not features.drop_candidates:
         return False, 0.0
     
-    # Get candidate scores in relevant region
+    # Get candidate scores from drop_candidates
     half_track = features.total_beats // 2
     
     candidate_scores: list[tuple[int, float]] = []
+    
+    # Build score map from all phrases
+    score_map: dict[int, float] = {}
     for p in features.phrases_32:
-        if p.is_drop_candidate:
-            if is_cue6 and p.beat_start >= half_track * 0.5:
-                candidate_scores.append((p.beat_start, p.drop_score))
-            elif not is_cue6 and p.beat_start < half_track * 1.5:
-                candidate_scores.append((p.beat_start, p.drop_score))
+        score_map[p.beat_start] = p.drop_score
+    for p in features.phrases_16:
+        if p.beat_start not in score_map or p.drop_score > score_map[p.beat_start]:
+            score_map[p.beat_start] = p.drop_score
+    
+    # Filter to relevant region
+    for beat in features.drop_candidates:
+        score = score_map.get(beat, 0.0)
+        if is_cue6 and beat >= half_track * 0.4:
+            candidate_scores.append((beat, score))
+        elif not is_cue6 and beat <= half_track * 1.6:
+            candidate_scores.append((beat, score))
+    
+    if not candidate_scores:
+        # Fallback: use all drop candidates
+        for beat in features.drop_candidates:
+            score = score_map.get(beat, 0.0)
+            candidate_scores.append((beat, score))
     
     if not candidate_scores:
         return False, 0.0
@@ -249,17 +266,28 @@ def _check_code_agreement(
     # Find best candidate and predicted candidate's score
     best_beat, best_score = max(candidate_scores, key=lambda x: x[1])
     
-    # Find the predicted beat's score (if it's a candidate)
+    # Find the predicted beat's score (if it's near a candidate)
     pred_score = 0.0
     pred_is_candidate = False
     for beat, score in candidate_scores:
-        if abs(beat - predicted_beat) <= 8:  # Allow some tolerance
-            pred_score = score
+        if abs(beat - predicted_beat) <= 16:  # Allow some tolerance (16 beats)
+            pred_score = max(pred_score, score)  # Take best score nearby
             pred_is_candidate = True
-            break
     
-    # If predicted beat isn't even a candidate, that's bad
+    # Also check if predicted beat is directly in score_map
     if not pred_is_candidate:
+        # Check nearby phrases
+        for phrase_beat, score in score_map.items():
+            if abs(phrase_beat - predicted_beat) <= 8:
+                pred_score = max(pred_score, score)
+                pred_is_candidate = True
+                break
+    
+    # If predicted beat isn't even near a candidate, lower confidence but not zero
+    if not pred_is_candidate:
+        # Give partial credit if prediction is on the beat grid
+        if predicted_beat % 16 == 0:
+            return False, 0.2
         return False, 0.0
     
     # Check if model's pick is the best or close to it
@@ -347,13 +375,11 @@ def compute_cue_confidence_signals(
     code_agrees, code_rank = _check_code_agreement(features, predicted_beat, is_cue6)
     signals.code_agreement = code_agrees
     signals.code_rank_score = code_rank
-    signals.is_candidate = code_rank > 0  # Predicted beat is in candidate list
+    signals.is_candidate = code_rank > 0.1  # Predicted beat is near a candidate
     signals.rival_16_strength = _compute_rival_16_strength(features, predicted_beat)
     
-    # Build abstain reasons (CRITICAL signals first)
-    if not signals.is_candidate:
-        signals.abstain_reasons.append("prediction not in candidate list")
-    if signals.code_rank_score < 0.5:
+    # Build abstain reasons
+    if signals.code_rank_score < 0.3:
         signals.abstain_reasons.append(f"weak candidate rank ({signals.code_rank_score:.2f})")
     if signals.margin < 0.15:
         signals.abstain_reasons.append(f"low margin ({signals.margin:.2f})")
@@ -381,11 +407,14 @@ def compute_calibrated_confidence(
 ) -> float:
     """Compute calibrated confidence from signals.
     
-    CRITICAL: If prediction isn't even a code candidate, confidence is very low.
-    This is the key to calibration - wrong predictions typically aren't in the
-    candidate list, while correct ones usually are.
-    
-    Default weights are tuned on gold pool.
+    Calibration is based on multiple signals:
+    - code_rank_score: Is this a high-scoring candidate?
+    - margin: Is there a strong second-best candidate?
+    - zoom_agreement: Does this look like a drop at multiple scales?
+    - kick_slam: Is there a kick slam-in at this point?
+    - on_lattice: Is this on the expected 16/32-beat grid?
+    - code_agreement: Does this match code's #1 candidate?
+    - rival_16: Is there a strong candidate ±16 beats away?
     
     Args:
         signals: Computed signals
@@ -394,25 +423,23 @@ def compute_calibrated_confidence(
     Returns:
         Calibrated confidence 0-1
     """
-    # CRITICAL CHECK: If prediction isn't in candidate list, very low confidence
-    if not signals.is_candidate:
-        return 0.15  # Almost certainly wrong
-    
     if weights is None:
-        # Default weights (conservative, prefer false negatives over false positives)
+        # Default weights (balanced for precision/coverage tradeoff)
         weights = {
-            "code_rank": 0.35,  # How good is this candidate vs the best?
-            "margin": 0.20,    # Gap to second-best
-            "zoom_agreement": 0.10,
+            "code_rank": 0.30,  # How good is this candidate vs the best?
+            "margin": 0.15,    # Gap to second-best
+            "zoom_agreement": 0.15,
             "kick_slam": 0.15,
             "on_lattice": 0.05,
-            "code_agreement": 0.15,  # Is this the code's #1 pick?
-            "rival_16_penalty": -0.25,
+            "code_agreement": 0.20,  # Is this the code's #1 pick?
+            "rival_16_penalty": -0.20,
         }
     
+    # Start with base score from code_rank
+    # This gives partial credit even for non-best candidates
     score = 0.0
     
-    # Code rank is critical - measures if this is a good candidate
+    # Code rank - how good is this vs best candidate (0-1)
     score += signals.code_rank_score * weights["code_rank"]
     
     # Other positive signals
@@ -425,8 +452,10 @@ def compute_calibrated_confidence(
     # Penalty for ±16 ambiguity (strong rival = uncertain)
     score += signals.rival_16_strength * weights["rival_16_penalty"]
     
-    # No base confidence - must be earned from signals
-    confidence = score
+    # Small base to avoid being overly pessimistic
+    base = 0.15
+    
+    confidence = base + score
     return float(np.clip(confidence, 0.0, 1.0))
 
 
@@ -526,6 +555,100 @@ def compute_self_consistency_confidence(
     cue6_conf, cue6_consensus = find_consensus(cue6_beats)
     
     return cue4_conf, cue6_conf, cue4_consensus, cue6_consensus
+
+
+@dataclass
+class CalibratedCueResult:
+    """Result of applying calibrated confidence with blank propagation."""
+    cue1: int | None = None
+    cue2: int | None = None
+    cue3: int | None = None
+    cue4: int | None = None
+    cue5: int | None = None
+    cue6: int | None = None
+    cue7: int | None = None
+    cue8: int | None = None
+    
+    cue4_confident: bool = False
+    cue6_confident: bool = False
+    cue4_confidence: float = 0.0
+    cue6_confidence: float = 0.0
+    
+    blanked_slots: list[int] = field(default_factory=list)
+    
+    def to_dict(self) -> dict[int, int]:
+        """Return dict of slot -> beat for non-None cues."""
+        result = {}
+        for i in range(1, 9):
+            beat = getattr(self, f"cue{i}")
+            if beat is not None:
+                result[i - 1] = beat  # Convert to 0-indexed
+        return result
+
+
+def apply_calibrated_thresholds(
+    cue_set,  # CueSet from prediction_to_cue_set
+    cue4_confidence: float,
+    cue6_confidence: float,
+    *,
+    cue4_threshold: float = 0.5,
+    cue6_threshold: float = 0.5,
+) -> CalibratedCueResult:
+    """Apply calibrated confidence thresholds with blank propagation.
+    
+    Blank propagation rules:
+    - cue4 blank → cues 1-3 blank (intro lattice depends on cue4)
+    - cue6 blank → cue5 blank (run-up depends on cue6)
+    - cue6 blank → cue7/8 blank (if anchored on cue6, not mid-song)
+    
+    Args:
+        cue_set: CueSet from prediction
+        cue4_confidence: Calibrated confidence for cue4 (0-1)
+        cue6_confidence: Calibrated confidence for cue6 (0-1)
+        cue4_threshold: Threshold for cue4 to be confident
+        cue6_threshold: Threshold for cue6 to be confident
+        
+    Returns:
+        CalibratedCueResult with blanks propagated
+    """
+    result = CalibratedCueResult(
+        cue4_confidence=cue4_confidence,
+        cue6_confidence=cue6_confidence,
+    )
+    
+    # Check cue4 confidence
+    cue4_confident = cue4_confidence >= cue4_threshold and cue_set.cue4 is not None
+    result.cue4_confident = cue4_confident
+    
+    if cue4_confident:
+        result.cue4 = cue_set.cue4
+        result.cue3 = cue_set.cue3
+        result.cue2 = cue_set.cue2
+        result.cue1 = cue_set.cue1
+    else:
+        # Blank propagation: cue4 blank → cues 1-3 blank
+        result.blanked_slots.extend([1, 2, 3, 4])
+    
+    # Check cue6 confidence
+    cue6_confident = cue6_confidence >= cue6_threshold and cue_set.cue6 is not None
+    result.cue6_confident = cue6_confident
+    
+    if cue6_confident:
+        result.cue6 = cue_set.cue6
+        result.cue5 = cue_set.cue5
+        
+        # cue7/8 only if anchored on cue6 (not mid-song)
+        if not cue_set.cue7_midsong:
+            result.cue7 = cue_set.cue7
+            result.cue8 = cue_set.cue8
+    else:
+        # Blank propagation: cue6 blank → cue5 blank, cue7/8 if anchored
+        result.blanked_slots.append(5)
+        result.blanked_slots.append(6)
+        if not cue_set.cue7_midsong:
+            result.blanked_slots.extend([7, 8])
+    
+    return result
 
 
 @dataclass
