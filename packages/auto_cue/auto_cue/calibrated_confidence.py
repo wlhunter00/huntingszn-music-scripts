@@ -469,6 +469,65 @@ def compute_calibrated_result(
     return result
 
 
+def compute_self_consistency_confidence(
+    predictions: list[tuple[int | None, int | None]],
+    tolerance_beats: int = 16,
+) -> tuple[float, float, int | None, int | None]:
+    """Compute confidence from self-consistency across multiple model samples.
+    
+    Args:
+        predictions: List of (cue4_beat, cue6_beat) from multiple samples
+        tolerance_beats: Max difference to consider predictions "agreeing"
+        
+    Returns:
+        (cue4_confidence, cue6_confidence, consensus_cue4, consensus_cue6)
+        where confidence = fraction of samples that agree with consensus
+    """
+    if not predictions:
+        return 0.0, 0.0, None, None
+    
+    n_samples = len(predictions)
+    
+    def find_consensus(beats: list[int | None]) -> tuple[float, int | None]:
+        """Find most common beat and confidence."""
+        valid_beats = [b for b in beats if b is not None]
+        if not valid_beats:
+            return 0.0, None
+        
+        # Group beats that are within tolerance
+        groups: list[list[int]] = []
+        for beat in valid_beats:
+            found = False
+            for group in groups:
+                if any(abs(beat - g) <= tolerance_beats for g in group):
+                    group.append(beat)
+                    found = True
+                    break
+            if not found:
+                groups.append([beat])
+        
+        # Find largest group
+        if not groups:
+            return 0.0, None
+        
+        largest = max(groups, key=len)
+        consensus = int(np.median(largest))
+        
+        # Confidence = fraction agreeing (with None counted as disagreement)
+        n_agree = len(largest)
+        confidence = n_agree / n_samples
+        
+        return confidence, consensus
+    
+    cue4_beats = [p[0] for p in predictions]
+    cue6_beats = [p[1] for p in predictions]
+    
+    cue4_conf, cue4_consensus = find_consensus(cue4_beats)
+    cue6_conf, cue6_consensus = find_consensus(cue6_beats)
+    
+    return cue4_conf, cue6_conf, cue4_consensus, cue6_consensus
+
+
 @dataclass
 class ThresholdFitResult:
     """Result of fitting confidence thresholds on gold pool."""

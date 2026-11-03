@@ -29,7 +29,7 @@ from auto_cue.calibrated_confidence import (
 POOL_DIR = Path("/workspace/gold-pool")
 MODEL = "gpt-6.1-terra"
 REASONING = "medium"
-MAX_TRACKS = 50  # Limit for cost control (fits thresholds reasonably)
+MAX_TRACKS = 30  # Smaller set for faster iteration (expand later)
 
 
 def main():
