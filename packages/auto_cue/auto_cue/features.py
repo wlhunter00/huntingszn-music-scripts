@@ -503,23 +503,60 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
     sustain_bonus = 0.6 if is_bass_dnb else 0.4
     sustain_penalty = -1.0 if is_bass_dnb else -0.8
 
+    # BPM-specific tuning
+    is_bass = features.bpm < 80
+    is_dnb = 80 <= features.bpm < 100
+
     def compute_drop_score(phrase: PhraseFeatures) -> float:
-        """Compute drop score for a phrase."""
+        """Compute drop score for a phrase. BPM-band-aware scoring."""
         score = 0.0
 
-        # Bass energy (high absolute low_db = loud)
-        # Bonus for sustained high energy
-        if phrase.low_db > -15:
-            score += 0.8  # Very loud bass
-        elif phrase.low_db > -20:
-            score += 0.4  # Loud bass
-        
-        # Transition bonus (reduced from 0.4 to 0.2)
-        score += max(0, phrase.delta_low) * 0.2
+        if is_bass:
+            # BASS (<80 BPM): Use more of original scoring
+            # Bass tracks have quieter drops, rely more on transitions
+            score += max(0, phrase.delta_low) * 0.35  # Higher weight for transitions
+            
+            # Sustain bonus/penalty (original behavior)
+            if phrase.post_sustain >= -2.0:
+                score += sustain_bonus
+            elif phrase.post_sustain < -5.0:
+                score += sustain_penalty  # Full penalty for bass
+                
+        elif is_dnb:
+            # DnB (80-100 BPM): Favor sustained drops over transitions
+            # Bonus for sustained high energy
+            if phrase.low_db > -15:
+                score += 0.8
+            elif phrase.low_db > -20:
+                score += 0.4
+            
+            # Reduced transition weight for DnB
+            score += max(0, phrase.delta_low) * 0.2
+            
+            # Sustain bonus/penalty (only penalize quiet fake-outs)
+            if phrase.post_sustain >= -2.0:
+                score += sustain_bonus
+            elif phrase.post_sustain < -5.0 and phrase.low_db < -20:
+                score += sustain_penalty
+                
+        else:
+            # HOUSE/OTHER (100+ BPM): Balanced approach
+            if phrase.low_db > -15:
+                score += 0.6
+            elif phrase.low_db > -20:
+                score += 0.3
+            
+            score += max(0, phrase.delta_low) * 0.3
+            
+            if phrase.post_sustain >= -2.0:
+                score += sustain_bonus
+            elif phrase.post_sustain < -5.0 and phrase.low_db < -22:
+                score += sustain_penalty
 
+        # Common signals for all BPM bands
         # Kick slam-in (CRITICAL for drop detection)
         kick_slam = max(0, phrase.delta_kick)
-        score += kick_slam * 2.5  # Increased weight
+        score += kick_slam * 2.5
 
         # Section change signals
         score += phrase.contrast_score * 0.4
@@ -534,15 +571,6 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
         # Build-up in previous section
         score += max(0, phrase.build_score) * 0.3
 
-        # Sustain check (real drops stay loud, fake-outs drop off)
-        # Only apply penalty if current phrase ISN'T already loud
-        # (loud phrases followed by breakdown are still real drops)
-        if phrase.post_sustain >= -2.0:
-            score += sustain_bonus
-        elif phrase.post_sustain < -5.0 and phrase.low_db < -20:
-            # Only penalize if current phrase is quiet (likely fake-out)
-            score += sustain_penalty
-
         return score
 
     # Score all 32-beat phrases
@@ -553,7 +581,7 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
             phrase.is_drop_candidate = True
 
     # Also check 16-beat phrases that aren't on 32-beat boundaries
-    # Be more liberal - include any 16-beat phrase with reasonable score
+    # BPM-band-aware thresholds for 16-beat candidates
     for phrase in phrases_16:
         # Skip if already covered by 32-beat phrase
         if phrase.beat_start % 32 == 0:
@@ -561,8 +589,19 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
 
         score = compute_drop_score(phrase)
         phrase.drop_score = score
-        # Lower threshold for 16-beat candidates (they're common in DnB)
-        if score > score_threshold * 0.7:
+        
+        # BPM-band-aware threshold for 16-beat candidates
+        if is_dnb:
+            # DnB: very liberal (16-beat phrases are common)
+            threshold_16 = score_threshold * 0.7
+        elif is_bass:
+            # Bass: conservative (stick closer to original)
+            threshold_16 = score_threshold * 0.9
+        else:
+            # House/other: moderate
+            threshold_16 = score_threshold * 0.8
+            
+        if score > threshold_16:
             phrase.is_drop_candidate = True
 
     # Collect all candidates from both 32-beat and 16-beat phrases

@@ -95,12 +95,12 @@ Each row is a 16-beat phrase. Key columns:
 5. **FAKE-OUT CHECK**: Real drops have **sust >= -2** (energy stays high). \
 If sust < -4, it's likely a fake-out (build peak, not the actual drop)
 
-## ADJACENT CANDIDATE TIE-BREAKER (Bass/DnB only)
-For **bass (<80 BPM)** and **dnb (80-100 BPM)** tracks, when two drop candidates are 16 beats apart:
+## ADJACENT CANDIDATE TIE-BREAKER (DnB only)
+For **dnb (80-100 BPM)** tracks only, when two drop candidates are 16 beats apart:
 - The EARLIER beat often has high Δlow (energy transition/build peak)
 - The LATER beat often has high absolute **low** (sustained drop energy)
 - **PREFER THE LATER ONE** if it has **low > -18** (loud bass = you're IN the drop)
-- This rule does NOT apply to house (115+ BPM) where transitions are more gradual
+- This rule does NOT apply to bass (<80 BPM) or house (115+ BPM)
 
 ## BPM-BASED PATTERNS
 - **bass (<80 BPM)**: cue1 at 0, drops ~64-96 beats apart, heavy kick patterns
