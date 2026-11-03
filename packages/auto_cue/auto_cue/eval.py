@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from auto_cue.features import TrackFeatures, extract_features
+from auto_cue.features import PhraseFeatures, TrackFeatures, extract_features
 from auto_cue.gold import (
     GoldPool,
     GoldTrack,
@@ -80,6 +80,61 @@ def analyze_errors(results: list[EvalResult]) -> dict[str, Any]:
                 analysis["errors_other"] += 1
 
     return analysis
+
+
+def compute_candidate_recall(
+    results: list[EvalResult],
+    features_cache: dict[str, "TrackFeatures"],
+) -> dict[str, dict[str, Any]]:
+    """Compute candidate recall: was the gold drop in the candidate set?
+
+    Args:
+        results: List of evaluation results
+        features_cache: Cache of TrackFeatures by filename
+
+    Returns:
+        Dict with cue4 and cue6 recall stats
+    """
+    stats = {
+        "cue4": {"gold_in_candidates": 0, "gold_not_in_candidates": 0, "total_with_gold": 0},
+        "cue6": {"gold_in_candidates": 0, "gold_not_in_candidates": 0, "total_with_gold": 0},
+    }
+
+    for result in results:
+        features = features_cache.get(result.track_name)
+        if features is None:
+            continue
+
+        candidates = set(features.drop_candidates)
+
+        # Check cue4 (slot 3)
+        if 3 in result.gold_cues:
+            gold_beat = round(result.gold_cues[3])
+            stats["cue4"]["total_with_gold"] += 1
+            # Check if gold is within 1 beat of any candidate
+            if any(abs(c - gold_beat) <= 1 for c in candidates):
+                stats["cue4"]["gold_in_candidates"] += 1
+            else:
+                stats["cue4"]["gold_not_in_candidates"] += 1
+
+        # Check cue6 (slot 5)
+        if 5 in result.gold_cues:
+            gold_beat = round(result.gold_cues[5])
+            stats["cue6"]["total_with_gold"] += 1
+            if any(abs(c - gold_beat) <= 1 for c in candidates):
+                stats["cue6"]["gold_in_candidates"] += 1
+            else:
+                stats["cue6"]["gold_not_in_candidates"] += 1
+
+    # Compute recall percentages
+    for cue in ["cue4", "cue6"]:
+        total = stats[cue]["total_with_gold"]
+        if total > 0:
+            stats[cue]["recall"] = stats[cue]["gold_in_candidates"] / total
+        else:
+            stats[cue]["recall"] = 0.0
+
+    return stats
 
 
 def results_by_bpm_band(results: list[EvalResult]) -> dict[str, dict[str, Any]]:

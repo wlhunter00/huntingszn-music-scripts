@@ -481,47 +481,127 @@ def _aggregate_phrases(
 def _identify_drop_candidates(features: TrackFeatures) -> None:
     """Identify drop candidates using multi-feature scoring.
 
-    Uses post_sustain to penalize fake-out drops (energy drops off after).
-    Real drops have sustained energy for 32+ beats after.
+    Improved candidate recall:
+    - Lower thresholds to catch more drops
+    - Separate pass for LAST drop (second half of track)
+    - Include 16-beat phrases on strong evidence (kick slam-in)
+    - Support off-lattice candidates when audio evidence is strong
 
     BPM-aware thresholds:
-    - Bass/DnB (<100 BPM): Higher threshold, more strict on sustain
+    - Bass/DnB (<100 BPM): Slightly higher threshold
     - House (115+ BPM): Standard threshold
     """
-    phrases = features.phrases_32
-    if len(phrases) < 2:
+    phrases_32 = features.phrases_32
+    phrases_16 = features.phrases_16
+    if len(phrases_32) < 2:
         return
 
     is_bass_dnb = features.bpm < 100
-    score_threshold = 2.5 if is_bass_dnb else 2.0
-    sustain_bonus = 0.8 if is_bass_dnb else 0.5
-    sustain_penalty = -1.5 if is_bass_dnb else -1.0
 
-    for phrase in phrases:
+    # LOWERED thresholds for better recall
+    score_threshold = 1.8 if is_bass_dnb else 1.5
+    sustain_bonus = 0.6 if is_bass_dnb else 0.4
+    sustain_penalty = -1.0 if is_bass_dnb else -0.8
+
+    def compute_drop_score(phrase: PhraseFeatures) -> float:
+        """Compute drop score for a phrase."""
         score = 0.0
+
+        # Bass jump (key signal)
         score += phrase.delta_low * 0.4
-        score += phrase.delta_kick * 2.0
-        score += phrase.contrast_score * 0.3
-        score += phrase.novelty_score * 2.0
 
-        if phrase.pre_drop_gap > 3.0:
-            score += 1.0
+        # Kick slam-in (CRITICAL for drop detection)
+        kick_slam = max(0, phrase.delta_kick)
+        score += kick_slam * 2.5  # Increased weight
 
+        # Section change signals
+        score += phrase.contrast_score * 0.4
+        score += phrase.novelty_score * 1.5
+
+        # Pre-drop gap bonus
+        if phrase.pre_drop_gap > 2.0:
+            score += 0.8
+        if phrase.pre_drop_gap > 4.0:
+            score += 0.5
+
+        # Build-up in previous section
+        score += max(0, phrase.build_score) * 0.3
+
+        # Sustain check (real drops stay loud)
         if phrase.post_sustain >= -2.0:
             score += sustain_bonus
-        elif phrase.post_sustain < -4.0:
+        elif phrase.post_sustain < -5.0:
             score += sustain_penalty
 
+        return score
+
+    # Score all 32-beat phrases
+    for phrase in phrases_32:
+        score = compute_drop_score(phrase)
+        phrase.drop_score = score
         if score > score_threshold:
             phrase.is_drop_candidate = True
+
+    # Also check 16-beat phrases for kick slam-in (off-lattice drops)
+    for phrase in phrases_16:
+        # Skip if already covered by 32-beat phrase
+        if phrase.beat_start % 32 == 0:
+            continue
+
+        # Strong kick slam-in evidence allows off-lattice
+        kick_slam = max(0, phrase.delta_kick)
+        if kick_slam > 0.15 and phrase.delta_low > 8.0:
+            score = compute_drop_score(phrase)
             phrase.drop_score = score
+            # Higher threshold for off-lattice
+            if score > score_threshold + 1.0:
+                phrase.is_drop_candidate = True
 
-    candidates = [(p.beat_start, p.drop_score) for p in phrases if p.is_drop_candidate]
-    candidates.sort(key=lambda x: -x[1])
-    features.drop_candidates = [beat for beat, _ in candidates[:10]]
+    # Collect all candidates from both 32-beat and 16-beat phrases
+    all_candidates: list[tuple[int, float]] = []
 
-    if not features.drop_candidates and phrases:
-        best = max(phrases, key=lambda p: p.delta_low + p.delta_kick)
+    for p in phrases_32:
+        if p.is_drop_candidate:
+            all_candidates.append((p.beat_start, p.drop_score))
+
+    for p in phrases_16:
+        if p.is_drop_candidate and p.beat_start % 32 != 0:
+            all_candidates.append((p.beat_start, p.drop_score))
+
+    # Sort by score and take more candidates (15 instead of 10)
+    all_candidates.sort(key=lambda x: -x[1])
+    features.drop_candidates = [beat for beat, _ in all_candidates[:15]]
+
+    # SEPARATE PASS FOR LAST DROP (cue6 recall was only 10%)
+    # Look in the second half of the track for the LAST strong drop
+    half_track = features.total_beats // 2
+    second_half_candidates = [
+        (beat, score) for beat, score in all_candidates
+        if beat >= half_track
+    ]
+
+    if not second_half_candidates:
+        # Find best drop in second half even if below threshold
+        second_half_phrases = [p for p in phrases_32 if p.beat_start >= half_track]
+        if second_half_phrases:
+            best_second_half = max(second_half_phrases, key=lambda p: p.drop_score)
+            if best_second_half.drop_score > 0.5:  # Very low threshold
+                best_second_half.is_drop_candidate = True
+                if best_second_half.beat_start not in features.drop_candidates:
+                    features.drop_candidates.append(best_second_half.beat_start)
+
+    # Also add the LAST high-scoring candidate explicitly
+    # (cue6 = last drop, not necessarily highest scoring)
+    if second_half_candidates:
+        # Sort by beat position (descending) to find last one
+        second_half_by_pos = sorted(second_half_candidates, key=lambda x: -x[0])
+        for beat, score in second_half_by_pos[:3]:
+            if beat not in features.drop_candidates:
+                features.drop_candidates.append(beat)
+
+    # Fallback: ensure at least one candidate
+    if not features.drop_candidates and phrases_32:
+        best = max(phrases_32, key=lambda p: p.delta_low + p.delta_kick)
         best.is_drop_candidate = True
         best.drop_score = best.delta_low + best.delta_kick
         features.drop_candidates = [best.beat_start]
