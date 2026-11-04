@@ -9,6 +9,7 @@ Provides:
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,6 +19,57 @@ if TYPE_CHECKING:
     from auto_cue.llm import FewShotExample
 
 EXCLUDED_TRACKS = {"qa06.mp3", "qa25.mp3", "qa32.mp3"}
+
+_IDENTITY_NOISE = re.compile(
+    r"\b(remix|edit|bootleg|flip|vip|extended|original|rework|radio|club|mix)\b",
+    re.IGNORECASE,
+)
+_IDENTITY_NONALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def normalize_identity_text(text: str) -> str:
+    """Lowercase title/filename text with remix tags and punctuation removed."""
+    text = re.sub(r"\([^)]*\)", " ", text.lower())
+    text = _IDENTITY_NOISE.sub(" ", text)
+    text = _IDENTITY_NONALNUM.sub(" ", text)
+    return " ".join(text.split())
+
+
+def identity_keys(artist: str, title: str, path: str) -> set[str]:
+    """Keys used to spot the same song under a different library path.
+
+    Short titles are ignored so generic names do not collapse unrelated tracks.
+    """
+    keys: set[str] = set()
+    title_norm = normalize_identity_text(title) if title else ""
+    stem_norm = normalize_identity_text(Path(path).stem) if path else ""
+    artist_norm = normalize_identity_text(artist) if artist else ""
+    if len(title_norm) >= 4:
+        keys.add(f"t:{title_norm}")
+        if artist_norm:
+            keys.add(f"a:{artist_norm}|{title_norm}")
+    if len(stem_norm) >= 4:
+        keys.add(f"t:{stem_norm}")
+        if artist_norm:
+            keys.add(f"a:{artist_norm}|{stem_norm}")
+    return keys
+
+
+def bpm_or_duration_close(
+    bpm_a: float,
+    dur_a: float,
+    bpm_b: float,
+    dur_b: float,
+    *,
+    bpm_tol: float = 3.0,
+    dur_frac: float = 0.08,
+) -> bool:
+    """True when two copies sit on nearly the same tempo or length."""
+    if abs(bpm_a - bpm_b) <= bpm_tol:
+        return True
+    if dur_a > 0 and dur_b > 0:
+        return abs(dur_a - dur_b) / max(dur_a, dur_b) <= dur_frac
+    return False
 
 
 @dataclass
@@ -31,6 +83,11 @@ class PoolTrack:
     duration_s: float
     cues: dict[int, float]  # slot (0-7) -> beat
     subcrate: str = ""  # e.g., "dubstep", "house", "trap"
+    artist: str = ""
+    title: str = ""
+
+    def identity_keys(self) -> set[str]:
+        return identity_keys(self.artist, self.title, self.path)
 
     @property
     def name(self) -> str:
@@ -100,6 +157,45 @@ class GoldPool:
         scored.sort(key=lambda x: x[1])
         return [t for t, _ in scored[:max_results]]
 
+    def paths_to_exclude(
+        self,
+        *,
+        self_path: str | None = None,
+        artist: str = "",
+        title: str = "",
+        source_path: str = "",
+        bpm: float | None = None,
+        duration_s: float = 0.0,
+        extra_paths: set[str] | None = None,
+    ) -> set[str]:
+        """Paths that must not be retrieved as few-shot examples.
+
+        Always drops the track itself. Also drops same-title copies when BPM
+        or duration is close, and any extra paths (the rest of a test fold).
+        """
+        excluded: set[str] = set(extra_paths or ())
+        if self_path:
+            excluded.add(self_path)
+
+        source = source_path
+        if source.startswith("b2:"):
+            source = source.split(":", 1)[1]
+        if source:
+            for path in self.tracks:
+                if path == source or source.endswith(path):
+                    excluded.add(path)
+
+        keys = identity_keys(artist, title, source or self_path or "")
+        if keys and bpm is not None:
+            for path, track in self.tracks.items():
+                if path in excluded:
+                    continue
+                if not (keys & track.identity_keys()):
+                    continue
+                if bpm_or_duration_close(bpm, duration_s, track.bpm, track.duration_s):
+                    excluded.add(path)
+        return excluded
+
 
 def load_gold_pool(
     pool_csv: Path,
@@ -158,6 +254,8 @@ def load_gold_pool(
                 duration_s=dur_s,
                 cues=cues,
                 subcrate=row.get("subcrate", ""),
+                artist=row.get("artist", "") or "",
+                title=row.get("title", "") or "",
             )
             tracks[path] = track
 
@@ -249,6 +347,7 @@ class GoldTrack:
     cues: dict[int, float] = field(default_factory=dict)  # slot (0-7) -> beat
     quirks: list[str] = field(default_factory=list)
     excluded: bool = False  # True for tracks with bad tags
+    source_path: str = ""  # Library path from b2_path, without the b2: prefix
 
     @property
     def name(self) -> str:
@@ -314,6 +413,9 @@ def load_gold_csv(
 
             dur_s = float(row.get("dur_small_s", 0) or row.get("dur_orig_s", 0))
             total_beats = int((dur_s - first_beat_s) * bpm / 60) if dur_s > 0 else 0
+            source = row.get("b2_path", "") or ""
+            if source.startswith("b2:"):
+                source = source.split(":", 1)[1]
 
             track = GoldTrack(
                 filename=filename,
@@ -324,6 +426,7 @@ def load_gold_csv(
                 cues=cues,
                 quirks=quirks,
                 excluded=excluded,
+                source_path=source,
             )
 
             if exclude_bad and excluded:

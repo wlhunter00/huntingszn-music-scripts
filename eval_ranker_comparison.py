@@ -141,8 +141,15 @@ def main():
                 phrase_map[p.beat_start] = p
             
             # Get examples for LLM
+            exclude_paths = pool.paths_to_exclude(
+                title=Path(gold.source_path).stem if gold.source_path else filename,
+                source_path=gold.source_path,
+                bpm=gold.bpm,
+                duration_s=gold.duration_s,
+            )
             examples = get_pool_fewshot_examples(
-                pool, gold.bpm, features.total_beats, POOL_DIR, max_examples=5
+                pool, gold.bpm, features.total_beats, POOL_DIR, max_examples=5,
+                exclude_paths=exclude_paths,
             )
             
             # LLM prediction

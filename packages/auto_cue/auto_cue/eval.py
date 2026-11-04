@@ -710,6 +710,14 @@ def run_eval(
             gold = gold_tracks[audio_file.name]
             if use_fewshot and use_llm:
                 if gold_pool:
+                    title = Path(gold.source_path).stem if gold.source_path else gold.filename
+                    exclude_paths = gold_pool.paths_to_exclude(
+                        artist="",
+                        title=title,
+                        source_path=gold.source_path,
+                        bpm=gold.bpm,
+                        duration_s=gold.duration_s,
+                    )
                     fewshot = get_pool_fewshot_examples(
                         gold_pool,
                         target_bpm=gold.bpm,
@@ -717,6 +725,7 @@ def run_eval(
                         audio_dir=pool_dir,
                         max_examples=5,
                         features_cache=features_cache,
+                        exclude_paths=exclude_paths,
                     )
                 else:
                     fewshot = get_fewshot_examples(

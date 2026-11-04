@@ -60,8 +60,17 @@ def evaluate_track(filename, gold, audio_path, pool, pool_dir, result: EvalResul
         audio_path, gold.bpm, gold.first_beat_s, use_demucs=False  # Skip demucs for speed
     )
     
+    self_path = getattr(gold, "path", None) or getattr(gold, "source_path", None)
+    exclude_paths = pool.paths_to_exclude(
+        self_path=self_path if isinstance(self_path, str) and not str(self_path).startswith("qa:") else None,
+        title=getattr(gold, "title", "") or Path(getattr(gold, "source_path", "") or filename).stem,
+        source_path=getattr(gold, "source_path", "") or "",
+        bpm=gold.bpm,
+        duration_s=getattr(gold, "duration_s", 0.0) or 0.0,
+    )
     examples = get_pool_fewshot_examples(
-        pool, gold.bpm, features.total_beats, pool_dir, max_examples=5
+        pool, gold.bpm, features.total_beats, pool_dir, max_examples=5,
+        exclude_paths=exclude_paths,
     )
     
     prediction = predict_cues_llm(
