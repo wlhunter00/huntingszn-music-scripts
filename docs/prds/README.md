@@ -20,5 +20,6 @@ Most library and catalog scripts were **restored from backup** on 2026-05-25 (`E
 | [minimal-plugin-catalog](minimal-plugin-catalog.md) | **Restored** — `catalogs.minimal_catalog` |
 | [rift-preset-catalog](rift-preset-catalog.md) | **Restored** — `catalogs.rift_catalog` |
 | [gpt-trainer](gpt-trainer.md) | Placeholder — no backup available |
+| [auto-cue accuracy worklog](../auto-cue-accuracy-worklog.md) | Working notes for PR #9 — leakage audit, QA numbers, unfinished clean-fold plan |
 
 Each PRD includes: purpose, I/O, dependencies, paths, behavior notes, and recreation priority.

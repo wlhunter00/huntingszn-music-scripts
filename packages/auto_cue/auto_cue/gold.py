@@ -80,11 +80,18 @@ class GoldPool:
         target_beats: int,
         max_results: int = 10,
         require_audio: bool = True,
+        exclude_paths: set[str] | None = None,
     ) -> list[PoolTrack]:
-        """Get k-nearest tracks by BPM and length similarity."""
+        """Get k-nearest tracks by BPM and length similarity.
+        
+        Args:
+            exclude_paths: Set of paths to exclude (to prevent self-retrieval)
+        """
         candidates = self.tracks.values()
         if require_audio:
             candidates = [t for t in candidates if t.has_audio]
+        if exclude_paths:
+            candidates = [t for t in candidates if t.path not in exclude_paths]
 
         scored = [
             (t, abs(t.bpm - target_bpm) + 0.01 * abs(t.total_beats - target_beats))
@@ -164,6 +171,7 @@ def get_pool_fewshot_examples(
     audio_dir: Path,
     max_examples: int = 5,
     features_cache: dict[str, TrackFeatures] | None = None,
+    exclude_paths: set[str] | None = None,
 ) -> list[FewShotExample]:
     """Get few-shot examples from the gold pool by BPM/length similarity.
 
@@ -174,6 +182,7 @@ def get_pool_fewshot_examples(
         audio_dir: Directory containing gpNNN.mp3 files
         max_examples: Maximum examples to return
         features_cache: Optional cache for extracted features
+        exclude_paths: Set of paths to exclude (to prevent self-retrieval/leakage)
 
     Returns:
         List of FewShotExample with phrase tables and cues
@@ -185,7 +194,8 @@ def get_pool_fewshot_examples(
         features_cache = {}
 
     nearest = pool.get_nearest_by_bpm(
-        target_bpm, target_beats, max_results=max_examples * 2, require_audio=True
+        target_bpm, target_beats, max_results=max_examples * 2, require_audio=True,
+        exclude_paths=exclude_paths,
     )
 
     examples: list[FewShotExample] = []
