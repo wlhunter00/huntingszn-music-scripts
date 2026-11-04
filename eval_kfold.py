@@ -138,6 +138,7 @@ def assign_folds(tracks: list[PoolTrack]) -> list[list[PoolTrack]]:
 
 def _extract_and_cache(spec: tuple[str, str, float, float]) -> str:
     key, audio, bpm, first_beat_s = spec
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = CACHE_DIR / f"{key}.pkl"
     if cache_path.exists():
         return key
