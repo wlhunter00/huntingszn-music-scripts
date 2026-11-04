@@ -1,6 +1,42 @@
 # Auto-cue accuracy worklog
 
-Status as of 2026-11-03 (America/New_York evening). This is the working record for PR #9 (`cursor/auto-cue-package-d400`). Do not treat the held-out 100% / 96.7% figures as real generalization. They are leakage.
+Status as of 2026-11-03 (America/New_York night). This is the working record for PR #9 (`cursor/auto-cue-package-d400`). The earlier held-out **100% / 96.7%** figure was leakage (the track was its own few-shot example). The leak-free numbers are below and in [`auto-cue-kfold-results.md`](auto-cue-kfold-results.md).
+
+## Clean results (5-fold, seed 42)
+
+Few-shot and the GBM for a fold see only the other folds. The scored track, every other track in its test fold, and same-title copies (remix tags stripped, BPM within 3 or duration within 8%) are excluded. A post-run check found **0** self-retrievals and **0** test-fold mates in the few-shot lists. Thresholds were not fit on the test fold: LLM confidence 0.5 (the package default), ranker probability 0.3 (the predeclared gate). `ranker_nopct` zeros `track_pct`.
+
+Gold pool, 289 tracks. The pool is mostly house (247). Bass is 25 tracks, DnB 15, midtempo 2.
+
+| Method | Cue4 | Cue6 | Cue4 prec @ thresh (cov) | Cue6 prec @ thresh (cov) |
+|--------|------|------|---------------------------|---------------------------|
+| LLM only | **67.8%** (196/289) | **59.5%** (172/289) | 68.5% (99%) | 60.4% (99%) |
+| Ranker, with `track_pct` | 68.9% | 59.2% | **84.6%** (72%) | **77.2%** (62%) |
+| Ranker, no `track_pct` | 34.9% | 58.1% | 45.0% (58%) | 76.0% (61%) |
+| Combined, with `track_pct` | 70.6% | 58.1% | 71.3% (99%) | 58.9% (99%) |
+| Combined, no `track_pct` | 47.8% | 57.8% | 48.3% (99%) | 58.4% (99%) |
+
+LLM by band on the pool: bass 52% / 44%, DnB 60% / 47%, house 70% / 62%. ±16 errors for LLM: 11 cue4, 14 cue6.
+
+QA set, 37 tracks, same exclusion rule, GBM trained on the pool with QA title-copies removed:
+
+| Method | Cue4 | Cue6 |
+|--------|------|------|
+| LLM only | **67.6%** (25/37) | **48.6%** (18/37) |
+| Ranker, with `track_pct` | 64.9% | 45.9% |
+| Ranker, no `track_pct` | 40.5% | 51.4% |
+| Combined, with `track_pct` | 62.2% | 48.6% |
+
+QA LLM by band: bass 73% / 36%, DnB 58% / 33%, house 75% / 75%. LLM ±16: 6 cue4, 5 cue6.
+
+What this says:
+
+- The pool is not a 100% problem. Honest LLM accuracy is about **68% / 60%**, in the same range as the QA set, not above it.
+- `track_pct` is most of the cue4 ranker. Removing it drops pool cue4 from 69% to 35%. Cue6 barely moves (59% → 58%), so cue6 is not just “where in the track.”
+- At the predeclared 0.3 probability, the ranker that still has `track_pct` is the high-precision option on the pool (cue4 85% precision at 72% coverage). LLM self-confidence does not abstain: coverage stays ~99% and precision equals accuracy.
+- Combined does not beat LLM on the QA set. On the pool it picks up about 3 cue4 points and gives back about 1 cue6 point.
+
+Fold membership is `docs/auto-cue-kfold-folds.json`. Full band tables are in `docs/auto-cue-kfold-results.md`.
 
 ## What this work is
 
@@ -102,30 +138,14 @@ A crude stem-overlap check between held-out titles and the 37 QA filenames found
 
 8. **Leak audit and the start of the fix.** `get_nearest_by_bpm` and `get_pool_fewshot_examples` now take `exclude_paths`. Default is `None`, so existing callers are unchanged and **still leak** until `eval_split.py` (and any QA eval that might share a filename with the pool) passes the track under test, and until a clean fold passes the entire test fold.
 
-## Current plan (not done)
+## Clean-fold plan (done)
 
-Do this before quoting any gold-pool accuracy again.
-
-1. **Close the few-shot leak.** When scoring a track, pass `exclude_paths` containing at least that track’s pool path. For a test fold, exclude the **entire test fold**, not only the current file, so a near-duplicate in the same fold cannot be the example. Few-shot may only come from the train fold.
-
-2. **Explicit folds.** Replace “shuffle then take 30” with k-fold (5-fold is enough on 289 tracks) over the gold pool, QA filenames removed from every fold. Same seed, path lists written next to the results so a rerun hits the same songs.
-
-3. **Refit only inside the train fold.**
-   - Scoring weights stay frozen at the current BPM-band values for the first clean report (they were fit on QA; say so). Do not retune them on the pool fold and then rescore that fold.
-   - Retrain the GBM per fold on train-fold candidates only. Drop the “first 150 in dict order” cutoff.
-   - Ablate `track_pct`: report GBM with and without it.
-
-4. **Duplicates.** Normalize artist/title from the pool CSV and flag pairs with the same normalized title (and close BPM or duration) that land in different folds or in the QA set. Hold those out of few-shot even if the path differs.
-
-5. **Rerun and report**, per fold and pooled:
-   - cue4 / cue6 accuracy
-   - ±16 and ±32 counts
-   - by BPM band
-   - LLM only vs ranker only vs combined, with the ranker trained on the other folds
-   - precision at the existing per-cue confidence threshold (coverage next to it), not a new threshold fit on the test fold
-   - the same table on the 37-track QA set, with few-shot drawn only from pool tracks that are not the QA file
-
-6. **Do not merge PR #9** on these numbers. Small commits. Do not print the API key.
+1. `GoldPool.paths_to_exclude` drops the scored track, a matching library path, and same-title copies. `get_pool_fewshot_examples` already accepted `exclude_paths`. The package eval, `eval_split.py`, and `eval_ranker_comparison.py` pass that set.
+2. `eval_kfold.py` runs 5-fold (seed 42) on all 289 pool audio files. QA filenames are not in the pool. Fold lists are saved.
+3. Scoring weights stayed frozen. Each fold refits the GBM on train-fold candidates only, with and without `track_pct`.
+4. Title match: parenthesis and remix words stripped, key length at least 4, and BPM within 3 or duration within 8%. Those paths are removed from few-shot and from that fold’s ranker training. Cross-fold title bans on this split were small (3 paths held out of fold 0’s train set).
+5. Results are the tables at the top of this file. Per-fold raw rows are in `kfold_predictions.jsonl` locally and are not committed.
+6. PR #9 stays unmerged.
 
 ## Files touched for this accuracy thread
 
