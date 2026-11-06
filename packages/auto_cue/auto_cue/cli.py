@@ -9,7 +9,7 @@ import argparse
 import csv
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from serato_bpm_cleanup.backup import timestamped_backup_root
 from serato_bpm_cleanup.detect import default_library_roots, serato_is_running
@@ -20,7 +20,6 @@ from auto_cue.llm import (
     CueAbstainError,
     LLMAPIError,
     LLMAuthError,
-    get_api_key,
     predict_cues_llm,
     predict_cues_rules,
     prediction_to_cue_set,
@@ -400,14 +399,16 @@ def main(argv: list[str] | None = None) -> int:
             serato_dir = args.db.parent
             protected_paths = load_protected_paths(serato_dir)
         elif library_root:
-            for candidate in [
-                library_root / "_Serato_",
-                library_root.parent / "_Serato_",
-            ]:
-                if candidate.is_dir():
-                    serato_dir = candidate
-                    protected_paths = load_protected_paths(candidate)
-                    break
+            scan_root = library_root.resolve()
+            candidates = [
+                parent / "_Serato_" for parent in (scan_root, *scan_root.parents)
+                if (parent / "_Serato_").is_dir()
+            ]
+            if args.crate and len(candidates) != 1:
+                raise ValueError("cannot determine an unambiguous volume root; specify --db")
+            if candidates:
+                serato_dir = candidates[0]
+                protected_paths = load_protected_paths(serato_dir)
     except (OSError, ValueError) as e:
         print(f"ERROR: Cannot safely load protected crates: {e}", file=sys.stderr)
         return 1
@@ -418,33 +419,32 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("Serato directory not found; specify --db")
             crate_name = args.crate.replace("\\", "/").replace("/", "%%")
             crate = serato_dir / "Subcrates" / f"{crate_name}.crate"
-            members = {
-                normalize_path(p.replace("\\", "/")) for p in parse_crate_file(crate)
-            }
-            selected = []
-            for path in files:
-                absolute = normalize_path(path.resolve().as_posix())
-                relative = normalize_path(
-                    (Path(library_root.name) / path.relative_to(library_root)).as_posix()
-                )
-                if absolute in members or any(
-                    member == relative or member.endswith("/" + relative) for member in members
-                ):
-                    selected.append(path)
-            files = selected
+            volume_root = serato_dir.parent.resolve()
+            members = set()
+            for member in parse_crate_file(crate):
+                member = member.replace("\\", "/")
+                windows = PureWindowsPath(member)
+                path = Path(member)
+                if windows.drive and not path.is_absolute():
+                    if not windows.is_absolute():
+                        raise ValueError(f"ambiguous drive-relative crate member: {member}")
+                    members.add(normalize_path(windows.as_posix()))
+                    continue
+                if not path.is_absolute():
+                    path = (volume_root / path).resolve()
+                    if not path.is_relative_to(volume_root):
+                        raise ValueError(f"crate member escapes volume root: {member}")
+                members.add(normalize_path(path.resolve().as_posix()))
+            files = [
+                path for path in files
+                if normalize_path(path.resolve().as_posix()) in members
+            ]
         except (OSError, ValueError) as e:
             print(f"ERROR: Cannot safely filter requested crate: {e}", file=sys.stderr)
             return 1
 
     if args.max_tracks:
         files = files[:args.max_tracks]
-
-    if files and not args.no_llm:
-        try:
-            get_api_key()
-        except LLMAuthError as e:
-            print(f"ERROR: {e}; batch aborted", file=sys.stderr)
-            return 3
 
     backup_root = None
     if args.write:
@@ -470,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
         results.append(result)
         if result.fatal_api_error:
             print(f"ERROR: {result.error}; batch aborted", file=sys.stderr)
-            return 3
+            break
 
         prefix = "[dry-run] " if not args.write else ""
         if result.action.startswith("would-write") or result.action == "write":

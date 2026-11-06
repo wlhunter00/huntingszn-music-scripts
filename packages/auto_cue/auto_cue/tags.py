@@ -601,11 +601,11 @@ def cues_to_beats(
     beatgrid: BeatGrid,
 ) -> dict[int, float]:
     """Convert cue positions from ms to beat numbers."""
-    if not beatgrid.first_beat_s or not beatgrid.bpm:
-        return {}
-
     first_beat_s = beatgrid.first_beat_s
     bpm = beatgrid.bpm
+    if (first_beat_s is None or not math.isfinite(first_beat_s)
+            or bpm is None or not math.isfinite(bpm) or bpm <= 0):
+        return {}
     beat_duration_ms = 60000.0 / bpm
 
     result = {}
@@ -620,12 +620,15 @@ def beats_to_ms(beat: float, beatgrid: BeatGrid) -> int:
     """Convert beat number to milliseconds position."""
     first_beat_s = beatgrid.first_beat_s
     bpm = beatgrid.bpm
-    if (first_beat_s is None or not math.isfinite(first_beat_s) or first_beat_s < 0
+    if (first_beat_s is None or not math.isfinite(first_beat_s)
             or bpm is None or not math.isfinite(bpm) or bpm <= 0):
         raise ValueError("beatgrid missing or invalid first_beat_s or bpm")
 
     beat_duration_ms = 60000.0 / bpm
-    return round(first_beat_s * 1000 + beat * beat_duration_ms)
+    position_ms = first_beat_s * 1000 + beat * beat_duration_ms
+    if not math.isfinite(position_ms) or position_ms < 0:
+        raise ValueError("cue position must be finite and nonnegative")
+    return round(position_ms)
 
 
 def create_cues_from_beats(
