@@ -18,6 +18,8 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from serato_bpm_cleanup.markers import MARKERS_V1_ENTRY_LEN, parse_markers_v1_counts
+
 from auto_cue.tags import TrackTags
 
 
@@ -51,31 +53,31 @@ def parse_crate_file(crate_path: Path) -> list[str]:
 
     Crate format: entries are `ptrk` chunks with UTF-16BE paths.
     """
-    paths = []
-    try:
-        data = crate_path.read_bytes()
-    except OSError:
+    def parse_chunks(data: bytes) -> list[str]:
+        paths = []
+        pos = 0
+        while pos < len(data):
+            if len(data) - pos < 8:
+                raise ValueError("truncated crate chunk header")
+            chunk_type = data[pos:pos + 4]
+            chunk_len = struct.unpack(">I", data[pos + 4:pos + 8])[0]
+            pos += 8
+            end = pos + chunk_len
+            if end > len(data):
+                raise ValueError("truncated crate chunk payload")
+            payload = data[pos:end]
+            if chunk_type == b"otrk":
+                paths.extend(parse_chunks(payload))
+            elif chunk_type == b"ptrk":
+                paths.append(normalize_path(payload.decode("utf-16-be").rstrip("\x00")))
+            pos = end
         return paths
 
-    pos = 0
-    while pos < len(data) - 8:
-        chunk_type = data[pos:pos+4]
-        if len(data) < pos + 8:
-            break
-        chunk_len = struct.unpack(">I", data[pos+4:pos+8])[0]
-        pos += 8
-
-        if chunk_type == b"ptrk":
-            try:
-                path_bytes = data[pos:pos+chunk_len]
-                path_str = path_bytes.decode("utf-16-be").rstrip("\x00")
-                paths.append(normalize_path(path_str))
-            except (UnicodeDecodeError, ValueError):
-                pass
-
-        pos += chunk_len
-
-    return paths
+    try:
+        return parse_chunks(crate_path.read_bytes())
+    except (OSError, ValueError, RecursionError) as e:
+        message = f"cannot establish protected crate membership for {crate_path}: {e}"
+        raise ValueError(message) from e
 
 
 def load_protected_paths(serato_dir: Path) -> set[str]:
@@ -126,6 +128,19 @@ def check_protection(
 
     if track.error:
         reasons.append(f"tag error: {track.error}")
+
+    if track.markers_v1_raw is not None:
+        try:
+            data = track.markers_v1_raw
+            if len(data) < 6:
+                raise ValueError("truncated legacy marker header")
+            count = struct.unpack(">I", data[2:6])[0]
+            if len(data) < 6 + count * MARKERS_V1_ENTRY_LEN + 4:
+                raise ValueError("truncated legacy marker entries")
+            if parse_markers_v1_counts(data).total:
+                reasons.append("has legacy cues or loops")
+        except ValueError as e:
+            reasons.append(f"legacy marker error: {e}")
 
     if track.markers2:
         if track.markers2.has_human_cues():

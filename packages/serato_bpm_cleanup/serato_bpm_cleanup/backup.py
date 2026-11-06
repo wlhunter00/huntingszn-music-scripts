@@ -15,7 +15,11 @@ def timestamped_backup_root(base: Path) -> Path:
 def backup_file(src: Path, backup_root: Path, *, relative: Path | None = None) -> Path:
     """Copy ``src`` under ``backup_root`` without following a delete-on-error path."""
     rel = relative if relative is not None else Path(src.name)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError("backup path must be library-relative")
     dest = backup_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    with src.open("rb") as source, dest.open("xb") as target:
+        shutil.copyfileobj(source, target)
+    shutil.copystat(src, dest)
     return dest

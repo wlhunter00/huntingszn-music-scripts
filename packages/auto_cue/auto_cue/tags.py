@@ -433,15 +433,18 @@ def write_track_markers2(
     markers: Markers2Data,
     *,
     backup_root: Path | None = None,
+    relative: Path | None = None,
     delete_v1: bool = True,
 ) -> list[str]:
     """Write Markers2 to a track. Returns list of written tag names."""
     suffix = path.suffix.lower()
 
     if suffix == ".mp3":
-        return _write_mp3_markers2(path, markers, backup_root=backup_root, delete_v1=delete_v1)
+        return _write_mp3_markers2(
+            path, markers, backup_root=backup_root, relative=relative, delete_v1=delete_v1
+        )
     elif suffix == ".flac":
-        return _write_flac_markers2(path, markers, backup_root=backup_root)
+        return _write_flac_markers2(path, markers, backup_root=backup_root, relative=relative)
     else:
         raise ValueError(f"cannot write Serato Markers2 to {suffix}")
 
@@ -451,11 +454,12 @@ def _write_mp3_markers2(
     markers: Markers2Data,
     *,
     backup_root: Path | None = None,
+    relative: Path | None = None,
     delete_v1: bool = True,
 ) -> list[str]:
     """Write Markers2 to MP3."""
     if backup_root:
-        backup_file(path, backup_root)
+        backup_file(path, backup_root, relative=relative)
 
     try:
         tags = ID3(path)
@@ -497,10 +501,11 @@ def _write_flac_markers2(
     markers: Markers2Data,
     *,
     backup_root: Path | None = None,
+    relative: Path | None = None,
 ) -> list[str]:
     """Write Markers2 to FLAC via Vorbis comment."""
     if backup_root:
-        backup_file(path, backup_root)
+        backup_file(path, backup_root, relative=relative)
 
     audio = FLAC(path)
 

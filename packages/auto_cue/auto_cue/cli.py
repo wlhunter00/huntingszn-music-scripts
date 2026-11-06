@@ -249,7 +249,11 @@ def process_track(
                 name="",
             ))
 
-        write_track_markers2(path, markers, backup_root=backup_root, delete_v1=True)
+        write_track_markers2(
+            path, markers, backup_root=backup_root,
+            relative=Path(relative_path) if relative_path is not None else None,
+            delete_v1=True,
+        )
         result.action = "write"
     except Exception as e:
         result.action = "error-write"
@@ -383,17 +387,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     protected_paths: set[str] = set()
-    if args.db:
-        serato_dir = args.db.parent
-        protected_paths = load_protected_paths(serato_dir)
-    elif library_root:
-        for candidate in [
-            library_root / "_Serato_",
-            library_root.parent / "_Serato_",
-        ]:
-            if candidate.is_dir():
-                protected_paths = load_protected_paths(candidate)
-                break
+    try:
+        if args.db:
+            serato_dir = args.db.parent
+            protected_paths = load_protected_paths(serato_dir)
+        elif library_root:
+            for candidate in [
+                library_root / "_Serato_",
+                library_root.parent / "_Serato_",
+            ]:
+                if candidate.is_dir():
+                    protected_paths = load_protected_paths(candidate)
+                    break
+    except (OSError, ValueError) as e:
+        print(f"ERROR: Cannot safely load protected crates: {e}", file=sys.stderr)
+        return 1
 
     if args.max_tracks:
         files = files[:args.max_tracks]
