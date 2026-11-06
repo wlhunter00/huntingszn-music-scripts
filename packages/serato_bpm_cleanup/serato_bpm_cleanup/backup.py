@@ -21,8 +21,10 @@ def backup_file(src: Path, backup_root: Path, *, relative: Path | None = None) -
     if rel.is_absolute() or ".." in rel.parts:
         raise ValueError("backup path must be library-relative")
     dest = backup_root / rel
+    if dest.exists():
+        raise FileExistsError(f"backup already exists: {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".tmp", dir=dest.parent)
+    fd, name = tempfile.mkstemp(prefix=".backup-", suffix=".tmp", dir=dest.parent)
     temp = Path(name)
     try:
         with os.fdopen(fd, "wb") as target, src.open("rb") as source:

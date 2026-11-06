@@ -16,6 +16,25 @@ def test_backup_refuses_overwrite(tmp_path):
     assert dest.read_bytes() == b"original"
 
 
+def test_backup_supports_long_filenames(tmp_path):
+    src = tmp_path / ("a" * 239 + ".mp3")
+    src.write_bytes(b"audio")
+    assert backup_file(src, tmp_path / "backups").read_bytes() == b"audio"
+
+
+def test_existing_backup_is_rejected_before_copying(tmp_path, monkeypatch):
+    src = tmp_path / "track.mp3"
+    src.write_bytes(b"original")
+    root = tmp_path / "backups"
+    backup_file(src, root)
+    monkeypatch.setattr(backup.shutil, "copyfileobj",
+                        lambda *a: pytest.fail("must not copy an existing backup"))
+    monkeypatch.setattr(backup.tempfile, "mkstemp",
+                        lambda **kw: pytest.fail("must not create a temporary file"))
+    with pytest.raises(FileExistsError):
+        backup_file(src, root)
+
+
 @pytest.mark.parametrize("relative", [Path("../track.mp3"), Path("/track.mp3")])
 def test_backup_rejects_non_relative_paths(tmp_path, relative):
     src = tmp_path / "track.mp3"
