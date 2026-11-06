@@ -515,13 +515,13 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
             # BASS (<80 BPM): Use more of original scoring
             # Bass tracks have quieter drops, rely more on transitions
             score += max(0, phrase.delta_low) * 0.35  # Higher weight for transitions
-            
+
             # Sustain bonus/penalty (original behavior)
             if phrase.post_sustain >= -2.0:
                 score += sustain_bonus
             elif phrase.post_sustain < -5.0:
                 score += sustain_penalty  # Full penalty for bass
-                
+
         elif is_dnb:
             # DnB (80-100 BPM): Favor sustained drops over transitions
             # Bonus for sustained high energy
@@ -529,25 +529,25 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
                 score += 0.8
             elif phrase.low_db > -20:
                 score += 0.4
-            
+
             # Reduced transition weight for DnB
             score += max(0, phrase.delta_low) * 0.2
-            
+
             # Sustain bonus/penalty (only penalize quiet fake-outs)
             if phrase.post_sustain >= -2.0:
                 score += sustain_bonus
             elif phrase.post_sustain < -5.0 and phrase.low_db < -20:
                 score += sustain_penalty
-                
+
         else:
             # HOUSE/OTHER (100+ BPM): Balanced approach
             if phrase.low_db > -15:
                 score += 0.6
             elif phrase.low_db > -20:
                 score += 0.3
-            
+
             score += max(0, phrase.delta_low) * 0.3
-            
+
             if phrase.post_sustain >= -2.0:
                 score += sustain_bonus
             elif phrase.post_sustain < -5.0 and phrase.low_db < -22:
@@ -589,7 +589,7 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
 
         score = compute_drop_score(phrase)
         phrase.drop_score = score
-        
+
         # BPM-band-aware threshold for 16-beat candidates
         if is_dnb:
             # DnB: very liberal (16-beat phrases are common)
@@ -600,7 +600,7 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
         else:
             # House/other: moderate
             threshold_16 = score_threshold * 0.8
-            
+
         if score > threshold_16:
             phrase.is_drop_candidate = True
 

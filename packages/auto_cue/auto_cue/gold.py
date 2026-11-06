@@ -140,7 +140,7 @@ class GoldPool:
         exclude_paths: set[str] | None = None,
     ) -> list[PoolTrack]:
         """Get k-nearest tracks by BPM and length similarity.
-        
+
         Args:
             exclude_paths: Set of paths to exclude (to prevent self-retrieval)
         """

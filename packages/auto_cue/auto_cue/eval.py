@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from auto_cue.features import PhraseFeatures, TrackFeatures, extract_features
+from auto_cue.features import TrackFeatures, extract_features
 from auto_cue.gold import (
     GoldPool,
     GoldTrack,
@@ -35,7 +35,7 @@ from auto_cue.tags import (
     cues_to_beats,
     read_track_tags,
 )
-from auto_cue.validate import validate_cue_set, validate_and_repair
+from auto_cue.validate import validate_and_repair
 
 if TYPE_CHECKING:
     pass
@@ -84,7 +84,7 @@ def analyze_errors(results: list[EvalResult]) -> dict[str, Any]:
 
 def compute_candidate_recall(
     results: list[EvalResult],
-    features_cache: dict[str, "TrackFeatures"],
+    features_cache: dict[str, TrackFeatures],
 ) -> dict[str, dict[str, Any]]:
     """Compute candidate recall: was the gold drop in the candidate set?
 
@@ -444,7 +444,7 @@ def evaluate_track(
     # Track which slots were emitted and which were nulled
     result.nulled_slots = validation.nulled_slots
     result.predicted_cues = cues.to_dict()
-    result.emitted_slots = [slot + 1 for slot in result.predicted_cues.keys()]  # Convert to 1-indexed
+    result.emitted_slots = [slot + 1 for slot in result.predicted_cues]  # Convert to 1-indexed
 
     # Calculate errors only for emitted slots
     for slot, pred_beat in result.predicted_cues.items():

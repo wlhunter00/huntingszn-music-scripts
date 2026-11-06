@@ -48,7 +48,7 @@ MODEL_PRICING = {
 
 STATIC_RULES = """# Will's Hot Cue System for Serato DJ
 
-You are placing 8 hot cues on a DJ track. You may leave any cue as null/unknown 
+You are placing 8 hot cues on a DJ track. You may leave any cue as null/unknown
 if you're not confident - Will would rather have 3 good cues than 8 questionable ones.
 
 ## DROP DETECTION (PRIMARY TASK)
@@ -590,7 +590,6 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
     is_bass_music = features.bpm < 100
 
     cue3 = cue4 - 32
-    cue5 = cue6 - 32 if cue6 else None
 
     if is_bass_music:
         cue2 = cue3 - 16
