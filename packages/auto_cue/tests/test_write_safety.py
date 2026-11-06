@@ -23,7 +23,7 @@ def legacy_markers(kind: int, *, set_slot: bool = True) -> bytes:
 
 @pytest.mark.parametrize("kind", [1, 3])
 def test_legacy_only_mp3_is_not_written(sample_mp3, kind):
-    tags = ID3(sample_mp3)
+    tags = ID3()
     tags.add(GEOB(encoding=0, mime="application/octet-stream",
                   desc="Serato Markers_", data=legacy_markers(kind)))
     tags.save(sample_mp3)
