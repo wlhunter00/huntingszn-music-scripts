@@ -10,7 +10,7 @@ description: >-
 Goal: download tracks liked on the HuntingSzn SoundCloud account (https://soundcloud.com/huntingszn/likes) since the last pass that are missing from B2, into `b2:huntingszn-music/Downloads/<YYYY-MM-DD>/` for review (Platinum Notes comes later). B2 is a full mirror of the HuntingSzn drive, so checking B2 is enough.
 
 ## Setup
-- B2: bind `RCLONE_CONFIG_B2_TYPE=b2`, `RCLONE_CONFIG_B2_ACCOUNT=secret:personal:RCLONE_CONFIG_B2_ACCOUNT`, `RCLONE_CONFIG_B2_KEY=secret:personal:RCLONE_CONFIG_B2_KEY` in exec `env`. Only `rclone copy` / `lsf`. Never `sync`, `delete`, `move`, or `purge`.
+- B2: bind `RCLONE_CONFIG_B2_TYPE=b2`, `RCLONE_CONFIG_B2_ACCOUNT=secret:personal:RCLONE_CONFIG_B2_ACCOUNT`, `RCLONE_CONFIG_B2_KEY=secret:personal:RCLONE_CONFIG_B2_KEY` in exec `env`. Only `rclone copy`, `copyto`, and `lsf`. Never `sync`, `delete`, `move`, or `purge`.
 - SoundCloud: log in with the Chrome browser using secrets `SOUNDCLOUD_USERNAME` / `SOUNDCLOUD_PASSWORD` (type `${secret:...}` references, never the value). If SoundCloud asks for a captcha you can't solve, or a new-device code, stop and ask Will.
 - Spotify (for Spotify-connect gates): secrets `SPOTIFY_USERNAME` / `SPOTIFY_PASSWORD`, filled the same way.
 - Gate email: the inbox Will connected through MCP (address in secret `GATE_EMAIL`). Read emailed download links from that inbox with the MCP tools.
