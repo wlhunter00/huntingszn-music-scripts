@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+import math
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -617,11 +618,14 @@ def cues_to_beats(
 
 def beats_to_ms(beat: float, beatgrid: BeatGrid) -> int:
     """Convert beat number to milliseconds position."""
-    if not beatgrid.first_beat_s or not beatgrid.bpm:
-        raise ValueError("beatgrid missing first_beat_s or bpm")
+    first_beat_s = beatgrid.first_beat_s
+    bpm = beatgrid.bpm
+    if (first_beat_s is None or not math.isfinite(first_beat_s) or first_beat_s < 0
+            or bpm is None or not math.isfinite(bpm) or bpm <= 0):
+        raise ValueError("beatgrid missing or invalid first_beat_s or bpm")
 
-    beat_duration_ms = 60000.0 / beatgrid.bpm
-    return round(beatgrid.first_beat_s * 1000 + beat * beat_duration_ms)
+    beat_duration_ms = 60000.0 / bpm
+    return round(first_beat_s * 1000 + beat * beat_duration_ms)
 
 
 def create_cues_from_beats(

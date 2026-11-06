@@ -25,6 +25,10 @@ class LLMAPIError(Exception):
     pass
 
 
+class LLMAuthError(LLMAPIError):
+    """Raised for missing credentials or fatal authentication/authorization failures."""
+
+
 class CueAbstainError(Exception):
     """Raised when the predictor decides to abstain entirely (grid uncertainty only)."""
     pass
@@ -269,7 +273,7 @@ def get_api_key() -> str:
     """Get OpenAI API key from environment."""
     key = os.environ.get("OPENAI_API_KEY", "")
     if not key:
-        raise LLMAPIError("OPENAI_API_KEY environment variable not set")
+        raise LLMAuthError("OPENAI_API_KEY environment variable not set")
     return key
 
 
@@ -386,8 +390,11 @@ def predict_cues_llm(
             response.raise_for_status()
             result = response.json()
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 401:
-            raise LLMAPIError("OpenAI API authentication failed (401): check OPENAI_API_KEY") from e
+        if e.response.status_code in (401, 403):
+            status = e.response.status_code
+            raise LLMAuthError(
+                f"OpenAI API authentication/authorization failed ({status}): check OPENAI_API_KEY"
+            ) from e
         elif e.response.status_code == 429:
             raise LLMAPIError("OpenAI API rate limited (429)") from e
         else:

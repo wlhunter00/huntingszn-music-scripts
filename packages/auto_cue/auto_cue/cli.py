@@ -19,6 +19,8 @@ from auto_cue.features import extract_features
 from auto_cue.llm import (
     CueAbstainError,
     LLMAPIError,
+    LLMAuthError,
+    get_api_key,
     predict_cues_llm,
     predict_cues_rules,
     prediction_to_cue_set,
@@ -26,6 +28,8 @@ from auto_cue.llm import (
 from auto_cue.protection import (
     decide_cue_write,
     load_protected_paths,
+    normalize_path,
+    parse_crate_file,
 )
 from auto_cue.tags import (
     SERATO_DEFAULT_COLORS,
@@ -57,6 +61,7 @@ class ProcessResult:
     error: str | None = None
     confidence: float = 0.0
     is_api_error: bool = False  # True for API/auth/HTTP errors that should fail fast
+    fatal_api_error: bool = False
 
 
 def iter_audio_files(root: Path) -> list[Path]:
@@ -174,6 +179,7 @@ def process_track(
                 result.action = "error-api"
                 result.error = str(e)
                 result.is_api_error = True
+                result.fatal_api_error = isinstance(e, LLMAuthError)
                 return result
             except CueAbstainError as e:
                 if explain:
@@ -187,6 +193,7 @@ def process_track(
         result.action = "error-api"
         result.error = str(e)
         result.is_api_error = True
+        result.fatal_api_error = isinstance(e, LLMAuthError)
         return result
     except CueAbstainError as e:
         result.action = "abstain-rules"
@@ -387,6 +394,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     protected_paths: set[str] = set()
+    serato_dir: Path | None = None
     try:
         if args.db:
             serato_dir = args.db.parent
@@ -397,14 +405,46 @@ def main(argv: list[str] | None = None) -> int:
                 library_root.parent / "_Serato_",
             ]:
                 if candidate.is_dir():
+                    serato_dir = candidate
                     protected_paths = load_protected_paths(candidate)
                     break
     except (OSError, ValueError) as e:
         print(f"ERROR: Cannot safely load protected crates: {e}", file=sys.stderr)
         return 1
 
+    if args.crate:
+        try:
+            if serato_dir is None:
+                raise ValueError("Serato directory not found; specify --db")
+            crate_name = args.crate.replace("\\", "/").replace("/", "%%")
+            crate = serato_dir / "Subcrates" / f"{crate_name}.crate"
+            members = {
+                normalize_path(p.replace("\\", "/")) for p in parse_crate_file(crate)
+            }
+            selected = []
+            for path in files:
+                absolute = normalize_path(path.resolve().as_posix())
+                relative = normalize_path(
+                    (Path(library_root.name) / path.relative_to(library_root)).as_posix()
+                )
+                if absolute in members or any(
+                    member == relative or member.endswith("/" + relative) for member in members
+                ):
+                    selected.append(path)
+            files = selected
+        except (OSError, ValueError) as e:
+            print(f"ERROR: Cannot safely filter requested crate: {e}", file=sys.stderr)
+            return 1
+
     if args.max_tracks:
         files = files[:args.max_tracks]
+
+    if files and not args.no_llm:
+        try:
+            get_api_key()
+        except LLMAuthError as e:
+            print(f"ERROR: {e}; batch aborted", file=sys.stderr)
+            return 3
 
     backup_root = None
     if args.write:
@@ -428,6 +468,9 @@ def main(argv: list[str] | None = None) -> int:
             explain=args.explain,
         )
         results.append(result)
+        if result.fatal_api_error:
+            print(f"ERROR: {result.error}; batch aborted", file=sys.stderr)
+            return 3
 
         prefix = "[dry-run] " if not args.write else ""
         if result.action.startswith("would-write") or result.action == "write":
