@@ -373,7 +373,7 @@ def compute_cue_confidence_signals(
     signals.zoom_agreement = _compute_zoom_agreement(features, predicted_beat)
     signals.kick_slam_strength = _compute_kick_slam_strength(features, predicted_beat)
     phrase = phrase_at_beat(features, predicted_beat)
-    phase = phrase.beat_start if phrase is not None else features.phrase_phase
+    phase = phrase.beat_start % 16 if phrase is not None else features.phrase_phase
     signals.on_lattice = _check_lattice_alignment(predicted_beat, 32 if is_cue6 else 16, phase)
     code_agrees, code_rank = _check_code_agreement(features, predicted_beat, is_cue6)
     signals.code_agreement = code_agrees

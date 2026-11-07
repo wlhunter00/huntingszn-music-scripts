@@ -156,3 +156,16 @@ def test_confidence_missing_and_unrepresented_off_phase_predictions():
     assert signals.zoom_agreement == 0
     assert not signals.on_lattice
     assert 'off-lattice' in signals.abstain_reasons
+
+
+@pytest.mark.parametrize('beat,on_outro_lattice', [(100, True), (116, False), (132, True)])
+def test_cue6_checks_32beat_lattice_of_candidate_phase(beat, on_outro_lattice):
+    track = TrackFeatures(Path('x'), 120, 0, 192, 96, phrase_phase=0)
+    track.phrases_16 = [PhraseFeatures(b, b + 16, 16) for b in (100, 116, 132)]
+    track.phrases_32 = [PhraseFeatures(b, b + 32, 32) for b in (100, 132)]
+    track.drop_candidates = [beat]
+    intro = compute_cue_confidence_signals(track, beat, 4)
+    outro = compute_cue_confidence_signals(track, beat, 6)
+    assert intro.on_lattice
+    assert outro.on_lattice == on_outro_lattice
+    assert ('off-lattice' in outro.abstain_reasons) == (not on_outro_lattice)
