@@ -66,10 +66,9 @@ def _get_phrase_at_beat(
     phrases: list[PhraseFeatures],
     beat: int,
 ) -> PhraseFeatures | None:
-    """Find a containing window on the predicted beat's phrase phase."""
+    """Find a window starting at the predicted beat on its own phase."""
     for p in phrases:
-        if (p.beat_start <= beat < p.beat_end
-                and (beat - p.beat_start) % min(p.phrase_size, 16) == 0):
+        if p.beat_start == beat:
             return p
     return None
 

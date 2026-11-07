@@ -14,10 +14,10 @@ from auto_cue.features import (
     format_phrase_table,
     populate_phrase_features,
 )
-from auto_cue.ranker import FEATURE_NAMES, candidate_vector, phrase_at_beat
 from auto_cue.llm import CueConfidence, LLMPrediction, prediction_to_cue_set
-from auto_cue.validate import validate_cue_set
+from auto_cue.ranker import FEATURE_NAMES, candidate_vector, phrase_at_beat
 from auto_cue.tags import CuePoint, Markers2Data, beats_to_ms, cues_to_beats
+from auto_cue.validate import validate_cue_set
 from serato_bpm_cleanup.beatgrid import BeatGrid, TerminalMarker
 
 
@@ -37,7 +37,7 @@ def beats_with_phase(phase, n=256):
 def test_shifted_intro_snapping_stays_on_lattice_and_validates(cue1, cue2, expected):
     prediction = LLMPrediction(
         cue1=CueConfidence(cue1, 1), cue2=CueConfidence(cue2, 1),
-        cue4=CueConfidence(76, 1), cue6=CueConfidence(None, 0),
+        cue4=CueConfidence(76, 1), cue6=CueConfidence(172, 1),
         cue7=CueConfidence(None, 0), cue8=CueConfidence(None, 0),
         cue7_midsong=False, rationale='',
     )
@@ -175,6 +175,21 @@ def test_confidence_missing_and_unrepresented_off_phase_predictions():
     assert signals.zoom_agreement == 0
     assert not signals.on_lattice
     assert 'off-lattice' in signals.abstain_reasons
+
+
+@pytest.mark.parametrize('has_own_window', [False, True])
+def test_zoom_does_not_credit_previous_32beat_section(has_own_window):
+    track = TrackFeatures(Path('x'), 120, 0, 192, 96)
+    track.phrases_16 = [PhraseFeatures(116, 132, 16)]
+    track.phrases_32 = [PhraseFeatures(
+        100, 132, 32, drop_score=4, is_drop_candidate=True,
+    )]
+    if has_own_window:
+        track.phrases_32.append(PhraseFeatures(
+            116, 148, 32, drop_score=4, is_drop_candidate=True,
+        ))
+    signals = compute_cue_confidence_signals(track, 116, 4)
+    assert signals.zoom_agreement == (0.5 if has_own_window else 0)
 
 
 @pytest.mark.parametrize('beat,on_outro_lattice', [(100, True), (116, False), (132, True)])
