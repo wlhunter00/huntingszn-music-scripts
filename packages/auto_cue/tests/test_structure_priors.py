@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from auto_cue.baseline_analysis import predictions
-from auto_cue.features import BeatFeatures, TrackFeatures
+from auto_cue.features import BeatFeatures, PhraseFeatures, TrackFeatures
 from auto_cue.ranker import apply_build_prior, has_32beat_build
 
 
@@ -100,3 +100,28 @@ def test_predict_track_adds_all_fixed_gate_variants_without_api(evaluator, monke
     assert result['llm4'] == row['llm4']
     assert len(result['build32_predictions']) == 5
     assert all(pair == (64, 64) for pair in result['build32_predictions'].values())
+    assert len(result['lastdrop_predictions']) == 10
+    assert all(pair[0] == predictions(result)[m.removesuffix('_lastdrop')][0]
+               for m, pair in result['lastdrop_predictions'].items())
+
+
+def test_lastdrop_variants_replay_without_changing_cue4(evaluator):
+    row = packet()
+    row['build32_predictions'] = {'combined_pct_build32': (64, 96)}
+    row['lastdrop_predictions'] = {'combined_pct_build32_lastdrop': (64, 64)}
+    report = evaluator.Report()
+    evaluator.record_methods(report, 'house (115+)', 64, 64, row)
+    after = report.by_method['combined_pct_build32_lastdrop']['all']
+    assert after['cue4'].correct == after['cue6'].correct == 1
+    assert after['cue6'].emitted == 0
+    assert predictions(row)['combined_pct_build32_lastdrop'] == (64, 64)
+
+
+def test_lastdrop_training_and_empty_ranking(evaluator):
+    features = track()
+    features.phrases_16 = [PhraseFeatures(b, b + 16, 16) for b in features.drop_candidates]
+    tracks = [SimpleNamespace(path='x', cues={3: 32, 5: 64})]
+    models = evaluator.train_fold_models(tracks, {'x': features})
+    assert models['cue6_lastdrop_pct'] is not None
+    assert evaluator.rank_last_drop(None, features, True) == []
+    assert evaluator.rank_last_drop(models['cue6_lastdrop_pct'], features, True)

@@ -4,6 +4,22 @@ Automatic Serato hot-cue tagger for HuntingSzn. Predicts 8 cues from audio featu
 
 ## Features
 
+### Cue-6 last-drop evaluation variants
+
+The evaluator also reports `_lastdrop` variants of the raw and `_build32`
+methods. A separate cue-6 GBM adds later drop-level window counts, beats to
+track end, post-candidate bass/RMS/kick trends and levels relative to the
+track's strongest candidate windows. The original folds, identity exclusions,
+classifier settings and 0.3 gate are unchanged; cue 4 is never modified.
+Without `track_pct` is not position-free because beats-to-end remains a feature.
+
+These are **evaluation-only** variants. Pool selection improved the saved
+context-model combined+build32 cue 6 from 189/289 to 201/289, but held-out QA
+fell from 20/37 to 19/37. Fixed last-full-section and outro filters performed
+worse and are not enabled in evaluation. Changed picks receive zero emission
+confidence pending calibration. Original metrics and production CLI cue
+writing remain unchanged; the QA result does not justify deployment.
+
 ### Offline structural build prior
 
 The evaluator additionally reports `_build32` variants of its five original

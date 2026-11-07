@@ -21,6 +21,9 @@ def predictions(row):
     result.update({
         method: tuple(picks) for method, picks in row.get("build32_predictions", {}).items()
     })
+    result.update({
+        method: tuple(picks) for method, picks in row.get("lastdrop_predictions", {}).items()
+    })
     return result
 
 

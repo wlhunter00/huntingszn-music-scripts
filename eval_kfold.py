@@ -32,6 +32,7 @@ from auto_cue.features import FEATURE_CACHE_VERSION, extract_features
 from auto_cue.baseline_analysis import predictions as method_predictions
 from auto_cue.gold import GoldPool, PoolTrack, get_pool_fewshot_examples, load_gold_csv, load_gold_pool
 from auto_cue.llm import predict_cues_llm
+from auto_cue.last_drop import apply_last_drop_ranker, last_drop_vectors
 from auto_cue.ranker import apply_build_prior, candidate_vector
 
 POOL_DIR = Path("/workspace/gold-pool")
@@ -52,6 +53,7 @@ LLM_WORKERS = 4
 BANDS = ["bass (<80)", "dnb (80-100)", "midtempo (100-115)", "house (115+)"]
 METHODS = ["llm", "ranker_pct", "ranker_nopct", "combined_pct", "combined_nopct"]
 METHODS += [f"{method}_build32" for method in METHODS]
+METHODS += [f"{method}_lastdrop" for method in METHODS]
 
 
 @dataclass
@@ -223,6 +225,16 @@ def rank_one(model, features, cue: str, include_pct: bool) -> tuple[int | None, 
     return ranking[0] if ranking else (None, 0.0)
 
 
+def rank_last_drop(model, features, include_pct: bool) -> list[tuple[int, float]]:
+    if model is None:
+        return []
+    beats, vectors = last_drop_vectors(features, include_track_pct=include_pct)
+    if not beats:
+        return []
+    probs = model.predict_proba(vectors)[:, 1]
+    return sorted(zip(beats, map(float, probs)), key=lambda item: -item[1])
+
+
 def assert_no_leak(examples, banned_paths: set[str], small_to_path: dict[str, str], self_small: str) -> None:
     self_name = self_small.replace(".mp3", "")
     for example in examples:
@@ -277,6 +289,18 @@ def predict_track(track: PoolTrack, features, pool: GoldPool, feature_cache: dic
         out["build32_predictions"][f"{method}_build32"] = apply_build_prior(
             features, picks, (rankings["cue4", mode], rankings["cue6", mode]),
         )
+    last_rankings = {
+        mode: rank_last_drop(models.get(f"cue6_lastdrop_{mode}"), features, mode == "pct")
+        for mode in ("pct", "nopct")
+    }
+    out["lastdrop_rankings"] = last_rankings
+    out["lastdrop_predictions"] = {}
+    for method, picks in method_predictions(out).items():
+        mode = "nopct" if "nopct" in method else "pct"
+        out["lastdrop_predictions"][f"{method}_lastdrop"] = apply_last_drop_ranker(
+            features, picks, last_rankings[mode], llm_beat=out["llm6"],
+            ranker_only=method.startswith("ranker"), build32=method.endswith("_build32"),
+        )
     return out
 
 
@@ -321,6 +345,12 @@ def record_methods(report: Report, band: str, gold4, gold6, pred: dict) -> None:
             picks[0], base[1] if picks[0] == base[0] else 0.0, base[2],
             picks[1], base[4] if picks[1] == base[3] else 0.0, base[5],
         )
+    for method, picks in pred.get("lastdrop_predictions", {}).items():
+        base = specs[method.removesuffix("_lastdrop")]
+        specs[method] = (
+            picks[0], base[1], base[2],
+            picks[1], base[4] if picks[1] == base[3] else 0.0, base[5],
+        )
     # silence unused
     _ = (c4p, c4t)
     for method, (p4, conf4, thr4, p6, conf6, thr6) in specs.items():
@@ -333,6 +363,22 @@ def train_fold_models(train_tracks, feature_map):
     for cue in ("cue4", "cue6"):
         for pct_name, include_pct in (("pct", True), ("nopct", False)):
             models[f"{cue}_{pct_name}"] = fit_gbm(train_tracks, feature_map, include_pct, cue)
+    for mode in ("pct", "nopct"):
+        xs, ys = [], []
+        for track in train_tracks:
+            features = feature_map.get(track.path)
+            if features is None:
+                continue
+            beats, vectors = last_drop_vectors(features, include_track_pct=mode == "pct")
+            gold = track.cues.get(5)
+            if beats:
+                xs.append(vectors)
+                ys.extend(int(gold is not None and abs(b - gold) <= 1) for b in beats)
+        model = None
+        if xs and len(set(ys)) == 2:
+            model = GradientBoostingClassifier(n_estimators=100, max_depth=3, random_state=SEED)
+            model.fit(np.vstack(xs), np.array(ys))
+        models[f"cue6_lastdrop_{mode}"] = model
     return models
 
 
