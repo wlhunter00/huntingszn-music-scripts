@@ -275,9 +275,11 @@ def ranked_first_drops(model, features: TrackFeatures, *, include_track_pct: boo
     return sorted(zip(beats, scores.tolist()), key=lambda item: (-item[1], item[0]))
 
 
-def format_first_drop_shortlist(features: TrackFeatures, ranking, *, limit: int = 5) -> str:
-    """Render a bounded, scored first-drop list without changing cue-six context."""
-    if limit <= 0:
+def format_first_drop_shortlist(
+    features: TrackFeatures, ranking, *, limit: int | None = None,
+) -> str:
+    """Render scored first-drop candidates without changing cue-six context."""
+    if limit is not None and limit <= 0:
         raise ValueError("Shortlist limit must be positive")
     beats, vectors = first_drop_vectors(features, include_track_pct=True)
     context = dict(zip(beats, vectors))
@@ -290,7 +292,8 @@ def format_first_drop_shortlist(features: TrackFeatures, ranking, *, limit: int 
             candidates.append((beat, score))
             seen.add(beat)
     lines = [
-        f"Cue 4 shortlist (top {limit}, ranker ordered; scores are not LLM confidence):",
+        f"Cue 4 shortlist ({'all candidates' if limit is None else f'top {limit}'}, "
+        "ranker ordered; scores are not LLM confidence):",
         "beat | score | bass gain16 | bass gain32 | bass vs loud | earlier similar",
     ]
     for beat, score in candidates[:limit]:

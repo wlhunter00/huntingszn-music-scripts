@@ -45,12 +45,13 @@ counts intentionally retain musical-order context.
 The evaluator trains cue-4 models on permitted training tracks only. Each track
 has equal total training weight. Cue-6 features and models are unchanged. The
 target prompt replaces its expanded candidate list with a scored, ranker-ordered
-top five for cue 4, while retaining the complete phrase table for independent
+list of all candidates for cue 4, while retaining the complete phrase table for independent
 cue-6 selection. Scores are advisory, not LLM confidence. A subsequent breakdown
 does not disqualify an earlier full mix-in entry merely because `sust` is negative.
 
-The existing 0.3 combined-method gate and shortlist budget of five are fixed,
-not fitted on QA. Any future threshold tuning must be nested within pool folds.
+The existing 0.3 combined-method gate is fixed, not fitted on QA. All scored
+candidates are shown; no top-K truncation is applied. Any future threshold
+tuning must be nested within pool folds.
 The baseline exports a full-pool model to `first-drop-model.json` under its
 output directory. Model files and evaluation outputs are not committed. JSON
 inference does not require sklearn or load executable pickle data:

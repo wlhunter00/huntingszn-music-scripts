@@ -89,7 +89,7 @@ def test_fixed_budget_shortlist_uses_scores_and_original_coordinates():
     features = track()
     beats = features.drop_candidates[:7]
     ranking = [(b, 0.1 * (i + 1)) for i, b in enumerate(beats)]
-    rendered = format_first_drop_shortlist(features, ranking)
+    rendered = format_first_drop_shortlist(features, ranking, limit=5)
     assert f"{beats[-1]} | 0.700" in rendered
     assert f"{beats[0]} | 0.100" not in rendered
     assert len([s for s in rendered.splitlines() if s[:1].isdigit()]) == 5
@@ -98,6 +98,16 @@ def test_fixed_budget_shortlist_uses_scores_and_original_coordinates():
     assert "Alternate phase candidates:" not in table
     assert "independently inspect the full phrase table" in table
     assert format_first_drop_shortlist(features, [])
+
+
+def test_default_prompt_includes_every_scored_candidate_in_rank_order():
+    features = track()
+    ranking = [(b, (i + 1) / 100) for i, b in enumerate(features.drop_candidates)]
+    rendered = format_phrase_table(features, first_drop_ranking=ranking)
+    rows = rendered.split('beat | score | bass gain16')[1].splitlines()
+    beats = [int(row.split(' | ')[0]) for row in rows if row[:1].isdigit()]
+    assert beats == list(reversed(features.drop_candidates))
+    assert 'all candidates, ranker ordered' in rendered
 
 
 @pytest.mark.parametrize("ranking", [[(9999, 0.5)], [(32, float("nan"))], [(32, 1.5)]])
@@ -215,5 +225,5 @@ def test_llm_receives_ranked_shortlist_with_mock_api(monkeypatch):
     result = llm.predict_cues_llm(features, first_drop_ranking=ranking)
     assert result.cue4_beat is None
     prompt = payloads[0]["messages"][-1]["content"]
-    assert "Cue 4 shortlist (top 5" in prompt
+    assert "Cue 4 shortlist (all candidates" in prompt
     assert "Alternate phase candidates:" not in prompt
