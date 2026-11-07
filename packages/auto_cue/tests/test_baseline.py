@@ -188,6 +188,28 @@ def test_combined_uses_predeclared_gate():
     assert predictions(row)["combined_pct"] == (64, 160)
 
 
+def test_rejects_different_checkout_before_loading_evaluator(tmp_path, monkeypatch):
+    monkeypatch.setattr(baseline, "REPO", tmp_path)
+    with pytest.raises(SystemExit, match="outside --repo"):
+        baseline.load_eval()
+
+
+def test_accepts_package_inside_checkout(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        baseline.auto_cue, "__file__", str(tmp_path / "packages/auto_cue/__init__.py")
+    )
+    baseline.validate_package_checkout(tmp_path)
+
+
+def test_checkout_validation_resolves_symlinks(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(checkout, target_is_directory=True)
+    monkeypatch.setattr(baseline.auto_cue, "__file__", str(checkout / "__init__.py"))
+    baseline.validate_package_checkout(alias)
+
+
 @pytest.mark.parametrize(("cue4", "cue6"), [(None, None), (None, 64), (32, None), (32, 64)])
 def test_smoke_accepts_saved_parsed_abstentions(tmp_path, monkeypatch, cue4, cue6):
     monkeypatch.setattr(baseline, "ROOT", tmp_path)

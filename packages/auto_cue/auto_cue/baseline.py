@@ -14,6 +14,8 @@ from pathlib import Path
 
 import httpx
 
+import auto_cue
+
 REPO = Path(__file__).resolve().parents[3]
 ROOT = Path.home() / "autocue-data" / "baseline"
 POOL_DIR = Path("/workspace/gold-pool")
@@ -214,7 +216,15 @@ def install_controls(e):
     e.write_report = lambda pool, qa, cost: original_report(pool, qa, ledger()["actual_cost"])
 
 
+def validate_package_checkout(repo):
+    if not Path(auto_cue.__file__).resolve().is_relative_to(repo.resolve()):
+        raise SystemExit(
+            "Imported auto_cue package is outside --repo; use that checkout environment"
+        )
+
+
 def load_eval():
+    validate_package_checkout(REPO)
     spec = importlib.util.spec_from_file_location("baseline_eval_kfold", REPO / "eval_kfold.py")
     e = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = e
@@ -298,6 +308,7 @@ def _main():
     parser.add_argument("--budget", type=float, default=15.0)
     args = parser.parse_args()
     ROOT, REPO = args.output.resolve(), args.repo.resolve()
+    validate_package_checkout(REPO)
     POOL_DIR, QA_DIR, LIMIT = args.pool_dir.resolve(), args.qa_dir.resolve(), args.budget
     if not 0 < LIMIT < float("inf"):
         parser.error("--budget must be finite and positive")

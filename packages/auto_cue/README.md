@@ -107,6 +107,9 @@ make auto-cue-baseline ARGS='analyze --output /home/ubuntu/autocue-data/my-basel
 
 The target adds the optional scikit-learn evaluation dependency without changing
 production dependencies. `--repo` selects the checkout containing `eval_kfold.py`.
+The imported `auto_cue` package must also live inside that checkout; otherwise
+the runner refuses to mix evaluator and package revisions. Run through that
+checkout's uv environment instead.
 Default roots are `/workspace/gold-pool` and `/workspace/qa-all`.
 An exclusive `.running` file prevents concurrent paid runs in one output
 directory. After an unclean exit, verify its recorded PID is no longer running
