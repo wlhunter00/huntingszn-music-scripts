@@ -1,0 +1,144 @@
+{
+  "model": "gpt-6.1-terra",
+  "reasoning": "medium",
+  "total_tracks": 42,
+  "processed": 40,
+  "abstained": 2,
+  "per_cue_metrics": {
+    "cue1": {
+      "precision": 0.75,
+      "coverage": 0.9523809523809523,
+      "accuracy": 0.7142857142857143,
+      "emitted": 40,
+      "correct": 30,
+      "gold_total": 42
+    },
+    "cue2": {
+      "precision": 0.525,
+      "coverage": 0.9523809523809523,
+      "accuracy": 0.5,
+      "emitted": 40,
+      "correct": 21,
+      "gold_total": 42
+    },
+    "cue3": {
+      "precision": 0.525,
+      "coverage": 0.9523809523809523,
+      "accuracy": 0.5,
+      "emitted": 40,
+      "correct": 21,
+      "gold_total": 42
+    },
+    "cue4": {
+      "precision": 0.55,
+      "coverage": 0.9523809523809523,
+      "accuracy": 0.5238095238095238,
+      "emitted": 40,
+      "correct": 22,
+      "gold_total": 42
+    },
+    "cue5": {
+      "precision": 0.47368421052631576,
+      "coverage": 0.9047619047619048,
+      "accuracy": 0.42857142857142855,
+      "emitted": 38,
+      "correct": 18,
+      "gold_total": 42
+    },
+    "cue6": {
+      "precision": 0.45,
+      "coverage": 0.9523809523809523,
+      "accuracy": 0.42857142857142855,
+      "emitted": 40,
+      "correct": 18,
+      "gold_total": 42
+    },
+    "cue7": {
+      "precision": 0.35,
+      "coverage": 0.9523809523809523,
+      "accuracy": 0.3333333333333333,
+      "emitted": 40,
+      "correct": 14,
+      "gold_total": 42
+    },
+    "cue8": {
+      "precision": 0.4,
+      "coverage": 0.9523809523809523,
+      "accuracy": 0.38095238095238093,
+      "emitted": 40,
+      "correct": 16,
+      "gold_total": 42
+    }
+  },
+  "candidate_recall": {
+    "cue4": {
+      "gold_in_candidates": 23,
+      "gold_not_in_candidates": 14,
+      "total_with_gold": 37,
+      "recall": 0.6216216216216216
+    },
+    "cue6": {
+      "gold_in_candidates": 15,
+      "gold_not_in_candidates": 22,
+      "total_with_gold": 37,
+      "recall": 0.40540540540540543
+    }
+  },
+  "error_analysis": {
+    "total_errors": 158,
+    "errors_16": 58,
+    "errors_32": 16,
+    "errors_other": 84,
+    "cue4_errors_16": 10,
+    "cue4_errors_32": 1,
+    "cue6_errors_16": 6,
+    "cue6_errors_32": 1
+  },
+  "bpm_stats": {
+    "unknown": {
+      "total": 5,
+      "processed": 4,
+      "abstained": 1,
+      "cue4_hits": 2,
+      "cue6_hits": 2,
+      "cue4_all": 40.0,
+      "cue6_all": 40.0
+    },
+    "bass (<80)": {
+      "total": 11,
+      "processed": 10,
+      "abstained": 1,
+      "cue4_hits": 6,
+      "cue6_hits": 5,
+      "cue4_all": 54.54545454545454,
+      "cue6_all": 45.45454545454545
+    },
+    "dnb (80-100)": {
+      "total": 12,
+      "processed": 12,
+      "abstained": 0,
+      "cue4_hits": 4,
+      "cue6_hits": 2,
+      "cue4_all": 33.33333333333333,
+      "cue6_all": 16.666666666666664
+    },
+    "house (115+)": {
+      "total": 12,
+      "processed": 12,
+      "abstained": 0,
+      "cue4_hits": 9,
+      "cue6_hits": 8,
+      "cue4_all": 75.0,
+      "cue6_all": 66.66666666666666
+    },
+    "midtempo (100-115)": {
+      "total": 2,
+      "processed": 2,
+      "abstained": 0,
+      "cue4_hits": 1,
+      "cue6_hits": 1,
+      "cue4_all": 50.0,
+      "cue6_all": 50.0
+    }
+  }
+}

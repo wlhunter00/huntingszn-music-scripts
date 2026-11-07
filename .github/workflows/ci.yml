@@ -26,3 +26,5 @@ jobs:
       - run: uv run --package huntingszn-cover pytest packages/huntingszn_cover/tests
       - run: uv sync --package serato-bpm-cleanup --extra dev
       - run: uv run --package serato-bpm-cleanup pytest packages/serato_bpm_cleanup/tests
+      - run: uv sync --package auto-cue --extra dev
+      - run: uv run --package auto-cue pytest packages/auto_cue/tests

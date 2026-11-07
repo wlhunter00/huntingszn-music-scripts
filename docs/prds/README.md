@@ -20,5 +20,8 @@ Most library and catalog scripts were **restored from backup** on 2026-05-25 (`E
 | [minimal-plugin-catalog](minimal-plugin-catalog.md) | **Restored** — `catalogs.minimal_catalog` |
 | [rift-preset-catalog](rift-preset-catalog.md) | **Restored** — `catalogs.rift_catalog` |
 | [gpt-trainer](gpt-trainer.md) | Placeholder — no backup available |
+| [auto-cue conversation summary](../auto-cue-conversation-summary.md) | PR #9 — what was asked, what shipped, leak-free numbers |
+| [auto-cue accuracy worklog](../auto-cue-accuracy-worklog.md) | PR #9 — decision log and leakage audit |
+| [auto-cue k-fold results](../auto-cue-kfold-results.md) | PR #9 — band tables for LLM, ranker, and combined |
 
 Each PRD includes: purpose, I/O, dependencies, paths, behavior notes, and recreation priority.

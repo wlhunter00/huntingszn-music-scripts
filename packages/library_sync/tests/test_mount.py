@@ -360,15 +360,14 @@ def test_windows_wmic_prefers_huntingszn_when_both_labels_mounted(monkeypatch):
     )
     monkeypatch.setattr(
         "library_sync.mount._has_scripts_repo",
-        lambda path: path.drive[:1].upper() in {"G", "H"},
+        lambda path: path in {Path("G:" + os.sep), Path("H:" + os.sep)},
     )
     monkeypatch.setattr(
         "library_sync.mount._find_windows_volume_ctypes",
         lambda: (_ for _ in ()).throw(AssertionError("ctypes must not run")),
     )
     found = _find_windows_volume()
-    assert found is not None
-    assert found.drive.upper().startswith("H")
+    assert found == Path("H:" + os.sep)
 
 
 def test_windows_wmic_skips_music_label_without_scripts_repo(monkeypatch):
@@ -388,11 +387,10 @@ def test_windows_wmic_skips_music_label_without_scripts_repo(monkeypatch):
     )
     monkeypatch.setattr(
         "library_sync.mount._has_scripts_repo",
-        lambda path: path.drive[:1].upper() == "H",
+        lambda path: path == Path("H:" + os.sep),
     )
     found = _find_windows_volume()
-    assert found is not None
-    assert found.drive.upper().startswith("H")
+    assert found == Path("H:" + os.sep)
 
 
 def test_ctypes_volume_scan_sets_argtypes_and_uses_logical_drive_mask():

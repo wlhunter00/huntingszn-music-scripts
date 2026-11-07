@@ -889,8 +889,9 @@ def test_stub_discovers_volume_names_not_drive_letter():
     assert VOLUME_NAME_ALT in stub
     assert "HuntingSzn" in stub
     assert "Will Hunter Music" in stub
-    assert "H:\\" not in stub
-    assert "H:" not in stub
+    strings = [node.value for node in ast.walk(ast.parse(stub))
+               if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    assert all("H:" not in value for value in strings)
     assert "--package" in stub
     assert "library-sync" in stub
     assert "watch" in stub
