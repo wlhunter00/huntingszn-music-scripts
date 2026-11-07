@@ -176,3 +176,6 @@ studio:
 lint:
 	uv run ruff check packages config
 	uv run python -m compileall -q config packages
+
+auto-cue-baseline:
+	uv run --package auto-cue --with scikit-learn python -m auto_cue.baseline $(ARGS)
