@@ -707,7 +707,7 @@ def prediction_to_cue_set(
             else:
                 cues.cue2 = prediction.cue2.beat
             if cues.cue2 < 0:
-                cues.cue2 = 0
+                cues.cue2 = prediction.cue4.beat % 16
             if cues.cue2 > cues.cue3:
                 cues.cue2 = cues.cue3
             cues.confidences[2] = prediction.cue2.confidence
@@ -721,9 +721,10 @@ def prediction_to_cue_set(
             else:
                 cues.cue1 = prediction.cue1.beat
             if cues.cue1 < 0:
-                cues.cue1 = 0
-            if cues.cue2 is not None and cues.cue1 > cues.cue2:
-                cues.cue1 = cues.cue2
+                cues.cue1 = prediction.cue4.beat % 16
+            upper = cues.cue2 if cues.cue2 is not None else cues.cue3
+            if cues.cue1 > upper:
+                cues.cue1 = upper
             cues.confidences[1] = prediction.cue1.confidence
 
     # Process cue6 (anchor for cue5, and optionally cue7/8)

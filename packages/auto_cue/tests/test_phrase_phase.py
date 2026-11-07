@@ -15,6 +15,8 @@ from auto_cue.features import (
     populate_phrase_features,
 )
 from auto_cue.ranker import FEATURE_NAMES, candidate_vector, phrase_at_beat
+from auto_cue.llm import CueConfidence, LLMPrediction, prediction_to_cue_set
+from auto_cue.validate import validate_cue_set
 from auto_cue.tags import CuePoint, Markers2Data, beats_to_ms, cues_to_beats
 from serato_bpm_cleanup.beatgrid import BeatGrid, TerminalMarker
 
@@ -25,6 +27,23 @@ def beats_with_phase(phase, n=256):
         rms_db=-6 if (i - phase) % 32 < 16 else -20,
         kick_onset=2 if (i - phase) % 32 < 16 else 0,
     ) for i in range(n)]
+
+
+@pytest.mark.parametrize('cue1,cue2,expected', [
+    (0, 0, (12, 12)), (-20, -10, (12, 12)),
+    (100, 100, (44, 44)), (100, 28, (28, 28)),
+    (100, None, (44, None)), (None, None, (None, None)),
+])
+def test_shifted_intro_snapping_stays_on_lattice_and_validates(cue1, cue2, expected):
+    prediction = LLMPrediction(
+        cue1=CueConfidence(cue1, 1), cue2=CueConfidence(cue2, 1),
+        cue4=CueConfidence(76, 1), cue6=CueConfidence(None, 0),
+        cue7=CueConfidence(None, 0), cue8=CueConfidence(None, 0),
+        cue7_midsong=False, rationale='',
+    )
+    cues = prediction_to_cue_set(prediction, 256)
+    assert (cues.cue1, cues.cue2) == expected
+    assert validate_cue_set(cues).valid
 
 
 @pytest.mark.parametrize('phase', [0, 4, 8, 12])
