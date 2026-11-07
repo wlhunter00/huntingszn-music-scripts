@@ -57,8 +57,11 @@ You are placing 8 hot cues on a DJ track. You may leave any cue as null/unknown
 if you're not confident - Will would rather have 3 good cues than 8 questionable ones.
 
 ## DROP DETECTION (PRIMARY TASK)
-- **Cue 4** = FIRST DROP: Biggest energy jump. Look for highest kick density jump \
-(Δkick) and contrast score. Usually beat 64-128.
+- **Cue 4** = FIRST DROP / MIX-IN: the first full musical entry suitable for mixing, \
+not necessarily the biggest bass jump or the strongest later return. Compare the \
+early alternatives: an intro kick-in is not automatically the first drop, but a \
+weaker or shorter first drop still counts. Do not collapse to a later single drop \
+just because it sustains longer. Usually beat 64-128, but timing is not a rule.
 - **Cue 6** = LAST DROP: Final big energy moment. Often the last high-scoring drop, \
 96-192 beats after cue4. Single-drop tracks: cue6=cue4.
 
@@ -93,7 +96,9 @@ Key columns:
 - **contr**: Multi-scale before/after contrast (section boundary detection)
 - **novel**: Self-similarity novelty (new section, not repeating)
 - **gap**: Pre-drop gap (quiet moment right before the drop)
-- **sust**: Post-drop sustain (CRITICAL: real drops stay loud, fake-outs drop off)
+- **sust**: Bass in the NEXT window relative to this window; a negative value can \
+mean a later breakdown, not a fake drop. For cue4, compare immediate bass gain \
+and full-energy level rather than requiring the following 32 beats to stay louder.
 - **drop**: Combined drop score (higher = more likely drop point)
 
 ## DROP DETECTION STRATEGY
@@ -101,8 +106,10 @@ Key columns:
 2. High **contr** and **novel** = section change = potential drop
 3. High **build** or **snare** in the phrase BEFORE = buildup into drop
 4. High **gap** = quiet moment right before the drop
-5. **FAKE-OUT CHECK**: Real drops have **sust >= -2** (energy stays high). \
-If sust < -4, it's likely a fake-out (build peak, not the actual drop)
+5. For cue6, **sust >= -2** supports a lasting final return. For cue4, do NOT \
+reject an earlier full musical entry merely because sust < -4: the following \
+window may contain the next breakdown. The shortlist's gain16/gain32 and bass \
+level describe the immediate entry; compare those with the earlier-similar count.
 
 ## ADJACENT CANDIDATE TIE-BREAKER (DnB only)
 For **dnb (80-100 BPM)** tracks only, when two drop candidates are 16 beats apart:
@@ -300,6 +307,7 @@ def predict_cues_llm(
     reasoning_effort: str = DEFAULT_REASONING_EFFORT,
     genre_bucket: str | None = None,
     examples: list[FewShotExample] | None = None,
+    first_drop_ranking: list[tuple[int, float]] | None = None,
 ) -> LLMPrediction:
     """Use LLM to predict all cue positions with model judgment.
 
@@ -309,6 +317,7 @@ def predict_cues_llm(
         reasoning_effort: Reasoning effort for reasoning models
         genre_bucket: Genre hint (e.g., "dubstep/bass", "dnb", "house/dance")
         examples: Few-shot examples with full phrase tables (leave-one-out)
+        first_drop_ranking: Fold-trained first-drop candidate scores, in original coordinates
 
     Returns:
         LLMPrediction with all cue positions and per-cue confidence
@@ -316,7 +325,8 @@ def predict_cues_llm(
     Raises:
         LLMAPIError: For API/auth/HTTP errors (should cause immediate failure)
     """
-    phrase_table = format_phrase_table(features)
+    phrase_table = (format_phrase_table(features) if first_drop_ranking is None else
+                    format_phrase_table(features, first_drop_ranking=first_drop_ranking))
 
     messages: list[dict[str, str]] = []
 
