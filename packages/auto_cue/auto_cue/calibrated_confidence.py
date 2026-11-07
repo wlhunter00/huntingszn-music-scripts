@@ -190,7 +190,7 @@ def _compute_kick_slam_strength(
         return 0.0
 
     # Find the phrase at this beat
-    phrase = phrase_at_beat(features, predicted_beat)
+    phrase = _get_phrase_at_beat(features.phrases_16, predicted_beat)
     if phrase is None:
         return 0.0
 

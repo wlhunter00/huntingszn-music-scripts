@@ -169,3 +169,16 @@ def test_cue6_checks_32beat_lattice_of_candidate_phase(beat, on_outro_lattice):
     assert intro.on_lattice
     assert outro.on_lattice == on_outro_lattice
     assert ('off-lattice' in outro.abstain_reasons) == (not on_outro_lattice)
+
+
+@pytest.mark.parametrize('phase', [0, 4])
+@pytest.mark.parametrize('slot', [4, 6])
+def test_kick_slam_uses_16beat_onset_when_32beat_average_is_weak(phase, slot):
+    beat = 96 + phase
+    track = TrackFeatures(Path('x'), 120, 0, 192, 96, phrase_phase=phase)
+    track.phrases_16 = [PhraseFeatures(beat, beat + 16, 16, delta_kick=0.5, delta_low=10)]
+    track.phrases_32 = [PhraseFeatures(beat, beat + 32, 32, delta_kick=0, delta_low=0)]
+    track.drop_candidates = [beat]
+    signals = compute_cue_confidence_signals(track, beat, slot)
+    assert signals.kick_slam_strength == 1
+    assert not any(reason.startswith('weak kick slam') for reason in signals.abstain_reasons)
