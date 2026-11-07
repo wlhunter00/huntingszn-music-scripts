@@ -61,7 +61,38 @@ def stop(reason):
     raise BaselineStop(reason)
 
 
+def repair_prediction_tail(path):
+    if not path.exists():
+        return
+    data = path.read_bytes()
+    lines = data.splitlines(keepends=True)
+    offset = 0
+    for index, line in enumerate(lines):
+        if line.strip():
+            try:
+                json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                if index != len(lines) - 1:
+                    raise
+                data = data[:offset]
+                break
+        offset += len(line)
+    if data and not data.endswith(b"\n"):
+        data += b"\n"
+    if data != path.read_bytes():
+        temp = path.with_suffix(".repair.tmp")
+        try:
+            with temp.open("wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temp.replace(path)
+        finally:
+            temp.unlink(missing_ok=True)
+
+
 def install_controls(e):
+    repair_prediction_tail(e.PRED_PATH)
     original_post = httpx.Client.post
 
     def guarded_post(client, url, **kwargs):

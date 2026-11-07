@@ -49,6 +49,39 @@ def test_budget_aborts_before_request(guarded, monkeypatch):
     assert (baseline.ROOT / "STOP.json").exists()
 
 
+@pytest.mark.parametrize("tail", [b'{"split":', b'{"id":"\xf0\x9f', b"{bad}\n"])
+def test_repairs_only_malformed_final_prediction(tmp_path, tail):
+    path = tmp_path / "predictions.jsonl"
+    saved = b'{"split":"fold0","id":"completed"}\n'
+    path.write_bytes(saved + tail)
+    baseline.repair_prediction_tail(path)
+    assert path.read_bytes() == saved
+    with path.open("a") as stream:
+        stream.write('{"split":"fold0","id":"next"}\n')
+    assert [json.loads(line)["id"] for line in path.read_text().splitlines()] == [
+        "completed",
+        "next",
+    ]
+
+
+def test_malformed_earlier_prediction_fails_without_rewrite(tmp_path):
+    path = tmp_path / "predictions.jsonl"
+    data = b'{bad}\n{"split":"fold0","id":"completed"}\n'
+    path.write_bytes(data)
+    with pytest.raises(json.JSONDecodeError):
+        baseline.repair_prediction_tail(path)
+    assert path.read_bytes() == data
+
+
+@pytest.mark.parametrize("data", [b"", b'{"id":"completed"}\n', b'{"id":"completed"}'])
+def test_preserves_valid_prediction_tail(tmp_path, data):
+    path = tmp_path / "predictions.jsonl"
+    baseline.repair_prediction_tail(path)
+    path.write_bytes(data)
+    baseline.repair_prediction_tail(path)
+    assert path.read_bytes() == data + (b"\n" if data and not data.endswith(b"\n") else b"")
+
+
 def test_resume_reuses_durable_response_before_prediction_append(guarded):
     calls, _, evaluator = guarded
     with httpx.Client() as client:
