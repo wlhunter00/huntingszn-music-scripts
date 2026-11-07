@@ -29,9 +29,10 @@ if not os.environ.get("OPENAI_API_KEY"):
     sys.exit(1)
 
 from auto_cue.features import FEATURE_CACHE_VERSION, extract_features
+from auto_cue.baseline_analysis import predictions as method_predictions
 from auto_cue.gold import GoldPool, PoolTrack, get_pool_fewshot_examples, load_gold_csv, load_gold_pool
 from auto_cue.llm import predict_cues_llm
-from auto_cue.ranker import candidate_vector
+from auto_cue.ranker import apply_build_prior, candidate_vector
 
 POOL_DIR = Path("/workspace/gold-pool")
 QA_DIR = Path("/workspace/qa-all")
@@ -50,6 +51,7 @@ RANKER_THRESHOLD = 0.3
 LLM_WORKERS = 4
 BANDS = ["bass (<80)", "dnb (80-100)", "midtempo (100-115)", "house (115+)"]
 METHODS = ["llm", "ranker_pct", "ranker_nopct", "combined_pct", "combined_nopct"]
+METHODS += [f"{method}_build32" for method in METHODS]
 
 
 @dataclass
@@ -193,9 +195,9 @@ def fit_gbm(tracks: list[PoolTrack], feature_map: dict, include_pct: bool, cue: 
     return model
 
 
-def rank_one(model, features, cue: str, include_pct: bool) -> tuple[int | None, float]:
+def rank_candidates(model, features, cue: str, include_pct: bool) -> list[tuple[int, float]]:
     if model is None:
-        return None, 0.0
+        return []
     beats = list(features.drop_candidates)
     if cue == "cue6":
         half = features.total_beats // 2
@@ -211,10 +213,14 @@ def rank_one(model, features, cue: str, include_pct: bool) -> tuple[int | None, 
         vectors.append(vector)
         kept.append(beat)
     if not vectors:
-        return None, 0.0
+        return []
     probs = model.predict_proba(np.vstack(vectors))[:, 1]
-    index = int(np.argmax(probs))
-    return kept[index], float(probs[index])
+    return sorted(zip(kept, map(float, probs)), key=lambda item: -item[1])
+
+
+def rank_one(model, features, cue: str, include_pct: bool) -> tuple[int | None, float]:
+    ranking = rank_candidates(model, features, cue, include_pct)
+    return ranking[0] if ranking else (None, 0.0)
 
 
 def assert_no_leak(examples, banned_paths: set[str], small_to_path: dict[str, str], self_small: str) -> None:
@@ -256,12 +262,21 @@ def predict_track(track: PoolTrack, features, pool: GoldPool, feature_cache: dic
         "cost": llm.cost_usd,
         "examples": [ex.name for ex in examples],
     }
+    rankings = {}
     for pct_name, include_pct in (("pct", True), ("nopct", False)):
         for cue in ("cue4", "cue6"):
-            pred, prob = rank_one(models[f"{cue}_{pct_name}"], features, cue, include_pct)
+            ranking = rank_candidates(models[f"{cue}_{pct_name}"], features, cue, include_pct)
+            rankings[cue, pct_name] = [beat for beat, _ in ranking]
+            pred, prob = ranking[0] if ranking else (None, 0.0)
             key = "4" if cue == "cue4" else "6"
             out[f"rank_{pct_name}{key}"] = pred
             out[f"rank_{pct_name}{key}_p"] = prob
+    out["build32_predictions"] = {}
+    for method, picks in method_predictions(out).items():
+        mode = "nopct" if method.endswith("nopct") else "pct"
+        out["build32_predictions"][f"{method}_build32"] = apply_build_prior(
+            features, picks, (rankings["cue4", mode], rankings["cue6", mode]),
+        )
     return out
 
 
@@ -300,6 +315,12 @@ def record_methods(report: Report, band: str, gold4, gold6, pred: dict) -> None:
     )
     specs["combined_pct"] = (c4, c4_conf, c4_thr, c6, c6_conf, c6_thr)
     specs["combined_nopct"] = (n4, n4_conf, n4_thr, n6, n6_conf, n6_thr)
+    for method, picks in pred.get("build32_predictions", {}).items():
+        base = specs[method.removesuffix("_build32")]
+        specs[method] = (
+            picks[0], base[1] if picks[0] == base[0] else 0.0, base[2],
+            picks[1], base[4] if picks[1] == base[3] else 0.0, base[5],
+        )
     # silence unused
     _ = (c4p, c4t)
     for method, (p4, conf4, thr4, p6, conf6, thr6) in specs.items():

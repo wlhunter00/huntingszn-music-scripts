@@ -31,6 +31,39 @@ FEATURE_NAMES = [
 ]
 
 
+def has_32beat_build(features: TrackFeatures, beat: int | None) -> bool | None:
+    """Whether bass and RMS rise from the preceding 32 to the following 16 beats."""
+    audio = features.beat_features
+    if beat is None or beat < 32 or beat + 16 > len(audio):
+        return None
+    values = np.array([[b.low_db, b.rms_db] for b in audio[beat - 32:beat + 16]])
+    if not np.isfinite(values).all():
+        raise ValueError("Nonfinite audio in build prior")
+    return bool(np.all(values[32:].mean(axis=0) > values[:32].mean(axis=0)))
+
+
+def apply_build_prior(
+    features: TrackFeatures,
+    picks: tuple[int | None, int | None],
+    rankings: tuple[list[int], list[int]],
+) -> tuple[int | None, int | None]:
+    """Replace unsupported picks with build-supported ranked candidates, preserving order."""
+    result = list(picks)
+    for index in (0, 1):
+        if has_32beat_build(features, result[index]) is not False:
+            continue
+        for beat in rankings[index]:
+            if beat not in features.drop_candidates:
+                continue
+            other = result[1 - index]
+            if other is not None and (beat > other if index == 0 else beat < other):
+                continue
+            if has_32beat_build(features, beat) is True:
+                result[index] = beat
+                break
+    return tuple(result)
+
+
 def phrase_at_beat(features: TrackFeatures, beat: int) -> PhraseFeatures | None:
     """Phrase that starts at this beat, preferring the 32-beat phrase on that grid."""
     for phrase in features.phrases_32:

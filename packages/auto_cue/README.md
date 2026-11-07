@@ -4,6 +4,26 @@ Automatic Serato hot-cue tagger for HuntingSzn. Predicts 8 cues from audio featu
 
 ## Features
 
+### Offline structural build prior
+
+The evaluator additionally reports `_build32` variants of its five original
+methods. A pick lacking both a bass and RMS rise from the preceding 32 beats
+to the following 16 beats is replaced with the first supported candidate in
+ranker order. Cue 4 is processed before cue 6; replacements preserve their
+ordering. Missing windows and abstentions are left unchanged. The zero-gain
+cutoff is fixed, not fitted on QA, and uses no gold cues at inference.
+
+Raw predictions, the existing 0.3 gate, and the original five metrics remain
+unchanged. Variant picks are saved separately for reproducible replay. Changed
+picks have zero emission confidence pending calibration: raw exact-hit gains
+are not evidence of calibrated confidence. This is an evaluation variant, not
+a change to production CLI cue writing.
+
+Pool-only selection on the saved context-ranker run improved combined cue 4
+from 229/289 to 231/289 and cue 6 from 187/289 to 189/289. Held-out QA stayed
+26/37 and 20/37. This small gain does not meet the 80% cue-4 target. Fixed
+same-phase snapping hurt pool cue 4 and is not enabled.
+
 ### Audio-derived phrase phase
 
 Phrase extraction estimates a 0/4/8/12-beat phase from normalized bass, RMS,

@@ -18,6 +18,9 @@ def predictions(row):
             else row[f"llm{i}"]
             for i in (4, 6)
         )
+    result.update({
+        method: tuple(picks) for method, picks in row.get("build32_predictions", {}).items()
+    })
     return result
 
 
@@ -95,7 +98,7 @@ def analyze(ROOT, pool_dir, qa_dir):
         count = sum(
             (r["split"].startswith("fold") if split == "pool" else r["split"] == "qa") for r in rows
         )
-        for method in ("llm", "ranker_pct", "ranker_nopct", "combined_pct", "combined_nopct"):
+        for method in summary[split]:
             for cue in ("cue4", "cue6"):
                 assert sum(distributions[split][method][cue].values()) == count
                 assert (

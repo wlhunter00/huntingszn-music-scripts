@@ -367,7 +367,7 @@ def smoke(e):
         ),
     )
     print(
-        "SMOKE PASSED: two durable predictions; five scoring methods; full 58-track fold excluded",
+        "SMOKE PASSED: two durable predictions; all scoring methods; full 58-track fold excluded",
         flush=True,
     )
 
