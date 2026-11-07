@@ -28,7 +28,7 @@ if not os.environ.get("OPENAI_API_KEY"):
     print("ERROR: OPENAI_API_KEY not set")
     sys.exit(1)
 
-from auto_cue.features import extract_features
+from auto_cue.features import FEATURE_CACHE_VERSION, extract_features
 from auto_cue.gold import GoldPool, PoolTrack, get_pool_fewshot_examples, load_gold_csv, load_gold_pool
 from auto_cue.llm import predict_cues_llm
 from auto_cue.ranker import candidate_vector
@@ -139,7 +139,7 @@ def assign_folds(tracks: list[PoolTrack]) -> list[list[PoolTrack]]:
 def _extract_and_cache(spec: tuple[str, str, float, float]) -> str:
     key, audio, bpm, first_beat_s = spec
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE_DIR / f"{key}.pkl"
+    cache_path = CACHE_DIR / f"{FEATURE_CACHE_VERSION}-{key}.pkl"
     if cache_path.exists():
         return key
     features = extract_features(Path(audio), bpm, first_beat_s, use_demucs=False)
@@ -150,7 +150,7 @@ def _extract_and_cache(spec: tuple[str, str, float, float]) -> str:
 
 def cached_features(key: str, audio: Path, bpm: float, first_beat_s: float):
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE_DIR / f"{key}.pkl"
+    cache_path = CACHE_DIR / f"{FEATURE_CACHE_VERSION}-{key}.pkl"
     if not cache_path.exists():
         _extract_and_cache((key, str(audio), bpm, first_beat_s))
     with cache_path.open("rb") as handle:

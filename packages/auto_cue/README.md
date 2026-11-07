@@ -4,6 +4,28 @@ Automatic Serato hot-cue tagger for HuntingSzn. Predicts 8 cues from audio featu
 
 ## Features
 
+### Audio-derived phrase phase
+
+Phrase extraction estimates a 0/4/8/12-beat phase from normalized bass, RMS,
+kick-density transitions and novelty, using only the audio beat features.
+The strongest quarter of 16-beat-spaced boundary evidence determines the phase;
+short or silent tracks fall back to zero. No gold cues are used at inference.
+
+Because half-phrase alignment is ambiguous, candidate generation retains the
+zero- and eight-beat hypotheses plus the estimated phase and its eight-beat
+counterpart. Each hypothesis has independently aggregated 8/16/32-beat windows
+and the existing drop scoring/shortlist. The original zero-phase top five stay
+at the head of the candidate list; scored alternatives follow, without duplicates.
+This deliberately increases the candidate budget, not just its recall numerator.
+The prompt shows primary-phase windows and alternate candidate windows, and
+explicitly lists the alternate candidates. Ranker vectors include audio phase
+support and look up shifted windows by their actual starting beat.
+
+All window starts, candidate beats, track percentages and written cue positions
+remain in the original Serato grid coordinates. The phase must never be added
+again when writing cues. Feature caches are versioned so old zero-phase-only
+features are not silently reused.
+
 - Dry-run by default, `--write` to mutate
 - Backs up files before writing
 - Refuses while Serato is running

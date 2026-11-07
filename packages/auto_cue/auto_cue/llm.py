@@ -35,6 +35,7 @@ class CueAbstainError(Exception):
 
 
 from auto_cue.features import TrackFeatures, format_phrase_table  # noqa: E402
+from auto_cue.ranker import phrase_at_beat  # noqa: E402
 from auto_cue.validate import CueSet  # noqa: E402
 
 DEFAULT_MODEL = "gpt-6.1-terra"
@@ -69,13 +70,17 @@ buildups, 32 for longer ones.
 ## LATTICE RULES (CRITICAL)
 - Cue 4 anchors the INTRO lattice (16-beat grid for cues 1, 2)
 - Cue 6 anchors the OUTRO lattice (32-beat grid for cues 7, 8)
-- **Cue 2**: Any multiple of 16 beats before cue3. Look for vocal entry or section start.
+- **Cue 2**: cue4 minus a multiple of 16 beats, before cue3. Look for vocal entry or section start.
 - **Cue 1**: At 0 OR same position as cue2 OR any 16-beat point before cue2. cue1 <= cue2.
 - **Cue 7** = cue6 + 32 (preferred) or cue6 + 64. Look for outro/vocal fade.
 - **Cue 8** = cue6 + 64 or cue6 + 96 (must be 32+ beats before track end)
 
 ## READING THE PHRASE TABLE
-Each row is a 16-beat phrase. Key columns:
+Each row is a 16-beat window. Alternate phase hypotheses can overlap.
+The audio-estimated phase is a hypothesis, not a required cue offset.
+All beat numbers and candidate positions use the original Serato grid coordinates;
+never add the estimated phase to a displayed beat or round it to a multiple of 16.
+Key columns:
 - **beat**: Starting beat of phrase
 - **32?**: "▶" marks 32-beat boundaries (where cues should go)
 - **pct**: Position as % of track (cue4 typically 20-45%, cue6 typically 55-85%)
@@ -533,7 +538,10 @@ def predict_cues_rules(features: TrackFeatures) -> LLMPrediction:
             rationale=f"abstained: {reasons}",
         )
 
-    phrase_scores = {p.beat_start: p.drop_score for p in features.phrases if p.is_drop_candidate}
+    phrase_scores = {
+        beat: phrase.drop_score for beat in features.drop_candidates
+        if (phrase := phrase_at_beat(features, beat)) is not None
+    }
     max_score = max(phrase_scores.values()) if phrase_scores else 0
 
     candidates = [b for b in features.drop_candidates if b >= 64]

@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 DEMUCS_CACHE_DIR = Path("/tmp/demucs_cache")
+FEATURE_CACHE_VERSION = "phrase-phase-v1"
 
 
 @dataclass
@@ -75,6 +76,8 @@ class TrackFeatures:
     phrases_32: list[PhraseFeatures] = field(default_factory=list)
     drop_candidates: list[int] = field(default_factory=list)
     has_vocal_stem: bool = False
+    phrase_phase: int = 0
+    phase_support: list[float] = field(default_factory=list)
 
     @property
     def file_hash(self) -> str:
@@ -367,34 +370,88 @@ def extract_features(
         )
         result.beat_features.append(bf)
 
-    for phrase_size in (8, 16, 32):
-        phrases = _aggregate_phrases(result.beat_features, phrase_size, total_beats)
-        if phrase_size == 8:
-            result.phrases_8 = phrases
-        elif phrase_size == 16:
-            result.phrases_16 = phrases
-        else:
-            result.phrases_32 = phrases
-
-    _identify_drop_candidates(result)
+    populate_phrase_features(result)
 
     return result
+
+
+def estimate_phrase_phase(beat_features: list[BeatFeatures]) -> tuple[int, list[float]]:
+    """Estimate a four-beat-resolution phrase phase from section-boundary evidence."""
+    n = len(beat_features)
+    if n < 32:
+        return 0, [0.0] * 4
+    values = np.array([
+        [b.low_db, b.rms_db, b.kick_onset, b.novelty_score]
+        for b in beat_features
+    ])
+    if not np.isfinite(values).all():
+        raise ValueError("Nonfinite beat features in phrase phase estimation")
+    spread = np.std(values, axis=0)
+    spread[spread < 1e-8] = 1.0
+    values = (values - np.mean(values, axis=0)) / spread
+    evidence = np.zeros(n)
+    for beat in range(8, n - 8):
+        change = values[beat:beat + 8, :3].mean(axis=0) - values[beat - 8:beat, :3].mean(axis=0)
+        evidence[beat] = np.mean(np.abs(change)) + max(0.0, values[beat, 3])
+    support = []
+    for phase in range(0, 16, 4):
+        aligned = evidence[np.arange(phase, n, 16)]
+        # Ignore the intro/outro edge and use strong transitions, not repeated kicks.
+        aligned = aligned[np.arange(phase, n, 16) >= 8]
+        count = max(1, len(aligned) // 4)
+        support.append(float(np.sort(aligned)[-count:].mean()))
+    maximum = max(support)
+    if maximum <= 1e-8:
+        return 0, [0.0] * 4
+    return int(np.argmax(support)) * 4, [s / maximum for s in support]
+
+
+def populate_phrase_features(features: TrackFeatures) -> None:
+    """Build audio-phase hypotheses without changing the original beat coordinates."""
+    features.phrase_phase, features.phase_support = estimate_phrase_phase(features.beat_features)
+    phase = features.phrase_phase
+    phases = list(dict.fromkeys([0, 8, phase, (phase + 8) % 16]))
+    hypotheses = {}
+    for offset in phases:
+        hypothesis = TrackFeatures(
+            features.path, features.bpm, features.first_beat_s,
+            features.total_beats, features.duration_s, phrase_phase=offset,
+        )
+        for size in (8, 16, 32):
+            setattr(hypothesis, f"phrases_{size}", _aggregate_phrases(
+                features.beat_features, size, features.total_beats, offset % size,
+            ))
+        _identify_drop_candidates(hypothesis)
+        hypotheses[offset] = hypothesis
+    for size in (8, 16, 32):
+        phrases = {}
+        for hypothesis in hypotheses.values():
+            for phrase in getattr(hypothesis, f"phrases_{size}"):
+                phrases.setdefault(phrase.beat_start, phrase)
+        setattr(features, f"phrases_{size}", [phrases[b] for b in sorted(phrases)])
+    # Keep the established prompt head while evaluating newly represented phases.
+    candidates = list(hypotheses[0].drop_candidates[:5])
+    order = sorted(phases, key=lambda p: features.phase_support[p // 4], reverse=True)
+    for offset in order:
+        candidates.extend(hypotheses[offset].drop_candidates)
+    features.drop_candidates = list(dict.fromkeys(candidates))
 
 
 def _aggregate_phrases(
     beat_features: list[BeatFeatures],
     phrase_size: int,
     total_beats: int,
+    phase: int = 0,
 ) -> list[PhraseFeatures]:
     """Aggregate beat features into phrase-level features."""
     phrases = []
-    n_phrases = total_beats // phrase_size
+    if phrase_size <= 0 or not 0 <= phase < phrase_size:
+        raise ValueError("Phrase phase must be within the positive phrase size")
     prev_low = None
     prev_rms = None
     prev_kick = None
 
-    for i in range(n_phrases):
-        start = i * phrase_size
+    for start in range(phase, total_beats - phrase_size + 1, phrase_size):
         end = start + phrase_size
         if end > len(beat_features):
             break
@@ -584,7 +641,7 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
     # BPM-band-aware thresholds for 16-beat candidates
     for phrase in phrases_16:
         # Skip if already covered by 32-beat phrase
-        if phrase.beat_start % 32 == 0:
+        if (phrase.beat_start - features.phrase_phase) % 32 == 0:
             continue
 
         score = compute_drop_score(phrase)
@@ -612,7 +669,7 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
             all_candidates.append((p.beat_start, p.drop_score))
 
     for p in phrases_16:
-        if p.is_drop_candidate and p.beat_start % 32 != 0:
+        if p.is_drop_candidate and (p.beat_start - features.phrase_phase) % 32 != 0:
             all_candidates.append((p.beat_start, p.drop_score))
 
     # Sort by score and take top candidates
@@ -662,6 +719,9 @@ def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> 
     lines = []
     lines.append(f"BPM: {features.bpm:.1f} ({features.bpm_band})")
     lines.append(f"Total beats: {features.total_beats}, Duration: {features.duration_s:.1f}s")
+    lines.append(f"Audio phrase phase: {features.phrase_phase} mod 16 beats")
+    lines.append("Beats are original grid coordinates; do not add the phase.")
+    lines.append("Alternate-phase rows may overlap.")
     if features.has_vocal_stem:
         lines.append("Vocal stem: available")
     lines.append("")
@@ -677,11 +737,15 @@ def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> 
     lines.append(header)
     lines.append(sep)
 
+    starts_32 = {p.beat_start for p in features.phrases_32}
     for p in features.phrases_16:
-        if show_32_only and p.beat_start % 32 != 0:
+        if (p.beat_start % 16 != features.phrase_phase
+                and p.beat_start not in features.drop_candidates):
+            continue
+        if show_32_only and p.beat_start not in starts_32:
             continue
 
-        is_32 = "▶" if p.beat_start % 32 == 0 else ""
+        is_32 = "▶" if p.beat_start in starts_32 else ""
         drop = f"{p.drop_score:.1f}" if p.is_drop_candidate else ""
         pct_str = f"{p.track_pct*100:3.0f}%"
 
@@ -698,6 +762,7 @@ def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> 
 
     lines.append("")
     lines.append(f"Drop candidates: {features.drop_candidates[:5]}")
+    lines.append(f"Alternate phase candidates: {features.drop_candidates[5:]}")
 
     return "\n".join(lines)
 

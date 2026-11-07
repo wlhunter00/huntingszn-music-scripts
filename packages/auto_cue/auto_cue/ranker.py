@@ -27,19 +27,16 @@ FEATURE_NAMES = [
     "is_bass",
     "is_dnb",
     "is_house",
+    "phase_support",
 ]
 
 
 def phrase_at_beat(features: TrackFeatures, beat: int) -> PhraseFeatures | None:
     """Phrase that starts at this beat, preferring the 32-beat phrase on that grid."""
-    if beat % 32 == 0:
-        for phrase in features.phrases_32:
-            if phrase.beat_start == beat:
-                return phrase
-    for phrase in features.phrases_16:
+    for phrase in features.phrases_32:
         if phrase.beat_start == beat:
             return phrase
-    for phrase in features.phrases_32:
+    for phrase in features.phrases_16:
         if phrase.beat_start == beat:
             return phrase
     return None
@@ -58,6 +55,7 @@ def candidate_vector(
     bpm = features.bpm
     total = features.total_beats or 1
     track_pct = (beat / total) if include_track_pct else 0.0
+    phase_support = getattr(features, "phase_support", [])
     return np.array(
         [
             phrase.low_db,
@@ -74,6 +72,7 @@ def candidate_vector(
             1.0 if bpm < 80 else 0.0,
             1.0 if 80 <= bpm < 100 else 0.0,
             1.0 if bpm >= 115 else 0.0,
+            phase_support[(beat % 16) // 4] if phase_support else 0.0,
         ],
         dtype=float,
     )

@@ -18,7 +18,7 @@ from pathlib import Path
 import httpx
 
 import auto_cue
-from auto_cue.features import extract_features
+from auto_cue.features import FEATURE_CACHE_VERSION, extract_features
 
 REPO = Path(__file__).resolve().parents[3]
 ROOT = Path.home() / "autocue-data" / "baseline"
@@ -257,7 +257,7 @@ def check_resume_manifest(path, sha, data, audio):
 def feature_cache_path(cache_dir, audio, bpm, first_beat_s):
     digest = audio_fingerprint(audio)["sha256"]
     grid = hashlib.sha256(json.dumps([bpm, first_beat_s]).encode()).hexdigest()
-    return cache_dir / f"{digest}-{grid}.pkl"
+    return cache_dir / f"{FEATURE_CACHE_VERSION}-{digest}-{grid}.pkl"
 
 
 def extract_and_cache(cache_dir, spec):
