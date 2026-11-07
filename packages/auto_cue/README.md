@@ -124,7 +124,11 @@ is not guaranteed deterministic.
 
 Successful API responses are fsynced before parsing and scoring; prediction rows
 are also fsynced. Repeat the same command/output directory to resume, not a new
-directory. A manifest rejects changed source revision or CSVs. Transport/5xx
+directory. A manifest rejects changed source revision, CSVs, or audio (size and
+SHA-256 for every MP3/FLAC under both roots, including local aliases). Feature
+cache filenames include the audio content hash and beatgrid parameters, not the
+audio filename. Manifests created before audio fingerprinting fail closed and
+cannot be resumed with this version. Transport/5xx
 failures allow three retries with exponential backoff; each uncertain attempt's
 reservation remains in the budget. Authentication and other HTTP errors stop
 immediately. Budget checks include actual spend plus uncertain reservations and

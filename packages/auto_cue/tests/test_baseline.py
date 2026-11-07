@@ -210,6 +210,56 @@ def test_checkout_validation_resolves_symlinks(tmp_path, monkeypatch):
     baseline.validate_package_checkout(alias)
 
 
+def test_audio_manifest_rejects_same_size_content_changes(tmp_path):
+    pool, qa = tmp_path / "pool", tmp_path / "qa"
+    pool.mkdir()
+    qa.mkdir()
+    audio = pool / "track.mp3"
+    audio.write_bytes(b"first")
+    (qa / "qa.flac").write_bytes(b"qa")
+    original = baseline.fingerprint_audio_roots(pool, qa)
+    assert original["pool/track.mp3"]["size"] == 5
+    assert original["pool/track.mp3"]["sha256"] == hashlib.sha256(b"first").hexdigest()
+    assert len(original) == 2
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(dict(sha="revision", data_sha256={}, audio=original)))
+    baseline.check_resume_manifest(manifest, "revision", {}, original)
+    audio.write_bytes(b"other")
+    changed = baseline.fingerprint_audio_roots(pool, qa)
+    with pytest.raises(SystemExit, match="different audio"):
+        baseline.check_resume_manifest(manifest, "revision", {}, changed)
+    audio.unlink()
+    with pytest.raises(SystemExit, match="different audio"):
+        baseline.check_resume_manifest(
+            manifest, "revision", {}, baseline.fingerprint_audio_roots(pool, qa)
+        )
+
+
+def test_content_addressed_features_do_not_reuse_stale_audio(tmp_path, monkeypatch):
+    audio = tmp_path / "track.mp3"
+    audio.write_bytes(b"first")
+    cache = tmp_path / "cache"
+    calls = []
+
+    def extract(path, *args, **kwargs):
+        calls.append(path.read_bytes())
+        return {"audio": calls[-1]}
+
+    monkeypatch.setattr(baseline, "extract_features", extract)
+    assert baseline.cached_features(cache, "track.mp3", audio, 128, 0) == {"audio": b"first"}
+    assert baseline.cached_features(cache, "track.mp3", audio, 128, 0) == {"audio": b"first"}
+    renamed = tmp_path / "renamed.mp3"
+    renamed.write_bytes(b"first")
+    baseline.cached_features(cache, "renamed.mp3", renamed, 128, 0)
+    assert len(calls) == 1
+    audio.write_bytes(b"other")
+    assert baseline.cached_features(cache, "track.mp3", audio, 128, 0) == {"audio": b"other"}
+    assert len(calls) == 2
+    assert len(list(cache.glob("*.pkl"))) == 2
+    baseline.cached_features(cache, "track.mp3", audio, 130, 0)
+    assert len(calls) == 3
+
+
 @pytest.mark.parametrize(("cue4", "cue6"), [(None, None), (None, 64), (32, None), (32, 64)])
 def test_smoke_accepts_saved_parsed_abstentions(tmp_path, monkeypatch, cue4, cue6):
     monkeypatch.setattr(baseline, "ROOT", tmp_path)

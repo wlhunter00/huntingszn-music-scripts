@@ -5,16 +5,20 @@ import hashlib
 import importlib.util
 import json
 import os
+import pickle
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import httpx
 
 import auto_cue
+from auto_cue.features import extract_features
 
 REPO = Path(__file__).resolve().parents[3]
 ROOT = Path.home() / "autocue-data" / "baseline"
@@ -216,6 +220,75 @@ def install_controls(e):
     e.write_report = lambda pool, qa, cost: original_report(pool, qa, ledger()["actual_cost"])
 
 
+def audio_fingerprint(audio):
+    with audio.open("rb") as stream:
+        before = os.fstat(stream.fileno())
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        after = os.fstat(stream.fileno())
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise ValueError(f"Audio changed while hashing: {audio}")
+    return dict(size=after.st_size, sha256=digest)
+
+
+def fingerprint_audio_roots(pool_dir, qa_dir):
+    result, resolved = {}, {}
+    for label, root in [("pool", pool_dir), ("qa", qa_dir)]:
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and path.suffix.lower() in {".mp3", ".flac"}:
+                canonical = path.resolve()
+                if canonical not in resolved:
+                    resolved[canonical] = audio_fingerprint(path)
+                result[f"{label}/{path.relative_to(root)}"] = resolved[canonical]
+    return result
+
+
+def check_resume_manifest(path, sha, data, audio):
+    if not path.exists():
+        return
+    saved = json.loads(path.read_text())
+    if saved["sha"] != sha:
+        raise SystemExit("Cannot resume predictions with different source revision")
+    if saved.get("data_sha256") != data:
+        raise SystemExit("Cannot resume predictions with different data")
+    if saved.get("audio") != audio:
+        raise SystemExit("Cannot resume predictions with different audio")
+
+
+def feature_cache_path(cache_dir, audio, bpm, first_beat_s):
+    digest = audio_fingerprint(audio)["sha256"]
+    grid = hashlib.sha256(json.dumps([bpm, first_beat_s]).encode()).hexdigest()
+    return cache_dir / f"{digest}-{grid}.pkl"
+
+
+def extract_and_cache(cache_dir, spec):
+    key, audio, bpm, first_beat_s = spec
+    audio = Path(audio)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = feature_cache_path(cache_dir, audio, bpm, first_beat_s)
+    if not path.exists():
+        features = extract_features(audio, bpm, first_beat_s, use_demucs=False)
+        temp = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=cache_dir, prefix=".features-", delete=False
+            ) as stream:
+                temp = Path(stream.name)
+                pickle.dump(features, stream, protocol=pickle.HIGHEST_PROTOCOL)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temp.replace(path)
+        finally:
+            if temp is not None:
+                temp.unlink(missing_ok=True)
+    return key
+
+
+def cached_features(cache_dir, key, audio, bpm, first_beat_s):
+    extract_and_cache(cache_dir, (key, str(audio), bpm, first_beat_s))
+    with feature_cache_path(cache_dir, audio, bpm, first_beat_s).open("rb") as stream:
+        return pickle.load(stream)
+
+
 def validate_package_checkout(repo):
     if not Path(auto_cue.__file__).resolve().is_relative_to(repo.resolve()):
         raise SystemExit(
@@ -237,6 +310,8 @@ def load_eval():
     e.POOL_DIR = POOL_DIR
     e.QA_DIR = QA_DIR
     e.LLM_WORKERS = 1
+    e._extract_and_cache = partial(extract_and_cache, e.CACHE_DIR)
+    e.cached_features = partial(cached_features, e.CACHE_DIR)
     install_controls(e)
     return e
 
@@ -338,10 +413,8 @@ def _main():
         for p in [POOL_DIR / "gold_pool_clean.csv", POOL_DIR / "audio_sel.csv", QA_DIR / "gold.csv"]
     }
     manifest = ROOT / "manifest.json"
-    if manifest.exists() and json.loads(manifest.read_text())["sha"] != sha:
-        raise SystemExit("Cannot resume predictions with different source revision")
-    if manifest.exists() and json.loads(manifest.read_text()).get("data_sha256") != fingerprints:
-        raise SystemExit("Cannot resume predictions with different data")
+    audio = fingerprint_audio_roots(POOL_DIR, QA_DIR)
+    check_resume_manifest(manifest, sha, fingerprints, audio)
     if not manifest.exists():
         durable_json(
             manifest,
@@ -353,6 +426,7 @@ def _main():
                 workers=1,
                 repository=str(REPO),
                 data_sha256=fingerprints,
+                audio=audio,
             ),
         )
     e = load_eval()
