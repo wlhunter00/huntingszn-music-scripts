@@ -29,6 +29,7 @@ Goal: download tracks liked on the HuntingSzn SoundCloud account (https://soundc
 - Approved: stillhype.io, droploud.com, pl8list.com (allow, then repost cleanup).
 - Denied: ipln.io / InfluencePlanner (use the script).
 - New platform asks for access: cancel, finish the rest of the batch, then ask Will one `user_question` per platform: "<platform> wants to connect to your SoundCloud for <track>. Approve and add it?" (Yes / No). Yes: rerun that gate and open a PR adding it to Approved here. No: use the script, log the reason, and add it to Denied.
+- Captcha (reCAPTCHA, hCaptcha, Spotify/SoundCloud "prove you're human"): don't solve it or ask Will to; close it and use the script for that track.
 - Default comment: when an approved gate requires a SoundCloud comment, post exactly `fire`. Never use the gate's suggested text.
 
 ## Steps
