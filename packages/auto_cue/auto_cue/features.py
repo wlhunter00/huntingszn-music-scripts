@@ -14,6 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
+from auto_cue.first_drop import format_first_drop_shortlist
+
 DEMUCS_CACHE_DIR = Path("/tmp/demucs_cache")
 FEATURE_CACHE_VERSION = "phrase-phase-v1"
 
@@ -711,7 +713,9 @@ def _identify_drop_candidates(features: TrackFeatures) -> None:
         features.drop_candidates = [best.beat_start]
 
 
-def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> str:
+def format_phrase_table(
+    features: TrackFeatures, show_32_only: bool = False, *, first_drop_ranking=None,
+) -> str:
     """Format phrase features as a rich text table for LLM.
 
     Shows 16-beat phrases with 32-beat boundary markers and all key features.
@@ -761,8 +765,11 @@ def format_phrase_table(features: TrackFeatures, show_32_only: bool = False) -> 
         )
 
     lines.append("")
-    lines.append(f"Drop candidates: {features.drop_candidates[:5]}")
-    lines.append(f"Alternate phase candidates: {features.drop_candidates[5:]}")
+    if first_drop_ranking is None:
+        lines.append(f"Drop candidates: {features.drop_candidates[:5]}")
+        lines.append(f"Alternate phase candidates: {features.drop_candidates[5:]}")
+    else:
+        lines.append(format_first_drop_shortlist(features, first_drop_ranking))
 
     return "\n".join(lines)
 

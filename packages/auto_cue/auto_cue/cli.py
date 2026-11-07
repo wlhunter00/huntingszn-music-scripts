@@ -15,7 +15,8 @@ from serato_bpm_cleanup.backup import timestamped_backup_root
 from serato_bpm_cleanup.detect import default_library_roots, serato_is_running
 
 from auto_cue import __version__
-from auto_cue.features import extract_features
+from auto_cue.features import extract_features, format_phrase_table
+from auto_cue.first_drop import load_first_drop_ranker, ranked_first_drops
 from auto_cue.llm import (
     CueAbstainError,
     LLMAPIError,
@@ -91,6 +92,7 @@ def process_track(
     protected_paths: set[str] | None = None,
     library_root: Path | None = None,
     explain: bool = False,
+    first_drop_model=None,
 ) -> ProcessResult:
     """Process a single track for cue prediction.
 
@@ -163,16 +165,18 @@ def process_track(
         result.error = str(e)
         return result
 
+    ranking = (ranked_first_drops(first_drop_model, features)
+               if first_drop_model is not None else None)
     if explain:
-        from auto_cue.features import format_phrase_table
         print(f"\n=== {path.name} ===")
-        print(format_phrase_table(features))
+        print(format_phrase_table(features, first_drop_ranking=ranking))
 
     try:
         if use_llm:
             try:
+                shortlist = {"first_drop_ranking": ranking} if ranking is not None else {}
                 prediction = predict_cues_llm(
-                    features, model=model, reasoning_effort=reasoning_effort
+                    features, model=model, reasoning_effort=reasoning_effort, **shortlist
                 )
             except LLMAPIError as e:
                 result.action = "error-api"
@@ -328,6 +332,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum confidence threshold for core cues (default 0.6).",
     )
     parser.add_argument(
+        "--first-drop-model", type=Path,
+        help="JSON first-drop ranker; orders a five-candidate LLM shortlist.",
+    )
+    parser.add_argument(
         "--explain",
         action="store_true",
         help="Print phrase table and prediction rationale.",
@@ -364,6 +372,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        first_drop_model = (load_first_drop_ranker(args.first_drop_model)
+                            if args.first_drop_model else None)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: cannot load first-drop model: {exc}", file=sys.stderr)
+        return 2
+    if args.no_llm and first_drop_model is not None:
+        parser.error("--first-drop-model requires LLM prediction")
 
     print(CLOSE_SERATO_WARNING, file=sys.stderr)
 
@@ -466,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
             protected_paths=protected_paths,
             library_root=library_root,
             explain=args.explain,
+            first_drop_model=first_drop_model,
         )
         results.append(result)
         if result.fatal_api_error:

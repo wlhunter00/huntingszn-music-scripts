@@ -32,6 +32,38 @@ features are not silently reused.
 - Supports MP3 and FLAC
 - Never modifies protected tracks (human cues, BPM lock, Sets/Perma crates)
 
+### First-drop selection
+
+The first-drop ranker extends candidate features with immediate 16/32-beat bass,
+RMS and kick gains, energy relative to the track's loud sections, preceding
+break/build context, distance from the first strong kick-in, and earlier
+similarly energetic candidates. These are computed from audio only, without
+cue 1 or any other inference-time gold label. `track_pct` can still be ablated;
+that ablation is **not** position-free: first-kick distance and earlier-section
+counts intentionally retain musical-order context.
+
+The evaluator trains cue-4 models on permitted training tracks only. Each track
+has equal total training weight. Cue-6 features and models are unchanged. The
+target prompt replaces its expanded candidate list with a scored, ranker-ordered
+top five for cue 4, while retaining the complete phrase table for independent
+cue-6 selection. Scores are advisory, not LLM confidence. A subsequent breakdown
+does not disqualify an earlier full mix-in entry merely because `sust` is negative.
+
+The existing 0.3 combined-method gate and shortlist budget of five are fixed,
+not fitted on QA. Any future threshold tuning must be nested within pool folds.
+The baseline exports a full-pool model to `first-drop-model.json` under its
+output directory. Model files and evaluation outputs are not committed. JSON
+inference does not require sklearn or load executable pickle data:
+
+```bash
+uv run auto-cue --file "track.mp3" --first-drop-model "$OUTPUT/first-drop-model.json"
+```
+
+Without `--first-drop-model`, the CLI keeps the unranked candidate presentation;
+the revised first-drop interpretation still applies. Cue beats always remain in
+original grid coordinates. Model export names its input schema and refuses
+incompatible feature definitions or malformed trees.
+
 ## Installation
 
 ```bash
