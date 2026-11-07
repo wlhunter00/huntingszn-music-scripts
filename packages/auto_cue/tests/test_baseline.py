@@ -1,5 +1,6 @@
 import hashlib
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import httpx
@@ -185,6 +186,62 @@ def test_combined_uses_predeclared_gate():
             }
         )
     assert predictions(row)["combined_pct"] == (64, 160)
+
+
+@pytest.mark.parametrize(("cue4", "cue6"), [(None, None), (None, 64), (32, None), (32, 64)])
+def test_smoke_accepts_saved_parsed_abstentions(tmp_path, monkeypatch, cue4, cue6):
+    monkeypatch.setattr(baseline, "ROOT", tmp_path)
+    tracks = [
+        SimpleNamespace(path=str(i), small_file=str(i), bpm=128, first_beat_s=0) for i in range(289)
+    ]
+    folds = [tracks[i::5] for i in range(5)]
+    executor = SimpleNamespace(map=lambda fn, specs: [None] * len(specs))
+    monkeypatch.setattr(baseline, "ProcessPoolExecutor", lambda **kw: nullcontext(executor))
+    rows = [
+        dict(
+            split="fold0",
+            id=t.path,
+            cost=0.01,
+            examples=["example"] * 5,
+            llm4=cue4,
+            llm6=cue6,
+            llm4_conf=0,
+            llm6_conf=0,
+            band="house (115+)",
+            gold4=32,
+            gold6=64,
+        )
+        for t in folds[0][:2]
+    ]
+    path = tmp_path / "predictions.jsonl"
+
+    def run_split(*args):
+        path.write_text("\n".join(json.dumps(r) for r in rows))
+
+    def record(report, *args):
+        report.by_method["llm"]["all"]["cue4"].total += 1
+
+    evaluator = SimpleNamespace(
+        POOL_DIR=tmp_path,
+        PRED_PATH=path,
+        load_gold_pool=lambda *a: None,
+        audio_pool_tracks=lambda _: tracks,
+        assign_folds=lambda _: folds,
+        mp=SimpleNamespace(get_context=lambda _: None),
+        _extract_and_cache=lambda *a: None,
+        cached_features=lambda *a: None,
+        load_done=lambda: set(),
+        run_split=run_split,
+        Report=lambda: SimpleNamespace(
+            by_method={"llm": {"all": {"cue4": SimpleNamespace(total=0)}}}
+        ),
+        METHODS=["llm"],
+        record_methods=record,
+    )
+    baseline.smoke(evaluator)
+    saved = json.loads((tmp_path / "smoke.json").read_text())
+    assert saved["status"] == "passed"
+    assert saved["rows"] == rows
 
 
 def test_offline_analysis_full_run(tmp_path, monkeypatch):

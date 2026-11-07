@@ -265,7 +265,7 @@ def smoke(e):
     assert len(selected) == 2
     for row in selected:
         assert row["cost"] > 0 and len(row["examples"]) == 5
-        assert row["llm4"] is not None and row["llm6"] is not None
+        assert {"llm4", "llm6"}.issubset(row)
         assert 0 <= row["llm4_conf"] <= 1 and 0 <= row["llm6_conf"] <= 1
     parsed = e.Report()
     for row in selected:
