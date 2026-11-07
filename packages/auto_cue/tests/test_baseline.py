@@ -1,0 +1,213 @@
+import hashlib
+import json
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from auto_cue import baseline
+from auto_cue import baseline_analysis as analysis
+from auto_cue.baseline_analysis import analyze, bucket, predictions
+
+URL = "https://api.openai.com/v1/chat/completions"
+BODY = {"model": "gpt-6.1-terra", "max_completion_tokens": 4096}
+PAYLOAD = {"usage": {"prompt_tokens": 100, "completion_tokens": 10}, "choices": []}
+
+
+@pytest.fixture
+def guarded(tmp_path, monkeypatch):
+    monkeypatch.setattr(baseline, "ROOT", tmp_path)
+    monkeypatch.setattr(baseline, "LIMIT", 15.0)
+    (tmp_path / "responses").mkdir()
+    calls = []
+    replies = [httpx.Response(200, json=PAYLOAD)]
+
+    def post(client, url, **kwargs):
+        calls.append(kwargs["json"])
+        response = replies.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(httpx.Client, "post", post)
+    monkeypatch.setattr(baseline.time, "sleep", lambda _: None)
+    evaluator = SimpleNamespace(
+        predict_track=lambda *a, **k: None,
+        append_pred=lambda row: None,
+        write_report=lambda *a: None,
+        PRED_PATH=tmp_path / "predictions.jsonl",
+    )
+    baseline.install_controls(evaluator)
+    return calls, replies, evaluator
+
+
+def test_budget_aborts_before_request(guarded, monkeypatch):
+    calls, _, _ = guarded
+    monkeypatch.setattr(baseline, "LIMIT", 0.001)
+    with httpx.Client() as client, pytest.raises(baseline.BaselineStop, match="budget"):
+        client.post(URL, json=BODY)
+    assert not calls
+    assert (baseline.ROOT / "STOP.json").exists()
+
+
+def test_resume_reuses_durable_response_before_prediction_append(guarded):
+    calls, _, evaluator = guarded
+    with httpx.Client() as client:
+        first = client.post(URL, json=BODY)
+    assert not evaluator.PRED_PATH.exists()
+    with httpx.Client() as restarted_client:
+        resumed = restarted_client.post(URL, json=BODY)
+    assert first.json() == resumed.json() == PAYLOAD
+    assert len(calls) == 1
+    assert baseline.ledger()["successful_requests"] == 1
+    assert baseline.ledger()["actual_cost"] == pytest.approx(0.00015)
+
+
+@pytest.mark.parametrize("failure", [httpx.ReadTimeout("timeout"), httpx.Response(503)])
+def test_transient_retry_retains_reservation(guarded, failure):
+    calls, replies, _ = guarded
+    replies.insert(0, failure)
+    with httpx.Client() as client:
+        assert client.post(URL, json=BODY).status_code == 200
+    assert len(calls) == 2
+    assert baseline.ledger()["uncertain_reserved"] > 0
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_auth_stops_without_retry(guarded, status):
+    calls, replies, _ = guarded
+    replies[:] = [httpx.Response(status)]
+    with httpx.Client() as client, pytest.raises(baseline.BaselineStop, match=f"HTTP {status}"):
+        client.post(URL, json=BODY)
+    assert len(calls) == 1
+
+
+def test_pending_request_is_not_reissued(guarded):
+    calls, _, _ = guarded
+    key = hashlib.sha256(json.dumps(BODY, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    baseline.durable_json(
+        baseline.ROOT / "responses" / f"{key}.json", dict(status="pending", reservation=0.05)
+    )
+    with httpx.Client() as client, pytest.raises(baseline.BaselineStop, match="uncertain"):
+        client.post(URL, json=BODY)
+    assert calls == []
+
+
+def test_retry_limit_is_three_after_original(guarded):
+    calls, replies, _ = guarded
+    replies[:] = [httpx.Response(503) for _ in range(4)]
+    with httpx.Client() as client, pytest.raises(baseline.BaselineStop, match="retry limit"):
+        client.post(URL, json=BODY)
+    assert len(calls) == 4
+    assert baseline.ledger()["records"] == 4
+    assert baseline.ledger()["uncertain_reserved"] > 0
+
+
+def test_budget_includes_prior_spend_and_uncertain_attempts(guarded):
+    calls, _, _ = guarded
+    baseline.durable_json(
+        baseline.ROOT / "responses" / "old.json", dict(status="success", cost=14.96)
+    )
+    baseline.durable_json(
+        baseline.ROOT / "responses" / "uncertain.json", dict(status="pending", reservation=0.03)
+    )
+    with httpx.Client() as client, pytest.raises(baseline.BaselineStop, match="budget"):
+        client.post(URL, json=BODY)
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (None, "no_prediction"),
+        (0, "hit_±1"),
+        (-1, "hit_±1"),
+        (1, "hit_±1"),
+        (1.01, "other_miss"),
+        (14, "+16±2"),
+        (18, "+16±2"),
+        (-32, "-32±2"),
+        (19, "other_miss"),
+        (176, "+176±2"),
+    ],
+)
+def test_analysis_buckets(error, expected):
+    assert bucket(error) == expected
+
+
+def test_analysis_requires_complete_unique_run(tmp_path):
+    (tmp_path / "predictions.jsonl").write_text("")
+    with pytest.raises(ValueError, match="326 unique"):
+        analyze(tmp_path, tmp_path, tmp_path)
+
+
+def test_combined_uses_predeclared_gate():
+    row = dict(llm4=32, llm6=160)
+    for mode in ("pct", "nopct"):
+        row.update(
+            {
+                f"rank_{mode}4": 64,
+                f"rank_{mode}4_p": 0.3,
+                f"rank_{mode}6": 192,
+                f"rank_{mode}6_p": 0.29,
+            }
+        )
+    assert predictions(row)["combined_pct"] == (64, 160)
+
+
+def test_offline_analysis_full_run(tmp_path, monkeypatch):
+    tracks = {}
+    rows = []
+    for i in range(326):
+        name = str(i)
+        tracks[name] = SimpleNamespace(
+            path=name, name=name, artist="", title=name, bpm=128, duration_s=200, source_path=name
+        )
+        row = dict(
+            split="fold0" if i < 289 else "qa",
+            id=name if i < 289 else "qa:" + name,
+            band="house (115+)",
+            gold4=32,
+            gold6=160,
+            llm4=32,
+            llm6=176,
+            examples=[str(j) for j in range(5)],
+        )
+        for mode in ("pct", "nopct"):
+            row.update(
+                {
+                    f"rank_{mode}4": 32,
+                    f"rank_{mode}4_p": 0.5,
+                    f"rank_{mode}6": 176,
+                    f"rank_{mode}6_p": 0.5,
+                }
+            )
+        rows.append(row)
+    pool = SimpleNamespace(tracks=tracks, paths_to_exclude=lambda **kw: {"forbidden"})
+    monkeypatch.setattr(analysis, "load_gold_pool", lambda *a: pool)
+    monkeypatch.setattr(analysis, "load_gold_csv", lambda *a: tracks)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs/folds.json").write_text(json.dumps({"folds": [[]]}))
+    (tmp_path / "predictions.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+    methods = predictions(rows[0])
+    summary = {
+        split: {
+            method: {
+                band: {
+                    "cue4": {"correct": count, "accuracy": 100, "total": count},
+                    "cue6": {"correct": 0, "accuracy": 0, "total": count},
+                }
+                for band in ("all", "bass (<80)", "dnb (80-100)", "house (115+)")
+            }
+            for method in methods
+        }
+        for split, count in [("pool", 289), ("qa", 37)]
+    }
+    (tmp_path / "summary.json").write_text(json.dumps(summary))
+    (tmp_path / "ledger.json").write_text("{}")
+    analyze(tmp_path, tmp_path, tmp_path)
+    result = json.loads((tmp_path / "analysis.json").read_text())
+    assert result["error_distributions"]["pool"]["llm"]["cue6"] == {"+16±2": 289}
+    assert result["leakage_audit"]["examples_checked"] == 1630
+    pool.paths_to_exclude = lambda **kw: {"0"}
+    with pytest.raises(AssertionError):
+        analyze(tmp_path, tmp_path, tmp_path)
