@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from auto_cue.ranker import phrase_at_beat
+
 if TYPE_CHECKING:
     from auto_cue.features import PhraseFeatures, TrackFeatures
 
@@ -64,9 +66,10 @@ def _get_phrase_at_beat(
     phrases: list[PhraseFeatures],
     beat: int,
 ) -> PhraseFeatures | None:
-    """Find the phrase containing a specific beat."""
+    """Find a containing window on the predicted beat's phrase phase."""
     for p in phrases:
-        if p.beat_start <= beat < p.beat_end:
+        if (p.beat_start <= beat < p.beat_end
+                and (beat - p.beat_start) % min(p.phrase_size, 16) == 0):
             return p
     return None
 
@@ -148,29 +151,26 @@ def _compute_zoom_agreement(
     checks = 0
 
     # Check 8-beat phrases
-    for p in features.phrases_8:
-        if abs(p.beat_start - predicted_beat) <= 8:
-            # Is this phrase high-energy relative to neighbors?
-            agreement += 0.5 if p.delta_kick > 0 else 0.0
-            agreement += 0.5 if p.delta_low > 3.0 else 0.0
-            checks += 1
-            break
+    p = _get_phrase_at_beat(features.phrases_8, predicted_beat)
+    if p is not None:
+        # Is this phrase high-energy relative to neighbors?
+        agreement += 0.5 if p.delta_kick > 0 else 0.0
+        agreement += 0.5 if p.delta_low > 3.0 else 0.0
+        checks += 1
 
     # Check 16-beat phrases
-    for p in features.phrases_16:
-        if abs(p.beat_start - predicted_beat) <= 8:
-            agreement += 0.5 if p.delta_kick > 0.05 else 0.0
-            agreement += 0.5 if p.drop_score > 1.0 else 0.0
-            checks += 1
-            break
+    p = _get_phrase_at_beat(features.phrases_16, predicted_beat)
+    if p is not None:
+        agreement += 0.5 if p.delta_kick > 0.05 else 0.0
+        agreement += 0.5 if p.drop_score > 1.0 else 0.0
+        checks += 1
 
     # Check 32-beat phrases
-    for p in features.phrases_32:
-        if abs(p.beat_start - predicted_beat) <= 16:
-            agreement += 0.5 if p.is_drop_candidate else 0.0
-            agreement += 0.5 if p.drop_score > 1.5 else 0.0
-            checks += 1
-            break
+    p = _get_phrase_at_beat(features.phrases_32, predicted_beat)
+    if p is not None:
+        agreement += 0.5 if p.is_drop_candidate else 0.0
+        agreement += 0.5 if p.drop_score > 1.5 else 0.0
+        checks += 1
 
     if checks == 0:
         return 0.0
@@ -190,7 +190,7 @@ def _compute_kick_slam_strength(
         return 0.0
 
     # Find the phrase at this beat
-    phrase = _get_phrase_at_beat(features.phrases_16, predicted_beat)
+    phrase = phrase_at_beat(features, predicted_beat)
     if phrase is None:
         return 0.0
 
@@ -209,11 +209,12 @@ def _compute_kick_slam_strength(
 def _check_lattice_alignment(
     predicted_beat: int | None,
     lattice_size: int = 16,
+    phase: int = 0,
 ) -> bool:
     """Check if predicted beat is on the expected lattice."""
     if predicted_beat is None:
         return True  # N/A
-    return predicted_beat % lattice_size == 0
+    return (predicted_beat - phase) % lattice_size == 0
 
 
 def _check_code_agreement(
@@ -371,7 +372,9 @@ def compute_cue_confidence_signals(
     signals.margin = _compute_margin(features, predicted_beat, is_cue6)
     signals.zoom_agreement = _compute_zoom_agreement(features, predicted_beat)
     signals.kick_slam_strength = _compute_kick_slam_strength(features, predicted_beat)
-    signals.on_lattice = _check_lattice_alignment(predicted_beat, 32 if is_cue6 else 16)
+    phrase = phrase_at_beat(features, predicted_beat)
+    phase = phrase.beat_start if phrase is not None else features.phrase_phase
+    signals.on_lattice = _check_lattice_alignment(predicted_beat, 32 if is_cue6 else 16, phase)
     code_agrees, code_rank = _check_code_agreement(features, predicted_beat, is_cue6)
     signals.code_agreement = code_agrees
     signals.code_rank_score = code_rank

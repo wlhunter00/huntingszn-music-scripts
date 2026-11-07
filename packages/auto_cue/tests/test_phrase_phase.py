@@ -3,8 +3,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from auto_cue import baseline
+from auto_cue.calibrated_confidence import compute_cue_confidence_signals
 from auto_cue.features import (
     BeatFeatures,
+    PhraseFeatures,
     TrackFeatures,
     _aggregate_phrases,
     _identify_drop_candidates,
@@ -123,3 +125,34 @@ def test_feature_cache_invalidates_legacy_phrase_features(tmp_path):
     legacy = tmp_path / current.name.removeprefix('phrase-phase-v1-')
     assert current != legacy
     assert current.name.startswith('phrase-phase-v1-')
+
+
+@pytest.mark.parametrize('slot', [4, 6])
+@pytest.mark.parametrize('phase', [0, 4, 8, 12])
+def test_confidence_uses_candidate_phase_not_overlapping_zero_window(slot, phase):
+    beat = 96 + phase
+    track = TrackFeatures(Path('x'), 120, 0, 192, 96, phrase_phase=0)
+    for size in (8, 16, 32):
+        wrong = PhraseFeatures(beat - 4, beat - 4 + size, size)
+        right = PhraseFeatures(beat, beat + size, size, delta_kick=0.5,
+                               delta_low=10, drop_score=4, is_drop_candidate=True)
+        setattr(track, f'phrases_{size}', [wrong, right])
+    track.drop_candidates = [beat]
+    signals = compute_cue_confidence_signals(track, beat, slot)
+    assert signals.kick_slam_strength == 1
+    assert signals.zoom_agreement == 1
+    assert signals.on_lattice
+    assert 'off-lattice' not in signals.abstain_reasons
+    assert 'weak kick slam (0.00)' not in signals.abstain_reasons
+    assert signals.calibrated_confidence > 0.9
+
+
+def test_confidence_missing_and_unrepresented_off_phase_predictions():
+    track = TrackFeatures(Path('x'), 120, 0, 192, 96, phrase_phase=4)
+    missing = compute_cue_confidence_signals(track, None, 4)
+    assert missing.calibrated_confidence == 0
+    signals = compute_cue_confidence_signals(track, 37, 4)
+    assert signals.kick_slam_strength == 0
+    assert signals.zoom_agreement == 0
+    assert not signals.on_lattice
+    assert 'off-lattice' in signals.abstain_reasons
