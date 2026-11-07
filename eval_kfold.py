@@ -29,6 +29,9 @@ if not os.environ.get("OPENAI_API_KEY"):
     sys.exit(1)
 
 from auto_cue.features import FEATURE_CACHE_VERSION, extract_features
+from auto_cue.first_drop import (
+    first_drop_vectors, fit_first_drop_ranker, ranked_first_drops, save_first_drop_ranker,
+)
 from auto_cue.gold import GoldPool, PoolTrack, get_pool_fewshot_examples, load_gold_csv, load_gold_pool
 from auto_cue.llm import predict_cues_llm
 from auto_cue.ranker import candidate_vector
@@ -185,6 +188,17 @@ def rows_for_tracks(tracks: list[PoolTrack], feature_map: dict, include_pct: boo
 
 
 def fit_gbm(tracks: list[PoolTrack], feature_map: dict, include_pct: bool, cue: str):
+    if cue == "cue4":
+        groups = []
+        for track in tracks:
+            features = feature_map.get(track.path)
+            if features is None:
+                continue
+            beats, vectors = first_drop_vectors(features, include_track_pct=include_pct)
+            gold = track.cues.get(3)
+            labels = np.array([int(gold is not None and abs(b - gold) <= 1) for b in beats])
+            groups.append((vectors, labels))
+        return fit_first_drop_ranker(groups)
     xs, ys = rows_for_tracks(tracks, feature_map, include_pct, cue)
     if xs is None or len(set(ys.tolist())) < 2:
         return None
@@ -196,6 +210,9 @@ def fit_gbm(tracks: list[PoolTrack], feature_map: dict, include_pct: bool, cue: 
 def rank_one(model, features, cue: str, include_pct: bool) -> tuple[int | None, float]:
     if model is None:
         return None, 0.0
+    if cue == "cue4":
+        ranking = ranked_first_drops(model, features, include_track_pct=include_pct)
+        return ranking[0] if ranking else (None, 0.0)
     beats = list(features.drop_candidates)
     if cue == "cue6":
         half = features.total_beats // 2
@@ -247,6 +264,7 @@ def predict_track(track: PoolTrack, features, pool: GoldPool, feature_cache: dic
         reasoning_effort=REASONING,
         genre_bucket=track.bpm_band,
         examples=examples,
+        first_drop_ranking=ranked_first_drops(models["cue4_pct"], features),
     )
     out = {
         "llm4": llm.cue4_beat,
@@ -255,6 +273,7 @@ def predict_track(track: PoolTrack, features, pool: GoldPool, feature_cache: dic
         "llm6_conf": llm.cue6.confidence,
         "cost": llm.cost_usd,
         "examples": [ex.name for ex in examples],
+        "shortlist4": ranked_first_drops(models["cue4_pct"], features)[:5],
     }
     for pct_name, include_pct in (("pct", True), ("nopct", False)):
         for cue in ("cue4", "cue6"):
@@ -334,6 +353,8 @@ def run_split(split_name: str, test_tracks: list[PoolTrack], train_tracks: list[
     allowed_train = [t for t in train_tracks if t.path not in banned_train and t.path not in test_paths]
     print(f"\n{split_name}: test={len(test_tracks)} train_allowed={len(allowed_train)} banned_from_train={len(banned_train & {t.path for t in train_tracks})}")
     models = train_fold_models(allowed_train, feature_map)
+    if split_name == "qa" and models["cue4_pct"] is not None:
+        save_first_drop_ranker(models["cue4_pct"], SUMMARY_PATH.parent / "first-drop-model.json")
 
     pending = []
     for track in test_tracks:
