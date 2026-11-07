@@ -26,7 +26,7 @@ Goal: download tracks liked on the HuntingSzn SoundCloud account (https://soundc
 - Do NOT run the repo's `sc-unrepost` (`packages/soundcloud_repost`): it deletes ALL reposts, not just today's.
 
 ## SoundCloud OAuth ("act on your behalf") apps
-- Approved: stillhype.io, droploud.com (allow, then repost cleanup).
+- Approved: stillhype.io, droploud.com, pl8list.com (allow, then repost cleanup).
 - Denied: ipln.io / InfluencePlanner (use the script).
 - New platform asks for access: cancel, finish the rest of the batch, then ask Will one `user_question` per platform: "<platform> wants to connect to your SoundCloud for <track>. Approve and add it?" (Yes / No). Yes: rerun that gate and open a PR adding it to Approved here. No: use the script, log the reason, and add it to Denied.
 - Default comment: when an approved gate requires a SoundCloud comment, post exactly `fire`. Never use the gate's suggested text.
