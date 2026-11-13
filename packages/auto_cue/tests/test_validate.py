@@ -406,9 +406,9 @@ class TestHighConfidenceSelection:
 
         kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
 
-        assert kept.filled_slots() == [1, 2, 4, 6, 7, 8]
-        assert kept.cue3 is None
-        assert kept.cue5 is None
+        assert kept.filled_slots() == [1, 2, 3, 4, 5, 6, 7, 8]
+        assert kept.cue3 == 64
+        assert kept.cue5 == 160
 
     def test_missing_drop_still_keeps_other_confident_cues(self):
         prediction = _prediction({2: (32, 0.91), 4: (96, 0.93), 6: (None, 0.2)})
@@ -416,7 +416,8 @@ class TestHighConfidenceSelection:
 
         kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
 
-        assert kept.filled_slots() == [2, 4]
+        assert kept.filled_slots() == [2, 3, 4]
+        assert kept.cue3 == 64
         assert kept.cue6 is None
 
     def test_low_confidence_cue_is_blank_not_a_track_skip(self):
@@ -426,7 +427,9 @@ class TestHighConfidenceSelection:
         kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
 
         assert kept.cue4 is None
-        assert kept.filled_slots() == [6, 8]
+        assert kept.cue3 is None
+        assert kept.cue5 == 160
+        assert kept.filled_slots() == [5, 6, 8]
 
     def test_drops_cue_too_close_to_the_end(self):
         prediction = _prediction({4: (64, 0.9), 6: (128, 0.9), 8: (190, 0.95)})
@@ -435,7 +438,9 @@ class TestHighConfidenceSelection:
         kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
 
         assert kept.cue8 is None
-        assert kept.filled_slots() == [4, 6]
+        assert kept.cue3 == 32
+        assert kept.cue5 == 96
+        assert kept.filled_slots() == [3, 4, 5, 6]
 
     def test_same_beat_keeps_the_more_important_slot(self):
         prediction = _prediction({1: (32, 0.9), 2: (32, 0.9), 4: (96, 0.95)})
@@ -445,6 +450,7 @@ class TestHighConfidenceSelection:
 
         assert kept.cue1 is None
         assert kept.cue2 == 32
+        assert kept.cue3 == 64
         assert kept.cue4 == 96
 
     def test_no_confident_cues_returns_empty(self):

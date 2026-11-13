@@ -347,10 +347,12 @@ def check_confidence_threshold(
     return result, []
 
 
-# Model-predicted slots only. Cue 3 and cue 5 are derived run-ups, not separate calls.
+# Slots the model predicts. Cue 3 and cue 5 are derived from cue 4 and cue 6.
 _WRITE_SLOTS = (1, 2, 4, 6, 7, 8)
-# Drops first, then the entry cues, then the outro.
-_SLOT_RANK = {slot: rank for rank, slot in enumerate((4, 6, 2, 1, 7, 8))}
+# Anchors outrank their run-ups, which outrank the other slots.
+_SLOT_RANK = {slot: rank for rank, slot in enumerate((4, 6, 3, 5, 2, 1, 7, 8))}
+# These pairs must be strictly ordered. Other neighbors may share a beat.
+_STRICT_BEFORE = {(3, 4), (5, 6), (6, 7)}
 
 
 def select_high_confidence_cues(
@@ -362,7 +364,8 @@ def select_high_confidence_cues(
     """Keep every cue the model scored at or above `min_confidence`.
 
     A cue under the bar is left blank. The track is not rejected because another
-    cue is missing or uncertain. Derived run-up cues are not added.
+    cue is missing or uncertain. Cue 3 and cue 5 are then placed 32 beats before
+    cue 4 and cue 6, or 16 beats before when 32 does not fit.
     """
     chosen: list[tuple[int, int, float]] = []
     for slot in _WRITE_SLOTS:
@@ -375,6 +378,9 @@ def select_high_confidence_cues(
             continue
         chosen.append((slot, int(beat), float(conf)))
 
+    chosen = _dedupe_same_beat(chosen)
+    chosen = _drop_order_conflicts(chosen)
+    chosen = _with_run_ups(chosen)
     chosen = _dedupe_same_beat(chosen)
     chosen = _drop_order_conflicts(chosen)
 
@@ -411,9 +417,54 @@ def _dedupe_same_beat(
     return list(best.values())
 
 
+def run_up_beat(anchor: int, *, not_before: int | None = None) -> int | None:
+    """Beat of the run-up cue before ``anchor``.
+
+    Prefer 32 beats earlier. Use 16 when 32 would land before ``not_before``
+    or before the start of the track.
+    """
+    if anchor >= 32:
+        beat = anchor - 32
+    elif anchor >= 16:
+        beat = anchor - 16
+    else:
+        return None
+    if not_before is not None and beat <= not_before:
+        if anchor - 16 > not_before:
+            beat = anchor - 16
+        else:
+            return None
+    if beat < 0 or beat >= anchor:
+        return None
+    return beat
+
+
+def _with_run_ups(
+    chosen: list[tuple[int, int, float]],
+) -> list[tuple[int, int, float]]:
+    by_slot = {slot: item for item in chosen for slot, _, _ in (item,)}
+    cue4 = by_slot.get(4)
+    cue6 = by_slot.get(6)
+    if cue4 is not None and 3 not in by_slot:
+        cue3 = run_up_beat(cue4[1])
+        if cue3 is not None:
+            by_slot[3] = (3, cue3, cue4[2])
+    if cue6 is not None and 5 not in by_slot:
+        cue5 = run_up_beat(cue6[1], not_before=None if cue4 is None else cue4[1])
+        if cue5 is not None:
+            by_slot[5] = (5, cue5, cue6[2])
+    return list(by_slot.values())
+
+
 def _time_matches_slot_order(chosen: list[tuple[int, int, float]]) -> bool:
-    beats = [beat for _, beat, _ in sorted(chosen, key=lambda item: item[0])]
-    return beats == sorted(beats) and len(beats) == len(set(beats))
+    ordered = sorted(chosen, key=lambda item: item[0])
+    for prev, nxt in zip(ordered, ordered[1:]):
+        if (prev[0], nxt[0]) in _STRICT_BEFORE:
+            if prev[1] >= nxt[1]:
+                return False
+        elif prev[1] > nxt[1]:
+            return False
+    return True
 
 
 def _drop_order_conflicts(
