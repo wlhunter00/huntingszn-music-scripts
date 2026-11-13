@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from auto_cue import cli
-from auto_cue.protection import check_protection, load_protected_paths, parse_crate_file
+from auto_cue.protection import check_protection, parse_crate_file
 from auto_cue.tags import TrackTags, read_track_tags, write_track_beatgrid
 from auto_cue.validate import CueSet
 from mutagen.id3 import GEOB, ID3
@@ -63,7 +63,6 @@ def test_nested_crate_paths_are_normalized(tmp_path):
     crate.write_bytes(chunk(b"vrsn", b"1.0") + chunk(
         b"otrk", chunk(b"ptrk", (path + "\0").encode("utf-16-be"))))
     assert parse_crate_file(crate) == ["DJ Music/Café.mp3"]
-    assert load_protected_paths(tmp_path) == {"DJ Music/Café.mp3"}
 
 
 def test_empty_crate(tmp_path):
@@ -74,22 +73,45 @@ def test_empty_crate(tmp_path):
 
 @pytest.mark.parametrize("raw", [b"otrk", chunk(b"otrk", b"ptrk"),
                                   chunk(b"ptrk", b"\x00"), b"otrk\x00\x00\x00\x10"])
-def test_malformed_crate_aborts_before_processing(sample_mp3, tmp_path, monkeypatch, capsys, raw):
+def test_malformed_crate_does_not_block_a_library_write(
+    sample_mp3, tmp_path, monkeypatch, raw,
+):
     subcrates = tmp_path / "Subcrates"
     subcrates.mkdir()
     crate = subcrates / "Sets.crate"
     crate.write_bytes(raw)
-    with pytest.raises(ValueError, match="cannot establish protected crate membership"):
+    with pytest.raises(ValueError, match="cannot read crate"):
         parse_crate_file(crate)
     monkeypatch.setattr(cli, "serato_is_running", lambda: False)
-    monkeypatch.setattr(cli, "process_track", lambda *a, **kw: pytest.fail("must not process"))
+    seen = []
+
+    def record(path, **kwargs):
+        seen.append(path)
+        return cli.ProcessResult(path=path, action="skip-skip", error="has existing cues")
+
+    monkeypatch.setattr(cli, "process_track", record)
     assert cli.main(["--file", str(sample_mp3), "--write", "--db",
+                     str(tmp_path / "database V2")]) == 0
+    assert seen == [sample_mp3]
+
+
+@pytest.mark.parametrize("raw", [b"otrk", chunk(b"otrk", b"ptrk"),
+                                  chunk(b"ptrk", b"\x00"), b"otrk\x00\x00\x00\x10"])
+def test_malformed_requested_crate_aborts_before_processing(
+    sample_mp3, tmp_path, monkeypatch, capsys, raw,
+):
+    subcrates = tmp_path / "Subcrates"
+    subcrates.mkdir()
+    (subcrates / "Sets.crate").write_bytes(raw)
+    monkeypatch.setattr(cli, "serato_is_running", lambda: False)
+    monkeypatch.setattr(cli, "process_track", lambda *a, **kw: pytest.fail("must not process"))
+    assert cli.main(["--file", str(sample_mp3), "--write", "--crate", "Sets", "--db",
                      str(tmp_path / "database V2")]) == 1
-    assert "Cannot safely load protected crates" in capsys.readouterr().err
+    assert "Cannot safely filter requested crate" in capsys.readouterr().err
 
 
 def test_unreadable_crate_fails_closed(tmp_path):
-    with pytest.raises(ValueError, match="cannot establish protected crate membership"):
+    with pytest.raises(ValueError, match="cannot read crate"):
         parse_crate_file(tmp_path / "missing.crate")
 
 

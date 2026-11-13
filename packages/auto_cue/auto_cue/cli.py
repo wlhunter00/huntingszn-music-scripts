@@ -26,7 +26,6 @@ from auto_cue.llm import (
 )
 from auto_cue.protection import (
     decide_cue_write,
-    load_protected_paths,
     normalize_path,
     parse_crate_file,
 )
@@ -85,7 +84,6 @@ def process_track(
     reasoning_effort: str = "medium",
     min_confidence: float = 0.6,
     backup_root: Path | None = None,
-    protected_paths: set[str] | None = None,
     library_root: Path | None = None,
     explain: bool = False,
 ) -> ProcessResult:
@@ -98,7 +96,6 @@ def process_track(
         use_llm: Use LLM for prediction (vs rules-only)
         min_confidence: Minimum confidence threshold
         backup_root: Backup directory
-        protected_paths: Paths from protected crates
         library_root: Library root for relative path calculation
         explain: Print detailed analysis
 
@@ -121,12 +118,7 @@ def process_track(
         except ValueError:
             pass
 
-    decision = decide_cue_write(
-        tags,
-        replace_mik=replace_mik,
-        protected_paths=protected_paths,
-        track_relative_path=relative_path,
-    )
+    decision = decide_cue_write(tags, replace_mik=replace_mik)
 
     if not decision.should_write:
         result.action = f"skip-{decision.action}"
@@ -378,26 +370,23 @@ def main(argv: list[str] | None = None) -> int:
         print("No audio files found.", file=sys.stderr)
         return 2
 
-    protected_paths: set[str] = set()
     serato_dir: Path | None = None
-    try:
-        if args.db:
-            serato_dir = args.db.parent
-            protected_paths = load_protected_paths(serato_dir)
-        elif library_root:
-            scan_root = library_root.resolve()
-            candidates = [
-                parent / "_Serato_" for parent in (scan_root, *scan_root.parents)
-                if (parent / "_Serato_").is_dir()
-            ]
-            if args.crate and len(candidates) != 1:
-                raise ValueError("cannot determine an unambiguous volume root; specify --db")
-            if candidates:
-                serato_dir = candidates[0]
-                protected_paths = load_protected_paths(serato_dir)
-    except (OSError, ValueError) as e:
-        print(f"ERROR: Cannot safely load protected crates: {e}", file=sys.stderr)
-        return 1
+    if args.db:
+        serato_dir = args.db.parent
+    elif args.crate and library_root:
+        scan_root = library_root.resolve()
+        candidates = [
+            parent / "_Serato_" for parent in (scan_root, *scan_root.parents)
+            if (parent / "_Serato_").is_dir()
+        ]
+        if len(candidates) != 1:
+            print(
+                "ERROR: Cannot safely filter requested crate: "
+                "cannot determine an unambiguous volume root; specify --db",
+                file=sys.stderr,
+            )
+            return 1
+        serato_dir = candidates[0]
 
     if args.crate:
         try:
@@ -449,7 +438,6 @@ def main(argv: list[str] | None = None) -> int:
             reasoning_effort=args.reasoning_effort,
             min_confidence=args.min_confidence,
             backup_root=backup_root,
-            protected_paths=protected_paths,
             library_root=library_root,
             explain=args.explain,
         )

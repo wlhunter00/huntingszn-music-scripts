@@ -244,22 +244,25 @@ class TestCueWriteDecision:
         assert decision.action == "abstain"
 
 
-class TestProtectedCratePaths:
-    """Test protection based on crate membership."""
+class TestCrateMembershipDoesNotProtect:
+    """Crate membership is not a reason to skip a write."""
 
-    def test_sets_crate_is_protected(self):
-        """Track in Sets/ crate should be protected."""
+    def test_uncued_track_can_be_written(self):
         tags = make_track_tags()
-        protected_paths = {"DJ Music/Spotify/track.mp3"}
+        decision = decide_cue_write(tags)
 
-        status = check_protection(
-            tags,
-            protected_paths=protected_paths,
-            track_relative_path="DJ Music/Spotify/track.mp3",
+        assert decision.should_write
+        assert decision.action == "write"
+
+    def test_existing_cues_still_block_write(self):
+        tags = make_track_tags(
+            cues=[CuePoint(index=0, position_ms=1000, name="Drop")]
         )
+        decision = decide_cue_write(tags)
 
-        assert status.protected
-        assert "in protected crate" in status.reasons
+        assert not decision.should_write
+        assert decision.action == "skip"
+        assert "has human cues" in decision.reasons
 
 
 class TestRealQAProtection:

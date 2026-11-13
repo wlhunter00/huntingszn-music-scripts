@@ -30,7 +30,7 @@ features are not silently reused.
 - Backs up files before writing
 - Refuses while Serato is running
 - Supports MP3 and FLAC
-- Never modifies protected tracks (human cues, BPM lock, Sets/Perma crates)
+- Never overwrites tracks that already have cue points
 
 ## Installation
 
@@ -183,8 +183,7 @@ of signed 16-beat multiples, other misses, or no prediction. Compare later
 
 ## Safety
 
-- Never modifies tracks with human (non-MIK) cues
+- Never overwrites tracks that already have cue points
 - Never touches BPM-locked tracks
-- Skips tracks in Sets/, Perma Playlists/, Produced by me crates
 - Never rewrites dynamic (multi-marker) grids
 - Abstains when confidence is low

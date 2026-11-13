@@ -1,13 +1,14 @@
 """Grid and track protection logic.
 
 A track is protected (never written to) if ANY of these is true:
-- Has any human (non-MIK) cues
+- Has any existing cue points (human cues, legacy cues, or MIK cues)
 - Has BPM lock enabled
-- Is in Sets/, Perma Playlists/, or Produced by me crates
 - Has a multi-marker (dynamic) grid
 - Has loops or flips
 - Any ambiguity or error reading tags
 
+Crate membership does not protect a track. Tracks with only MIK
+"Energy N" cues can be replaced when --replace-mik is set.
 Protected tracks may be analyzed and reported, but never written.
 """
 
@@ -34,13 +35,6 @@ class ProtectionStatus:
         if not self.protected:
             return "not protected"
         return f"protected: {', '.join(self.reasons)}"
-
-
-PROTECTED_CRATE_PREFIXES = (
-    "Sets/",
-    "Perma Playlists/",
-    "Produced by me",
-)
 
 
 def normalize_path(path: str) -> str:
@@ -76,49 +70,17 @@ def parse_crate_file(crate_path: Path) -> list[str]:
     try:
         return parse_chunks(crate_path.read_bytes())
     except (OSError, ValueError, RecursionError) as e:
-        message = f"cannot establish protected crate membership for {crate_path}: {e}"
+        message = f"cannot read crate {crate_path}: {e}"
         raise ValueError(message) from e
 
 
-def load_protected_paths(serato_dir: Path) -> set[str]:
-    """Load all paths from protected crates."""
-    protected = set()
-
-    subcrates_dir = serato_dir / "Subcrates"
-    if not subcrates_dir.is_dir():
-        return protected
-
-    for crate_file in subcrates_dir.glob("*.crate"):
-        crate_name = crate_file.stem
-
-        is_protected = any(
-            crate_name.startswith(prefix.rstrip("/")) or
-            crate_name == prefix.rstrip("/")
-            for prefix in PROTECTED_CRATE_PREFIXES
-        )
-
-        if "Sets" in crate_name or "Perma" in crate_name or "Produced" in crate_name:
-            is_protected = True
-
-        if is_protected:
-            for track_path in parse_crate_file(crate_file):
-                protected.add(track_path)
-
-    return protected
-
-
-def check_protection(
-    track: TrackTags,
-    *,
-    protected_paths: set[str] | None = None,
-    track_relative_path: str | None = None,
-) -> ProtectionStatus:
+def check_protection(track: TrackTags) -> ProtectionStatus:
     """Check if a track is protected from modification.
+
+    Existing cue points always protect the track. Crate membership does not.
 
     Args:
         track: Parsed track tags
-        protected_paths: Set of paths from protected crates (NFC-normalized)
-        track_relative_path: Path relative to library root for crate matching
 
     Returns:
         ProtectionStatus with reasons if protected
@@ -160,16 +122,6 @@ def check_protection(
     if track.beatgrid and track.beatgrid.is_dynamic:
         reasons.append("dynamic (multi-marker) grid")
 
-    if protected_paths and track_relative_path:
-        normalized = normalize_path(track_relative_path)
-        if normalized in protected_paths:
-            reasons.append("in protected crate")
-
-        for pp in protected_paths:
-            if normalized.endswith(pp) or pp.endswith(normalized):
-                reasons.append("in protected crate")
-                break
-
     return ProtectionStatus(
         protected=len(reasons) > 0,
         reasons=reasons,
@@ -177,23 +129,14 @@ def check_protection(
     )
 
 
-def check_grid_protection(
-    track: TrackTags,
-    *,
-    protected_paths: set[str] | None = None,
-    track_relative_path: str | None = None,
-) -> ProtectionStatus:
+def check_grid_protection(track: TrackTags) -> ProtectionStatus:
     """Check if a track's grid is protected from modification.
 
     Grids have stricter protection than cues:
     - All cue protection reasons apply
     - Additionally protected if track has ANY cues (even MIK)
     """
-    base_status = check_protection(
-        track,
-        protected_paths=protected_paths,
-        track_relative_path=track_relative_path,
-    )
+    base_status = check_protection(track)
 
     reasons = list(base_status.reasons)
 
@@ -223,25 +166,20 @@ def decide_cue_write(
     track: TrackTags,
     *,
     replace_mik: bool = False,
-    protected_paths: set[str] | None = None,
-    track_relative_path: str | None = None,
 ) -> CueWriteDecision:
     """Decide whether to write cues to a track.
+
+    Any existing cue point blocks the write. MIK-only cues are replaced
+    only when replace_mik is set. Crate membership is ignored.
 
     Args:
         track: Parsed track tags
         replace_mik: Whether --replace-mik flag is set
-        protected_paths: Paths from protected crates
-        track_relative_path: Relative path for crate matching
 
     Returns:
         CueWriteDecision with action and reasons
     """
-    protection = check_protection(
-        track,
-        protected_paths=protected_paths,
-        track_relative_path=track_relative_path,
-    )
+    protection = check_protection(track)
 
     if protection.protected:
         return CueWriteDecision(action="skip", reasons=protection.reasons)
