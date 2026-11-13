@@ -33,8 +33,17 @@ def backup_file(src: Path, backup_root: Path, *, relative: Path | None = None) -
         try:
             os.link(temp, dest)
         except OSError as e:
-            if e.errno not in (errno.EPERM, errno.EACCES, errno.ENOSYS,
-                               errno.EOPNOTSUPP, errno.EXDEV):
+            # Windows volumes that cannot hardlink (exFAT and some external
+            # drives) return EINVAL / WinError 1, "Incorrect function."
+            unsupported = e.errno in (
+                errno.EPERM,
+                errno.EACCES,
+                errno.ENOSYS,
+                errno.EOPNOTSUPP,
+                errno.EXDEV,
+                errno.EINVAL,
+            ) or getattr(e, "winerror", None) == 1
+            if not unsupported:
                 raise
             _copy_exclusive(temp, dest)
     finally:

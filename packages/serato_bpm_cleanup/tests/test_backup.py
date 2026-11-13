@@ -64,6 +64,20 @@ def test_failed_backup_is_cleaned_and_can_retry(tmp_path, monkeypatch, failure):
     assert list(root.iterdir()) == [dest]
 
 
+def test_backup_falls_back_when_hard_links_are_invalid(tmp_path, monkeypatch):
+    src = tmp_path / "track.mp3"
+    src.write_bytes(b"original")
+
+    def unsupported(*args):
+        error = OSError(errno.EINVAL, "Incorrect function")
+        error.winerror = 1
+        raise error
+
+    monkeypatch.setattr(backup.os, "link", unsupported)
+    dest = backup_file(src, tmp_path / "backups")
+    assert dest.read_bytes() == b"original"
+
+
 def test_backup_falls_back_without_hard_links(tmp_path, monkeypatch):
     src = tmp_path / "track.mp3"
     src.write_bytes(b"original")

@@ -462,7 +462,7 @@ def main(argv: list[str] | None = None) -> int:
         if result.action.startswith("would-write") or result.action == "write":
             cue_str = ", ".join(f"{k+1}={v}" for k, v in sorted((result.cues_set or {}).items()))
             print(f"{prefix}{result.action}: {result.path.name} [{cue_str}]")
-        elif result.action.startswith("skip") or result.action.startswith("abstain"):
+        elif result.action.startswith(("skip", "abstain", "error")):
             print(f"{prefix}{result.action}: {result.path.name} ({result.error or ''})")
 
     action_counts: dict[str, int] = {}
