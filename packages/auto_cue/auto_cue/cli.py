@@ -38,10 +38,7 @@ from auto_cue.tags import (
     read_track_tags,
     write_track_markers2,
 )
-from auto_cue.validate import (
-    check_confidence_threshold,
-    validate_cue_set,
-)
+from auto_cue.validate import select_high_confidence_cues
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".aac", ".wav", ".aiff", ".aif"}
 WRITABLE_EXTENSIONS = {".mp3", ".flac"}
@@ -209,30 +206,19 @@ def process_track(
         print(f"Rationale: {prediction.rationale}")
 
     cues = prediction_to_cue_set(prediction, features.total_beats)
-
-    validation = validate_cue_set(cues)
-    if not validation.valid:
-        result.action = "abstain-validation-failed"
-        result.error = "; ".join(validation.errors)
-        return result
-
-    if validation.warnings and explain:
-        for w in validation.warnings:
-            print(f"Warning: {w}")
-
-    filtered_cues, abstain_reasons = check_confidence_threshold(
+    filtered_cues = select_high_confidence_cues(
+        prediction,
         cues,
-        core_threshold=min_confidence,
+        min_confidence=min_confidence,
     )
-
-    if abstain_reasons:
+    if not filtered_cues.filled_slots():
         result.action = "abstain-low-confidence"
-        result.error = "; ".join(abstain_reasons)
+        result.error = f"no cues at or above {min_confidence:.2f}"
         return result
 
     cue_beats = filtered_cues.to_dict()
     result.cues_set = cue_beats
-    result.confidence = prediction.confidence
+    result.confidence = min(filtered_cues.confidences.values())
 
     if explain:
         print(f"Final cues (beats): {cue_beats}")
@@ -325,7 +311,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-confidence",
         type=float,
         default=0.6,
-        help="Minimum confidence threshold for core cues (default 0.6).",
+        help="Minimum confidence for a written cue (default 0.6). Every cue at or above this is written.",
     )
     parser.add_argument(
         "--explain",

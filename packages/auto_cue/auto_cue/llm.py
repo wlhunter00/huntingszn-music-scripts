@@ -261,6 +261,16 @@ class LLMPrediction:
     def has_cue6(self) -> bool:
         return self.cue6.beat is not None
 
+    @property
+    def confidence(self) -> float:
+        """Lowest confidence among the predicted drop cues."""
+        scores = [
+            cue.confidence
+            for cue in (self.cue4, self.cue6)
+            if cue.beat is not None
+        ]
+        return min(scores) if scores else 0.0
+
 
 @dataclass
 class AbstainDecision:

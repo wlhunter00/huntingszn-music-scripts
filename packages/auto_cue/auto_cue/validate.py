@@ -347,6 +347,84 @@ def check_confidence_threshold(
     return result, []
 
 
+# Model-predicted slots only. Cue 3 and cue 5 are derived run-ups, not separate calls.
+_WRITE_SLOTS = (1, 2, 4, 6, 7, 8)
+# Drops first, then the entry cues, then the outro.
+_SLOT_RANK = {slot: rank for rank, slot in enumerate((4, 6, 2, 1, 7, 8))}
+
+
+def select_high_confidence_cues(
+    prediction: object,
+    cues: CueSet,
+    *,
+    min_confidence: float = 0.6,
+) -> CueSet:
+    """Keep every cue the model scored at or above `min_confidence`.
+
+    A cue under the bar is left blank. The track is not rejected because another
+    cue is missing or uncertain. Derived run-up cues are not added.
+    """
+    chosen: list[tuple[int, int, float]] = []
+    for slot in _WRITE_SLOTS:
+        beat, conf = _explicit_cue(prediction, cues, slot)
+        if beat is None or conf is None or conf < min_confidence:
+            continue
+        if beat < 0 or (cues.total_beats > 0 and beat >= cues.total_beats):
+            continue
+        if slot == 8 and cues.total_beats > 0 and cues.total_beats - beat < 8:
+            continue
+        chosen.append((slot, int(beat), float(conf)))
+
+    chosen = _dedupe_same_beat(chosen)
+    chosen = _drop_order_conflicts(chosen)
+
+    result = CueSet(total_beats=cues.total_beats, cue7_midsong=cues.cue7_midsong)
+    for slot, beat, conf in chosen:
+        result.set(slot, beat)
+        result.confidences[slot] = conf
+    return result
+
+
+def _explicit_cue(prediction: object, cues: CueSet, slot: int) -> tuple[int | None, float | None]:
+    """Read a model cue. Fall back to the cue set only when the prediction has no slots."""
+    attr = f"cue{slot}"
+    if hasattr(prediction, attr):
+        cue = getattr(prediction, attr)
+        if cue is None or not hasattr(cue, "beat"):
+            return None, None
+        return cue.beat, float(cue.confidence)
+    if any(hasattr(prediction, f"cue{other}") for other in _WRITE_SLOTS):
+        return None, None
+    return cues.get(slot), cues.confidences.get(slot)
+
+
+def _dedupe_same_beat(
+    chosen: list[tuple[int, int, float]],
+) -> list[tuple[int, int, float]]:
+    best: dict[int, tuple[int, int, float]] = {}
+    for item in chosen:
+        current = best.get(item[1])
+        rank = -_SLOT_RANK[item[0]]
+        current_rank = None if current is None else -_SLOT_RANK[current[0]]
+        if current is None or (item[2], rank) > (current[2], current_rank):
+            best[item[1]] = item
+    return list(best.values())
+
+
+def _time_matches_slot_order(chosen: list[tuple[int, int, float]]) -> bool:
+    beats = [beat for _, beat, _ in sorted(chosen, key=lambda item: item[0])]
+    return beats == sorted(beats) and len(beats) == len(set(beats))
+
+
+def _drop_order_conflicts(
+    chosen: list[tuple[int, int, float]],
+) -> list[tuple[int, int, float]]:
+    chosen = list(chosen)
+    while chosen and not _time_matches_slot_order(chosen):
+        chosen.remove(min(chosen, key=lambda item: (item[2], -_SLOT_RANK[item[0]])))
+    return chosen
+
+
 VALID_PARTIAL_SETS = [
     {1, 2, 3, 4},           # Just first drop section
     {1, 2, 3, 4, 5, 6},     # Both drops, no outro markers

@@ -12,11 +12,13 @@ Tests:
 
 from __future__ import annotations
 
+from auto_cue.llm import CueConfidence, LLMPrediction
 from auto_cue.validate import (
     CueSet,
     build_cues_deterministic,
     check_confidence_threshold,
     is_valid_partial,
+    select_high_confidence_cues,
     validate_cue_set,
 )
 
@@ -374,6 +376,84 @@ class TestBuildCuesDeterministic:
 
         assert cues32.cue2 == 64  # 96 - 32 = 64
         assert cues64.cue2 == 32  # 96 - 64 = 32
+
+
+def _prediction(slots: dict[int, tuple[int | None, float]]) -> LLMPrediction:
+    def cue(slot: int) -> CueConfidence:
+        beat, conf = slots.get(slot, (None, 0.0))
+        return CueConfidence(beat, conf)
+
+    return LLMPrediction(
+        cue1=cue(1),
+        cue2=cue(2),
+        cue4=cue(4),
+        cue6=cue(6),
+        cue7=cue(7),
+        cue8=cue(8),
+        cue7_midsong=False,
+        rationale="",
+    )
+
+
+class TestHighConfidenceSelection:
+    """Every model cue at or above the bar is kept. Uncertain cues stay blank."""
+
+    def test_keeps_every_confident_cue_and_skips_derived_slots(self):
+        prediction = _prediction(
+            {1: (0, 0.95), 2: (32, 0.9), 4: (96, 0.99), 6: (192, 0.97), 7: (224, 0.7), 8: (256, 0.65)}
+        )
+        cues = CueSet(total_beats=300)
+
+        kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
+
+        assert kept.filled_slots() == [1, 2, 4, 6, 7, 8]
+        assert kept.cue3 is None
+        assert kept.cue5 is None
+
+    def test_missing_drop_still_keeps_other_confident_cues(self):
+        prediction = _prediction({2: (32, 0.91), 4: (96, 0.93), 6: (None, 0.2)})
+        cues = CueSet(total_beats=300)
+
+        kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
+
+        assert kept.filled_slots() == [2, 4]
+        assert kept.cue6 is None
+
+    def test_low_confidence_cue_is_blank_not_a_track_skip(self):
+        prediction = _prediction({4: (96, 0.58), 6: (192, 0.92), 8: (256, 0.8)})
+        cues = CueSet(total_beats=400)
+
+        kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
+
+        assert kept.cue4 is None
+        assert kept.filled_slots() == [6, 8]
+
+    def test_drops_cue_too_close_to_the_end(self):
+        prediction = _prediction({4: (64, 0.9), 6: (128, 0.9), 8: (190, 0.95)})
+        cues = CueSet(total_beats=194)
+
+        kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
+
+        assert kept.cue8 is None
+        assert kept.filled_slots() == [4, 6]
+
+    def test_same_beat_keeps_the_more_important_slot(self):
+        prediction = _prediction({1: (32, 0.9), 2: (32, 0.9), 4: (96, 0.95)})
+        cues = CueSet(total_beats=200)
+
+        kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
+
+        assert kept.cue1 is None
+        assert kept.cue2 == 32
+        assert kept.cue4 == 96
+
+    def test_no_confident_cues_returns_empty(self):
+        prediction = _prediction({4: (96, 0.4), 6: (160, 0.5)})
+        cues = CueSet(total_beats=200)
+
+        kept = select_high_confidence_cues(prediction, cues, min_confidence=0.6)
+
+        assert kept.filled_slots() == []
 
 
 class TestPartialSets:
