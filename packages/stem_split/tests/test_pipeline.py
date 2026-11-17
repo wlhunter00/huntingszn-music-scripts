@@ -270,6 +270,28 @@ class TestCleanPartialState:
         ]
         assert leftover == []
 
+    def test_preserves_archive_ending_with_vocals_token(self, tmp_path: Path) -> None:
+        dest = tmp_path / "song"
+        dest.mkdir()
+        archived = dest / "original_Artist - Track_(Vocals).wav"
+        write_wav(archived, value=0.5)
+        write_separator_stem(dest, "mix", "Vocals", "viperx.ckpt", value=0.3)
+        clean_partial_state(dest, "Track_(Vocals)")
+        assert archived.exists()
+
+    def test_preserves_archive_ending_with_reverb_remix(self, tmp_path: Path) -> None:
+        dest = tmp_path / "song"
+        dest.mkdir()
+        archived = dest / "original_Artist - Track_(Reverb)_Remix.wav"
+        write_wav(archived, value=0.5)
+        write_separator_stem(dest, "mix", "Reverb", "UVR-DeEcho-DeReverb.pth", value=0.9)
+        clean_partial_state(dest, "Track_(Reverb)_Remix")
+        assert archived.exists()
+        leftover = [
+            p for p in dest.glob("*_(*)_*.wav") if not p.name.startswith("original_")
+        ]
+        assert leftover == []
+
     def test_original_prefixed_input_splits(
         self, tmp_path: Path, fake_separator: FakeSeparator
     ) -> None:
@@ -284,6 +306,23 @@ class TestCleanPartialState:
         assert (dest / "original_original_Artist - Track.wav").exists()
         assert not song.exists()
         assert list(dest.glob("*_(*)_*.wav")) == []
+
+    def test_reprocess_keeps_vocals_suffix_archive_on_failure(
+        self, tmp_path: Path, fake_separator: FakeSeparator
+    ) -> None:
+        inp = tmp_path / "songs-to-split"
+        out = tmp_path / "stem-output"
+        inp.mkdir()
+        write_wav(inp / "Artist - Track_(Vocals).wav", value=0.4)
+        process_audio_folder(str(inp), str(out))
+        dest = out / "htdemucs_ft" / "Artist - Track_(Vocals)"
+        archive = dest / "original_Artist - Track_(Vocals).wav"
+        assert archive.exists()
+        write_wav(inp / "Artist - Track_(Vocals).wav", value=0.4)
+        fake_separator.fail_models = {VOCAL_BS_MODEL, VOCAL_MEL_MODEL}
+        process_audio_folder(str(inp), str(out))
+        assert archive.exists()
+        assert (inp / "Artist - Track_(Vocals).wav").exists()
 
 
 def test_delete_separator_wavs_skips_archived_original(tmp_path: Path) -> None:

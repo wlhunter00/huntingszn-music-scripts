@@ -24,6 +24,7 @@ from stem_split.models import normalize_stem_token
 from stem_split.pipeline import (
     SEPARATOR_LEFTOVER_TOKENS,
     extract_stem_token,
+    is_archived_source,
     parse_song_title,
 )
 
@@ -95,6 +96,8 @@ def check_files_exist(song_dir: Path, title: str):
         if (song_dir / pat).exists():
             intermediates_present.append(pat)
     for p in song_dir.glob("*_(*)_*.wav"):
+        if is_archived_source(p):
+            continue
         token = extract_stem_token(p.name)
         if token and normalize_stem_token(token) in SEPARATOR_LEFTOVER_TOKENS:
             intermediates_present.append(p.name)

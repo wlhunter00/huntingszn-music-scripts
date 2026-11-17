@@ -187,24 +187,23 @@ def _separator_cmd() -> list[str]:
 
 
 @contextmanager
-def _separator_export_dir(song_stems_dir: Path):
-    """Directory for audio-separator / mlx-audio-separator ``--output_dir``.
+def _separator_export_dir(_song_stems_dir: Path):
+    """Scratch directory for audio-separator / mlx-audio-separator ``--output_dir``.
 
-    On macOS, mlx-audio-io can fail with ``OSStatus 'dta?'`` when writing WAVs
-    to external or network volumes (e.g. under ``/Volumes/``). Use a local
-    scratch folder there and copy stems into ``song_stems_dir`` via soundfile.
+    Always isolated from ``song_stems_dir`` so archived ``original_<input>``
+    files cannot be mistaken for separator dumps. Keep-stems are converted
+    out with soundfile; the scratch dir is deleted afterwards.
 
-    Windows and Linux are unchanged: separator writes directly into
-    ``song_stems_dir``.
+    On macOS the scratch root is ``~/Library/Caches/stem-splitting-scratch``
+    because mlx-audio-io can fail with ``OSStatus 'dta?'`` when writing WAVs
+    to external or network volumes (e.g. under ``/Volumes/``).
     """
-    song_stems_dir = Path(song_stems_dir)
-    if platform.system() != "Darwin":
-        yield song_stems_dir
-        return
-
-    scratch_root = Path.home() / "Library" / "Caches" / "stem-splitting-scratch"
-    scratch_root.mkdir(parents=True, exist_ok=True)
-    work_dir = Path(tempfile.mkdtemp(prefix="sep-", dir=scratch_root))
+    if platform.system() == "Darwin":
+        scratch_root = Path.home() / "Library" / "Caches" / "stem-splitting-scratch"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        work_dir = Path(tempfile.mkdtemp(prefix="sep-", dir=scratch_root))
+    else:
+        work_dir = Path(tempfile.mkdtemp(prefix="stem-sep-"))
     try:
         yield work_dir
     finally:
@@ -312,6 +311,16 @@ def extract_stem_token(filename: str) -> str | None:
         search_end = lo
 
 
+def is_archived_source(path: Path | str) -> bool:
+    """True for ``original_<input>`` files moved into the stems folder after success.
+
+    Used only by cleanup of ``song_stems_dir``. Separator dumps (including
+    those from an input named ``original_...``) live in the scratch export
+    dir and are not matched here.
+    """
+    return Path(path).name.startswith("original_")
+
+
 def _iter_separator_wavs(separator_dir: Path):
     seen: set[Path] = set()
     for pattern in ("*_(*)_*.wav", "*_(*).wav"):
@@ -333,9 +342,8 @@ def clean_partial_state(song_stems_dir: Path, title: str) -> None:
     """Remove leftover intermediates and partial stems from prior failed runs.
 
     Idempotent: safe to call before each song and inside failure handlers.
-    Does not unlink archived sources: ``original_<input>`` files are not
-    separator outputs (no trailing ``_(Stem)`` suffix), even if the title
-    contains leftover-looking tokens such as Reverb.
+    Never unlinks archived ``original_<input>`` sources, even when the
+    original filename itself ends in ``_(Vocals)`` or ``_(Reverb)_Remix``.
     """
     song_stems_dir = Path(song_stems_dir)
     if not song_stems_dir.exists():
@@ -347,6 +355,8 @@ def clean_partial_state(song_stems_dir: Path, title: str) -> None:
             f.unlink()
 
     for f in _iter_separator_wavs(song_stems_dir):
+        if is_archived_source(f):
+            continue
         token = extract_stem_token(f.name)
         if token is not None and normalize_stem_token(token) in SEPARATOR_LEFTOVER_TOKENS:
             f.unlink()

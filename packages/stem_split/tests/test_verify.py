@@ -74,6 +74,13 @@ def test_separator_residual_leftover_fails(tmp_path: Path) -> None:
     assert "Reverb" in detail
 
 
+def test_archived_source_with_token_in_name_is_not_leftover(tmp_path: Path) -> None:
+    dest = _stem_dir(tmp_path)
+    write_wav(dest / "original_Artist - Track_(Reverb)_Remix.wav")
+    ok, detail = check_files_exist(dest, "Title")
+    assert ok, detail
+
+
 def test_format_checks_dry_and_lead(tmp_path: Path) -> None:
     dest = _stem_dir(tmp_path, with_optional=True)
     ok, detail = check_format_24bit_44k(dest, "Title")
