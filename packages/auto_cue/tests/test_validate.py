@@ -400,7 +400,14 @@ class TestHighConfidenceSelection:
 
     def test_keeps_every_confident_cue_and_skips_derived_slots(self):
         prediction = _prediction(
-            {1: (0, 0.95), 2: (32, 0.9), 4: (96, 0.99), 6: (192, 0.97), 7: (224, 0.7), 8: (256, 0.65)}
+            {
+                1: (0, 0.95),
+                2: (32, 0.9),
+                4: (96, 0.99),
+                6: (192, 0.97),
+                7: (224, 0.7),
+                8: (256, 0.65),
+            }
         )
         cues = CueSet(total_beats=300)
 

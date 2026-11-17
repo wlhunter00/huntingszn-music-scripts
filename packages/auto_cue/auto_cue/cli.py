@@ -303,7 +303,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-confidence",
         type=float,
         default=0.6,
-        help="Minimum confidence for a written cue (default 0.6). Every cue at or above this is written.",
+        help=(
+            "Minimum confidence for a written cue (default 0.6). "
+            "Every cue at or above this is written."
+        ),
     )
     parser.add_argument(
         "--explain",

@@ -4,7 +4,7 @@ Most library and catalog scripts were **restored from backup** on 2026-05-25 (`E
 
 | PRD | Status |
 |-----|--------|
-| [stem-split](stem-split.md) | **Restored** — synced from drive; legacy scripts removed |
+| [stem-split](stem-split.md) | **Implemented** — ensemble + opt-in dry/karaoke/crowd; audio-separator >=0.48 |
 | [soundcloud-dl](soundcloud-dl.md) | Restored in `packages/downloads` |
 | [yt-audio-dl](yt-audio-dl.md) | Restored in `packages/downloads` |
 | [spotify-dl](spotify-dl.md) | **Implemented** — `sp-dl` in `packages/downloads` (metadata + external sources) |
