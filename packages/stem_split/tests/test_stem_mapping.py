@@ -29,6 +29,11 @@ class TestExtractStemToken:
     def test_no_token(self) -> None:
         assert extract_stem_token("Title_vocals.wav") is None
 
+    def test_vr_suffixless_pattern(self) -> None:
+        assert extract_stem_token("mix_(No Reverb).wav") == "No Reverb"
+        assert extract_stem_token("mix_(Reverb).wav") == "Reverb"
+        assert extract_stem_token("mix_(No Noise).flac") == "No Noise"
+
 
 class TestKeepStemMapping:
     def test_dereverb_picks_no_reverb_when_reverb_is_newer(self, tmp_path: Path) -> None:
@@ -128,3 +133,13 @@ class TestKeepStemMapping:
             _convert_separator_output_to_24bit(
                 tmp_path, DEREVERB_KEEP_TOKENS, tmp_path / "keep.wav"
             )
+
+    def test_vr_suffixless_no_reverb_keep(self, tmp_path: Path) -> None:
+        write_wav(tmp_path / "mix_(Reverb).wav", value=0.9)
+        write_wav(tmp_path / "mix_(No Reverb).wav", value=0.1)
+        dest = tmp_path / "keep.wav"
+        _convert_separator_output_to_24bit(tmp_path, DEREVERB_KEEP_TOKENS, dest)
+        assert rms(dest) == pytest.approx(0.1, abs=0.01)
+        leftover = {p.name for p in tmp_path.glob("mix_(*).wav")}
+        assert "mix_(No Reverb).wav" not in leftover
+        assert "mix_(Reverb).wav" in leftover

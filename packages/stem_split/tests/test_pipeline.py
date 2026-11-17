@@ -6,7 +6,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from _audio import rms, write_separator_stem, write_wav
+import soundfile as sf
+from _audio import FRAMES, SR, rms, write_separator_stem, write_wav
 from stem_split.models import (
     CROWD_MODELS,
     DENOISE_MODELS,
@@ -17,6 +18,8 @@ from stem_split.models import (
 )
 from stem_split.pipeline import (
     StemSplitOptions,
+    _delete_separator_wavs,
+    _mix_minus_vocals,
     _run_separator,
     clean_partial_state,
     process_audio_folder,
@@ -191,6 +194,21 @@ class TestProcessAudioFolder:
         assert (dest / "Title_vocals.wav").exists()
         assert (dest / "Title_no_vocals.wav").exists()
 
+    def test_sw_mix_minus_48k_source(self, tmp_path: Path, fake_separator: FakeSeparator) -> None:
+        inp = tmp_path / "songs-to-split"
+        out = tmp_path / "stem-output"
+        inp.mkdir()
+        write_wav(inp / "Artist - Title.wav", value=0.4, frames=480, sr=48000)
+        process_audio_folder(
+            str(inp),
+            str(out),
+            options=StemSplitOptions(vocal_models=("BS-Roformer-SW.ckpt",)),
+        )
+        dest = _song_dir(out)
+        info = sf.info(dest / "Title_no_vocals.wav")
+        assert info.samplerate == SR
+        assert info.subtype == "PCM_24"
+
     def test_failure_leaves_original_and_cleans(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -236,6 +254,40 @@ class TestCleanPartialState:
         assert not (dest / f"{title}_mix_nocrowd.wav").exists()
         assert not (dest / f"{title}_vocals_dereverb.wav").exists()
         assert list(dest.glob("*_(*)_*.wav")) == []
+
+    def test_preserves_archived_original_with_reverb_in_name(self, tmp_path: Path) -> None:
+        dest = tmp_path / "song"
+        dest.mkdir()
+        archived = dest / "original_Artist - Club _(Reverb)_ Mix.wav"
+        write_wav(archived, value=0.5)
+        write_separator_stem(dest, "mix", "Reverb", "UVR-DeEcho-DeReverb.pth", value=0.9)
+        clean_partial_state(dest, "Club _(Reverb)_ Mix")
+        assert archived.exists()
+        leftover = [
+            p for p in dest.glob("*_(*)_*.wav") if not p.name.startswith("original_")
+        ]
+        assert leftover == []
+
+
+def test_delete_separator_wavs_skips_archived_original(tmp_path: Path) -> None:
+    archived = tmp_path / "original_Artist - Club _(Reverb)_ Mix.wav"
+    write_wav(archived, value=0.5)
+    write_separator_stem(tmp_path, "mix", "Reverb", "UVR-DeEcho-DeReverb.pth", value=0.9)
+    _delete_separator_wavs(tmp_path)
+    assert archived.exists()
+    leftover = [p for p in tmp_path.glob("*_(*)_*.wav") if not p.name.startswith("original_")]
+    assert leftover == []
+
+
+def test_mix_minus_vocals_resamples_48k_mix(tmp_path: Path) -> None:
+    mix = write_wav(tmp_path / "mix.wav", value=0.4, frames=480, sr=48000)
+    vocals = write_wav(tmp_path / "vocals.wav", value=0.1, frames=FRAMES, sr=SR)
+    dest = tmp_path / "no_vocals.wav"
+    _mix_minus_vocals(mix, vocals, dest)
+    info = sf.info(dest)
+    assert info.samplerate == SR
+    assert info.subtype == "PCM_24"
+    assert abs(info.frames - FRAMES) <= 2
 
 
 def test_run_separator_invokes_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

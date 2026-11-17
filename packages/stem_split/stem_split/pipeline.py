@@ -57,10 +57,12 @@ Notes:
   at its default depth. Each stem is read and re-written here as 24-bit
   PCM_24 with soundfile.
 - Default output filename pattern is ``<input_stem>_(<Stem>)_<model_id>.wav``
-  where ``<Stem>`` is model-specific (Vocals / Instrumental / No Reverb / dry /
-  other / …). We glob on the ``_(<Stem>)_`` token to locate each output, then
-  convert and rename to our final ``<title>_<stem>.wav``. Keep-stems are
-  chosen by token name, never by file order.
+  (older VR models emit ``<input_stem>_(<Stem>).wav``). ``<Stem>`` is
+  model-specific (Vocals / Instrumental / No Reverb / dry / other / …). We
+  match the ``_(<Stem>)`` token to locate each output, then convert and
+  rename to our final ``<title>_<stem>.wav``. Keep-stems are chosen by token
+  name, never by file order. Archived ``original_*`` files are never treated
+  as separator leftovers.
 """
 
 from __future__ import annotations
@@ -76,6 +78,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 
 from stem_split.models import (
@@ -268,29 +271,45 @@ def parse_song_title(input_filename: str) -> str:
 
 
 def extract_stem_token(filename: str) -> str | None:
-    """Return the ``_(Stem)_`` token from an audio-separator output filename."""
+    """Return the stem token from an audio-separator output filename.
+
+    Accepts both ``<input>_(Stem)_<model>.wav`` and the older VR form
+    ``<input>_(Stem).wav``.
+    """
     name = Path(filename).name
     lo = name.find("_(")
-    hi = name.find(")_", lo + 2) if lo != -1 else -1
-    if lo == -1 or hi == -1:
+    if lo == -1:
         return None
-    return name[lo + 2 : hi]
+    close = name.find(")", lo + 2)
+    if close == -1:
+        return None
+    rest = name[close + 1 :]
+    rest_l = rest.lower()
+    if rest.startswith("_") or rest_l.startswith(".wav") or rest_l.startswith(".flac"):
+        return name[lo + 2 : close]
+    return None
+
+
+def _is_archived_original(path: Path) -> bool:
+    """Successful runs archive the source as ``original_<filename>``; never unlink those."""
+    return Path(path).name.startswith("original_")
 
 
 def _iter_separator_wavs(separator_dir: Path):
-    yield from Path(separator_dir).glob("*_(*)_*.wav")
-    # Some VR models historically omitted the trailing model id.
-    yield from Path(separator_dir).glob("*_(*).wav")
+    seen: set[Path] = set()
+    for pattern in ("*_(*)_*.wav", "*_(*).wav"):
+        for f in Path(separator_dir).glob(pattern):
+            if _is_archived_original(f) or f in seen:
+                continue
+            seen.add(f)
+            yield f
 
 
 def _delete_separator_wavs(separator_dir: Path) -> None:
     """Remove leftover separator outputs (residuals and unmatched stems)."""
-    seen: set[Path] = set()
-    for f in _iter_separator_wavs(separator_dir):
-        if f in seen or not f.exists():
-            continue
-        seen.add(f)
-        f.unlink()
+    for f in list(_iter_separator_wavs(separator_dir)):
+        if f.exists():
+            f.unlink()
 
 
 def clean_partial_state(song_stems_dir: Path, title: str) -> None:
@@ -423,14 +442,56 @@ def _run_separator_with_fallbacks(
     raise RuntimeError(f"{label} failed for all models {list(model_chain)}: {errors}")
 
 
+def _as_2d(audio: np.ndarray) -> np.ndarray:
+    if audio.ndim == 1:
+        return audio[:, np.newaxis]
+    return audio
+
+
+def _resample_audio(audio: np.ndarray, sr_from: int, sr_to: int) -> np.ndarray:
+    """Linear resample. Output length is round(n * sr_to / sr_from)."""
+    audio = np.asarray(audio, dtype=np.float32)
+    if sr_from == sr_to:
+        return audio
+    if sr_from <= 0 or sr_to <= 0:
+        raise ValueError(f"Invalid sample rates: mix={sr_from}, target={sr_to}")
+    n_src = audio.shape[0]
+    n_dst = max(1, int(round(n_src * sr_to / sr_from)))
+    t_src = np.linspace(0.0, 1.0, n_src, endpoint=False)
+    t_dst = np.linspace(0.0, 1.0, n_dst, endpoint=False)
+    if audio.ndim == 1:
+        return np.interp(t_dst, t_src, audio).astype(np.float32)
+    channels = [np.interp(t_dst, t_src, audio[:, c]) for c in range(audio.shape[1])]
+    return np.stack(channels, axis=1).astype(np.float32)
+
+
+def _align_channels(mix: np.ndarray, vocals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mix = _as_2d(mix)
+    vocals = _as_2d(vocals)
+    if mix.shape[1] == vocals.shape[1]:
+        return mix, vocals
+    if mix.shape[1] == 1:
+        return np.repeat(mix, vocals.shape[1], axis=1), vocals
+    if vocals.shape[1] == 1:
+        return mix, np.repeat(vocals, mix.shape[1], axis=1)
+    nch = min(mix.shape[1], vocals.shape[1])
+    return mix[:, :nch], vocals[:, :nch]
+
+
 def _mix_minus_vocals(mix_path: str | Path, vocals_path: Path, dest: Path) -> None:
-    """Build an instrumental by subtracting vocals from the mix (6-stem models)."""
+    """Build an instrumental by subtracting vocals from the mix (6-stem models).
+
+    Separator vocals are 44.1 kHz; the mix on Windows/Linux may still be 48 kHz.
+    Resample and channel-align the mix to the vocals, then write 24-bit at the
+    vocal sample rate.
+    """
     mix, sr_m = sf.read(mix_path, dtype="float32")
     vocals, sr_v = sf.read(vocals_path, dtype="float32")
-    if sr_m != sr_v:
-        raise ValueError(f"Sample rate mismatch mix ({sr_m}) vs vocals ({sr_v})")
+    mix = _resample_audio(_as_2d(mix), sr_m, sr_v)
+    vocals = _as_2d(vocals)
+    mix, vocals = _align_channels(mix, vocals)
     n = min(mix.shape[0], vocals.shape[0])
-    sf.write(dest, mix[:n] - vocals[:n], sr_m, subtype="PCM_24")
+    sf.write(dest, mix[:n] - vocals[:n], sr_v, subtype="PCM_24")
 
 
 def run_vocal_ensemble(
