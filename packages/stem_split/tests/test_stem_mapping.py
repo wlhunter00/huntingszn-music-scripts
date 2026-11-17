@@ -12,6 +12,7 @@ from stem_split.models import (
     DENOISE_KEEP_TOKENS,
     DEREVERB_KEEP_TOKENS,
     KARAOKE_KEEP_TOKENS,
+    VOCAL_KEEP_TOKENS,
 )
 from stem_split.pipeline import (
     _convert_separator_output_to_24bit,
@@ -33,6 +34,17 @@ class TestExtractStemToken:
         assert extract_stem_token("mix_(No Reverb).wav") == "No Reverb"
         assert extract_stem_token("mix_(Reverb).wav") == "Reverb"
         assert extract_stem_token("mix_(No Noise).flac") == "No Noise"
+
+    def test_original_prefixed_separator_output(self) -> None:
+        name = "original_Artist - Track_(Vocals)_model_bs_roformer.ckpt.wav"
+        assert extract_stem_token(name) == "Vocals"
+
+    def test_archived_title_with_embedded_token_is_not_a_stem(self) -> None:
+        assert extract_stem_token("original_Artist - Club _(Reverb)_ Mix.wav") is None
+
+    def test_last_token_wins_when_title_embeds_a_token(self) -> None:
+        name = "Artist - Club _(Reverb)_ Mix_(Vocals)_viperx.wav"
+        assert extract_stem_token(name) == "Vocals"
 
 
 class TestKeepStemMapping:
@@ -143,3 +155,14 @@ class TestKeepStemMapping:
         leftover = {p.name for p in tmp_path.glob("mix_(*).wav")}
         assert "mix_(No Reverb).wav" not in leftover
         assert "mix_(Reverb).wav" in leftover
+
+    def test_original_prefixed_input_keep_stem(self, tmp_path: Path) -> None:
+        write_separator_stem(
+            tmp_path, "original_Artist - Track", "Instrumental", "viperx.ckpt", 0.2
+        )
+        write_separator_stem(
+            tmp_path, "original_Artist - Track", "Vocals", "viperx.ckpt", 0.55
+        )
+        dest = tmp_path / "keep.wav"
+        _convert_separator_output_to_24bit(tmp_path, VOCAL_KEEP_TOKENS, dest)
+        assert rms(dest) == pytest.approx(0.55, abs=0.01)

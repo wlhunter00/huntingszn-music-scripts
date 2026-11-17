@@ -59,10 +59,12 @@ Notes:
 - Default output filename pattern is ``<input_stem>_(<Stem>)_<model_id>.wav``
   (older VR models emit ``<input_stem>_(<Stem>).wav``). ``<Stem>`` is
   model-specific (Vocals / Instrumental / No Reverb / dry / other / …). We
-  match the ``_(<Stem>)`` token to locate each output, then convert and
-  rename to our final ``<title>_<stem>.wav``. Keep-stems are chosen by token
-  name, never by file order. Archived ``original_*`` files are never treated
-  as separator leftovers.
+  match the trailing ``_(<Stem>)`` token to locate each output, then convert
+  and rename to our final ``<title>_<stem>.wav``. Keep-stems are chosen by
+  token name, never by file order. Archived sources (``original_<input>``)
+  are not separator outputs: they lack a trailing ``_(Stem)_<model>`` /
+  ``_(Stem)`` suffix, so cleanup will not unlink them even when the title
+  contains ``_(Reverb)_`` or the input itself was named ``original_...``.
 """
 
 from __future__ import annotations
@@ -270,36 +272,51 @@ def parse_song_title(input_filename: str) -> str:
     return _sanitize_for_filesystem(title.strip())
 
 
-def extract_stem_token(filename: str) -> str | None:
-    """Return the stem token from an audio-separator output filename.
+def _is_separator_token_suffix(rest: str) -> bool:
+    """True if ``rest`` is empty (VR suffixless) or ``_<model>`` with no whitespace."""
+    if rest == "":
+        return True
+    if not rest.startswith("_"):
+        return False
+    model = rest[1:]
+    return bool(model) and not any(ch.isspace() for ch in model)
 
-    Accepts both ``<input>_(Stem)_<model>.wav`` and the older VR form
-    ``<input>_(Stem).wav``.
+
+def extract_stem_token(filename: str) -> str | None:
+    """Return the trailing separator stem token, or None.
+
+    Accepts ``<input>_(Stem)_<model>.wav`` and the older VR form
+    ``<input>_(Stem).wav``. ``<model>`` must not contain whitespace, so a
+    title like ``Club _(Reverb)_ Mix.wav`` is not a separator output. When
+    the input stem itself contains ``_(...)``, the last valid token wins —
+    including outputs from an input named ``original_...``.
     """
     name = Path(filename).name
-    lo = name.find("_(")
-    if lo == -1:
+    lower = name.lower()
+    ext = next((e for e in (".wav", ".flac") if lower.endswith(e)), None)
+    if ext is None:
         return None
-    close = name.find(")", lo + 2)
-    if close == -1:
-        return None
-    rest = name[close + 1 :]
-    rest_l = rest.lower()
-    if rest.startswith("_") or rest_l.startswith(".wav") or rest_l.startswith(".flac"):
-        return name[lo + 2 : close]
-    return None
-
-
-def _is_archived_original(path: Path) -> bool:
-    """Successful runs archive the source as ``original_<filename>``; never unlink those."""
-    return Path(path).name.startswith("original_")
+    body = name[: -len(ext)]
+    search_end = len(body)
+    while True:
+        close = body.rfind(")", 0, search_end)
+        if close == -1:
+            return None
+        lo = body.rfind("_(", 0, close)
+        if lo == -1:
+            return None
+        token = body[lo + 2 : close]
+        rest = body[close + 1 :]
+        if token and _is_separator_token_suffix(rest):
+            return token
+        search_end = lo
 
 
 def _iter_separator_wavs(separator_dir: Path):
     seen: set[Path] = set()
     for pattern in ("*_(*)_*.wav", "*_(*).wav"):
         for f in Path(separator_dir).glob(pattern):
-            if _is_archived_original(f) or f in seen:
+            if f in seen or extract_stem_token(f.name) is None:
                 continue
             seen.add(f)
             yield f
@@ -316,7 +333,9 @@ def clean_partial_state(song_stems_dir: Path, title: str) -> None:
     """Remove leftover intermediates and partial stems from prior failed runs.
 
     Idempotent: safe to call before each song and inside failure handlers.
-    Does NOT touch `original_*.<ext>` files (those mark successful runs).
+    Does not unlink archived sources: ``original_<input>`` files are not
+    separator outputs (no trailing ``_(Stem)`` suffix), even if the title
+    contains leftover-looking tokens such as Reverb.
     """
     song_stems_dir = Path(song_stems_dir)
     if not song_stems_dir.exists():

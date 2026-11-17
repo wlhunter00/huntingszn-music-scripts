@@ -268,6 +268,21 @@ class TestCleanPartialState:
         ]
         assert leftover == []
 
+    def test_original_prefixed_input_splits(
+        self, tmp_path: Path, fake_separator: FakeSeparator
+    ) -> None:
+        inp = tmp_path / "songs-to-split"
+        out = tmp_path / "stem-output"
+        inp.mkdir()
+        song = write_wav(inp / "original_Artist - Track.wav", value=0.4)
+        process_audio_folder(str(inp), str(out))
+        dest = out / "htdemucs_ft" / "original_Artist - Track"
+        assert (dest / "Track_vocals.wav").exists()
+        assert (dest / "Track_no_vocals.wav").exists()
+        assert (dest / "original_original_Artist - Track.wav").exists()
+        assert not song.exists()
+        assert list(dest.glob("*_(*)_*.wav")) == []
+
 
 def test_delete_separator_wavs_skips_archived_original(tmp_path: Path) -> None:
     archived = tmp_path / "original_Artist - Club _(Reverb)_ Mix.wav"
@@ -277,6 +292,14 @@ def test_delete_separator_wavs_skips_archived_original(tmp_path: Path) -> None:
     assert archived.exists()
     leftover = [p for p in tmp_path.glob("*_(*)_*.wav") if not p.name.startswith("original_")]
     assert leftover == []
+
+
+def test_delete_separator_wavs_cleans_original_prefixed_stems(tmp_path: Path) -> None:
+    leftover = write_separator_stem(
+        tmp_path, "original_Artist - Track", "Reverb", "UVR-DeEcho-DeReverb.pth", 0.9
+    )
+    _delete_separator_wavs(tmp_path)
+    assert not leftover.exists()
 
 
 def test_mix_minus_vocals_resamples_48k_mix(tmp_path: Path) -> None:
