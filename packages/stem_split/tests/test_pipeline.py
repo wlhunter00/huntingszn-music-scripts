@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pytest
 import soundfile as sf
 from _audio import FRAMES, SR, rms, write_separator_stem, write_wav
@@ -20,6 +21,7 @@ from stem_split.pipeline import (
     StemSplitOptions,
     _delete_separator_wavs,
     _mix_minus_vocals,
+    _resample_audio,
     _run_separator,
     clean_partial_state,
     process_audio_folder,
@@ -311,6 +313,22 @@ def test_mix_minus_vocals_resamples_48k_mix(tmp_path: Path) -> None:
     assert info.samplerate == SR
     assert info.subtype == "PCM_24"
     assert abs(info.frames - FRAMES) <= 2
+
+
+def test_resample_audio_rejects_96k_ultrasonic() -> None:
+    sr_from, sr_to = 96000, 44100
+    n = sr_from // 2
+    t = np.arange(n, dtype=np.float64) / sr_from
+    ultra = np.sin(2 * np.pi * 30000 * t).astype(np.float32)
+    out = _resample_audio(ultra, sr_from, sr_to)
+    skip = min(1024, out.shape[0] // 8)
+    peak = float(np.max(np.abs(out[skip:-skip])))
+    assert peak < 0.05
+
+    tone = np.sin(2 * np.pi * 1000 * t).astype(np.float32)
+    kept = _resample_audio(tone, sr_from, sr_to)
+    kept_peak = float(np.max(np.abs(kept[skip:-skip])))
+    assert kept_peak == pytest.approx(1.0, abs=0.15)
 
 
 def test_run_separator_invokes_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

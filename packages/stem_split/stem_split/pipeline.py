@@ -467,14 +467,49 @@ def _as_2d(audio: np.ndarray) -> np.ndarray:
     return audio
 
 
+def _lowpass_fir(cutoff_hz: float, sr: int, numtaps: int = 255) -> np.ndarray:
+    """Hamming-windowed sinc low-pass. ``numtaps`` is forced odd."""
+    if numtaps % 2 == 0:
+        numtaps += 1
+    nyq = sr / 2.0
+    fc = min(max(cutoff_hz, 1.0), nyq * 0.99) / sr
+    n = np.arange(numtaps, dtype=np.float64)
+    m = (numtaps - 1) / 2.0
+    h = np.sinc(2.0 * fc * (n - m))
+    h *= np.hamming(numtaps)
+    s = float(h.sum())
+    if s != 0.0:
+        h /= s
+    return h
+
+
+def _filter_channel(samples: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    return np.convolve(samples, kernel, mode="same")
+
+
 def _resample_audio(audio: np.ndarray, sr_from: int, sr_to: int) -> np.ndarray:
-    """Linear resample. Output length is round(n * sr_to / sr_from)."""
-    audio = np.asarray(audio, dtype=np.float32)
+    """Band-limited resample. Output length is round(n * sr_to / sr_from).
+
+    Downsampling low-passes below the destination Nyquist before interpolation
+    so ultrasonics (e.g. 30 kHz on a 96 kHz mix) are not folded into the
+    instrumental as audible aliases.
+    """
+    audio = np.asarray(audio, dtype=np.float64)
     if sr_from == sr_to:
-        return audio
+        return audio.astype(np.float32)
     if sr_from <= 0 or sr_to <= 0:
         raise ValueError(f"Invalid sample rates: mix={sr_from}, target={sr_to}")
     n_src = audio.shape[0]
+    if sr_from > sr_to and n_src > 8:
+        taps = 255 if n_src >= 255 else (n_src if n_src % 2 else n_src - 1)
+        kernel = _lowpass_fir(0.45 * sr_to, sr_from, numtaps=max(taps, 3))
+        if audio.ndim == 1:
+            audio = _filter_channel(audio, kernel)
+        else:
+            audio = np.stack(
+                [_filter_channel(audio[:, c], kernel) for c in range(audio.shape[1])],
+                axis=1,
+            )
     n_dst = max(1, int(round(n_src * sr_to / sr_from)))
     t_src = np.linspace(0.0, 1.0, n_src, endpoint=False)
     t_dst = np.linspace(0.0, 1.0, n_dst, endpoint=False)
@@ -500,9 +535,9 @@ def _align_channels(mix: np.ndarray, vocals: np.ndarray) -> tuple[np.ndarray, np
 def _mix_minus_vocals(mix_path: str | Path, vocals_path: Path, dest: Path) -> None:
     """Build an instrumental by subtracting vocals from the mix (6-stem models).
 
-    Separator vocals are 44.1 kHz; the mix on Windows/Linux may still be 48 kHz.
-    Resample and channel-align the mix to the vocals, then write 24-bit at the
-    vocal sample rate.
+    Separator vocals are 44.1 kHz; the mix on Windows/Linux may still be
+    48 kHz or 96 kHz. Band-limit and resample the mix to the vocals, then
+    write 24-bit at the vocal sample rate.
     """
     mix, sr_m = sf.read(mix_path, dtype="float32")
     vocals, sr_v = sf.read(vocals_path, dtype="float32")
