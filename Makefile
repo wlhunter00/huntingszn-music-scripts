@@ -18,8 +18,9 @@ help:
 	@echo "  make sync-stem-cpu     Sync stem-split with CPU extra (no NVIDIA)"
 	@echo "  make sync-stem-gpu     Sync stem-split with GPU extra (NVIDIA CUDA)"
 	@echo "  make sync-stem-mac     Sync stem-split with macOS extra (MLX)"
-	@echo "  make stem-split        Process songs-to-split -> stem-output"
+	@echo "  make stem-split        Process songs-to-split -> stem-output (ARGS='--dry-vocals')"
 	@echo "  make stem-verify       Verify latest stem folder"
+	@echo "  make test-stem-split   Run stem_split unit tests (mocked separator)"
 	@echo "  make pn-pipeline       pn-rename -> pn-filename -> library-metadata (FLIP_STYLE=1 optional)"
 	@echo "  make pn-cleanup        Strip _pn from Platinum Notes filenames"
 	@echo "  make platinum-metadata Write ID3 tags from filenames"
@@ -66,10 +67,14 @@ sync-stem-mac:
 	uv sync --package stem-split --extra mac
 
 stem-split:
-	uv run --package stem-split stem-split --input "$(STEM_IN)" --output "$(STEM_OUT)"
+	uv run --package stem-split stem-split --input "$(STEM_IN)" --output "$(STEM_OUT)" $(ARGS)
 
 stem-verify:
 	uv run --package stem-split stem-verify
+
+test-stem-split:
+	uv sync --package stem-split --extra dev
+	uv run --package stem-split pytest packages/stem_split/tests
 
 pn-pipeline:
 	uv run --package library-tools pn-pipeline --root "$(PN_ROOT)" $(if $(FLIP_STYLE),--flip-style,) $(if $(FORCE),--force,) $(if $(DRY_RUN),--dry-run,) $(ARGS)

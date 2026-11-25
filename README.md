@@ -117,10 +117,12 @@ See [packages/serato_bpm_cleanup/README.md](packages/serato_bpm_cleanup/README.m
 
 ```bash
 uv run --package stem-split stem-split
+uv run --package stem-split stem-split --dry-vocals --karaoke --crowd
+uv run --package stem-split stem-split --vocal-models resurrection,kim-ft2-bleedless
 uv run --package stem-split stem-verify
 ```
 
-Defaults: input `Stem Splitting/songs-to-split`, output `Stem Splitting/stem-output`. Override with `--input` / `--output`. On macOS sync with `--extra mac`; on Windows/Linux with NVIDIA GPU use `--extra gpu`; for CPU-only use `--extra cpu`.
+Defaults: input `Stem Splitting/songs-to-split`, output `Stem Splitting/stem-output`. Override with `--input` / `--output`. Opt-in flags (all off by default): `--dry-vocals` writes `<title>_vocals_dry.wav`, `--karaoke` writes `<title>_vocals_lead.wav`, `--crowd` strips crowd from the mix before vocal extraction only (Demucs stays on the original mix). `--vocal-models a,b` A/B-tests ensemble legs (`--list-vocal-models` for aliases). On macOS sync with `--extra mac`; on Windows/Linux with NVIDIA GPU use `--extra gpu`; for CPU-only use `--extra cpu`. See [docs/prds/stem-split.md](docs/prds/stem-split.md).
 
 ### `mashup-pop-finder` — mashup/pop matcher
 

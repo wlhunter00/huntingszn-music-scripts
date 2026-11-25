@@ -20,13 +20,40 @@ import numpy as np
 import soundfile as sf
 
 from stem_split._bootstrap import ensure_config_importable
+from stem_split.models import normalize_stem_token
+from stem_split.pipeline import (
+    SEPARATOR_LEFTOVER_TOKENS,
+    extract_stem_token,
+    is_archived_source,
+    parse_song_title,
+)
 
 ensure_config_importable()
 
 from config.paths import STEM_OUTPUT_MODEL  # noqa: E402
-from stem_split.pipeline import parse_song_title  # noqa: E402
 
 OUTPUT_ROOT = STEM_OUTPUT_MODEL
+
+REQUIRED_STEM_SUFFIXES = (
+    "_vocals.wav",
+    "_no_vocals.wav",
+    "_drums.wav",
+    "_drums_2.wav",
+    "_drums_3.wav",
+    "_drums_4.wav",
+    "_bass.wav",
+    "_other.wav",
+)
+# Optional cleanup outputs: format + duration only. Reconstruction stays wet.
+OPTIONAL_VOCAL_SUFFIXES = ("_vocals_dry.wav", "_vocals_lead.wav")
+INTERMEDIATE_SUFFIXES = (
+    "_vocals_bs.wav",
+    "_no_vocals_bs.wav",
+    "_vocals_mel.wav",
+    "_no_vocals_mel.wav",
+    "_mix_nocrowd.wav",
+    "_vocals_dereverb.wav",
+)
 
 
 def db(linear):
@@ -51,41 +78,42 @@ def find_original(song_dir: Path):
     return matches[0] if matches else None
 
 
+def _present_optional_stems(song_dir: Path, title: str) -> list[str]:
+    present = []
+    for sfx in OPTIONAL_VOCAL_SUFFIXES:
+        name = f"{title}{sfx}"
+        if (song_dir / name).exists():
+            present.append(name)
+    return present
+
+
 def check_files_exist(song_dir: Path, title: str):
-    expected = [
-        f"{title}_vocals.wav", f"{title}_no_vocals.wav",
-        f"{title}_drums.wav", f"{title}_drums_2.wav",
-        f"{title}_drums_3.wav", f"{title}_drums_4.wav",
-        f"{title}_bass.wav", f"{title}_other.wav",
-    ]
+    expected = [f"{title}{sfx}" for sfx in REQUIRED_STEM_SUFFIXES]
     missing = [f for f in expected if not (song_dir / f).exists()]
     intermediates_present = []
-    for pat in (
-        f"{title}_vocals_bs.wav", f"{title}_no_vocals_bs.wav",
-        f"{title}_vocals_mel.wav", f"{title}_no_vocals_mel.wav",
-    ):
+    for sfx in INTERMEDIATE_SUFFIXES:
+        pat = f"{title}{sfx}"
         if (song_dir / pat).exists():
             intermediates_present.append(pat)
-    intermediates_present += [p.name for p in song_dir.glob("*_(Vocals)_*.wav")]
-    intermediates_present += [p.name for p in song_dir.glob("*_(Instrumental)_*.wav")]
-    intermediates_present += [p.name for p in song_dir.glob("*_(Drums)_*.wav")]
-    intermediates_present += [p.name for p in song_dir.glob("*_(Bass)_*.wav")]
-    intermediates_present += [p.name for p in song_dir.glob("*_(Other)_*.wav")]
+    for p in song_dir.glob("*_(*)_*.wav"):
+        if is_archived_source(p):
+            continue
+        token = extract_stem_token(p.name)
+        if token and normalize_stem_token(token) in SEPARATOR_LEFTOVER_TOKENS:
+            intermediates_present.append(p.name)
 
     if missing:
         return False, f"Missing files: {missing}"
     if intermediates_present:
         return False, f"Leftover intermediates: {intermediates_present}"
-    return True, "All 8 stems present, no intermediates."
+    extra = _present_optional_stems(song_dir, title)
+    extra_note = f" Optional present: {extra}." if extra else ""
+    return True, f"All 8 stems present, no intermediates.{extra_note}"
 
 
 def check_format_24bit_44k(song_dir: Path, title: str):
-    expected = [
-        f"{title}_vocals.wav", f"{title}_no_vocals.wav",
-        f"{title}_drums.wav", f"{title}_drums_2.wav",
-        f"{title}_drums_3.wav", f"{title}_drums_4.wav",
-        f"{title}_bass.wav", f"{title}_other.wav",
-    ]
+    expected = [f"{title}{sfx}" for sfx in REQUIRED_STEM_SUFFIXES]
+    expected += _present_optional_stems(song_dir, title)
     bad = []
     for f in expected:
         path = song_dir / f
@@ -99,16 +127,13 @@ def check_format_24bit_44k(song_dir: Path, title: str):
             bad.append(f"{f}: sr={info.samplerate}")
     if bad:
         return False, "; ".join(bad)
-    return True, "All 8 stems are 24-bit PCM @ 44.1 kHz."
+    extra = [f for f in expected if f.endswith(OPTIONAL_VOCAL_SUFFIXES)]
+    extra_note = f" Including {extra}." if extra else ""
+    return True, f"All 8 stems are 24-bit PCM @ 44.1 kHz.{extra_note}"
 
 
 def check_file_sizes(song_dir: Path, title: str):
-    expected = [
-        f"{title}_vocals.wav", f"{title}_no_vocals.wav",
-        f"{title}_drums.wav", f"{title}_drums_2.wav",
-        f"{title}_drums_3.wav", f"{title}_drums_4.wav",
-        f"{title}_bass.wav", f"{title}_other.wav",
-    ]
+    expected = [f"{title}{sfx}" for sfx in REQUIRED_STEM_SUFFIXES]
     too_small = []
     for f in expected:
         path = song_dir / f
@@ -125,12 +150,8 @@ def check_file_sizes(song_dir: Path, title: str):
 
 def check_durations(song_dir: Path, title: str, original: Path):
     info_orig = sf.info(original)
-    expected = [
-        f"{title}_vocals.wav", f"{title}_no_vocals.wav",
-        f"{title}_drums.wav", f"{title}_drums_2.wav",
-        f"{title}_drums_3.wav", f"{title}_drums_4.wav",
-        f"{title}_bass.wav", f"{title}_other.wav",
-    ]
+    expected = [f"{title}{sfx}" for sfx in REQUIRED_STEM_SUFFIXES]
+    expected += _present_optional_stems(song_dir, title)
     bad = []
     for f in expected:
         path = song_dir / f
@@ -145,7 +166,12 @@ def check_durations(song_dir: Path, title: str, original: Path):
             bad.append(msg)
     if bad:
         return False, "; ".join(bad)
-    return True, f"All 8 stems within 100 ms of input duration ({info_orig.duration:.2f}s)."
+    extra = [f for f in expected if f.endswith(OPTIONAL_VOCAL_SUFFIXES)]
+    extra_note = f" Including {extra}." if extra else ""
+    return True, (
+        f"All 8 stems within 100 ms of input duration ({info_orig.duration:.2f}s)."
+        f"{extra_note}"
+    )
 
 
 def check_original_moved(song_dir: Path, original_input_path: Path):
